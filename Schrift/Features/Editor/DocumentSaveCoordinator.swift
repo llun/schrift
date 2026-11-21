@@ -925,7 +925,7 @@ final class DocumentSaveCoordinator {
     /// Whether a deletion of this **server** id is queued and unsent — the predicate the
     /// suppressions key off. Deliberately **not** scoped, exactly like `isPendingCreate`:
     /// protection is unconditional. A tombstone queued by another account still names a
-    /// document this session must not push a draft to, must not reap that draft for, and
+    /// document this session must not push a draft to, must not mark failed or conflicted, and
     /// must not resume a checkpointed record onto.
     ///
     /// Its scoped sibling `isListablePendingDelete` is what the rows and the undo affordance
@@ -1571,9 +1571,8 @@ final class DocumentSaveCoordinator {
     /// taking the root out separately would reintroduce it, since a crash in between leaves the
     /// document the user deleted still holding a record that replays it back onto the server.
     /// Record-before-draft is then the same ordering `discardPendingWork` already uses for the
-    /// document itself: a draft left with no record is inert and gets reaped by the sync pass's
-    /// ordinary 404 rule, where a record left with no draft POSTs an empty document under its
-    /// mint title.
+    /// document itself: a draft left with no record is inert (only hitting 404 and marking failed
+    /// if synced), where a record left with no draft POSTs an empty document under its mint title.
     ///
     /// The **root's** draft and state stay with the caller, whose two branches handle them
     /// differently; only the descendants are this method's to clean up.
@@ -2414,13 +2413,13 @@ final class DocumentSaveCoordinator {
             // with this record, so once that is gone the body is **orphaned**: the re-POST
             // mints a different server id and its body chain looks under the local id and the
             // *new* one, never the old, so it builds an *empty* document in place of the
-            // user's text — and the stranded draft is separately reaped by `runSyncPass`, which
-            // GETs it and takes the same 404. (Note the draft under `serverID` is never covered
-            // by the pending-create hold in *either* ordering — that guard is keyed on the
-            // local id. What the ordering decides is whether the body is still reachable at
-            // all, not whether it is protected from that sweep — the checkpointed window has its own
-            // server-id suppression there, and this branch is about the state after the checkpoint is
-            // cleared.)
+            // user's text — and the stranded draft is left failing under a dead id once
+            // `runSyncPass` GETs it and takes the same 404. (Note the draft under `serverID` is
+            // never covered by the pending-create hold in *either* ordering — that guard is keyed
+            // on the local id. What the ordering decides is whether the body is still reachable at
+            // all, not whether it is protected from that refusal — the checkpointed window has its
+            // own server-id suppression there, and this branch is about the state after the
+            // checkpoint is cleared.)
             //
             // **Order is the whole point, and getting it backwards reproduces exactly that.**
             // These are two independent UserDefaults keys, so a kill between them is a real
@@ -2437,12 +2436,12 @@ final class DocumentSaveCoordinator {
             // (Not "work against a real document" — that clause is `finishMigration`'s, where
             // the fetch *succeeded*. Here it 404'd, so the document is probably gone.) That
             // case is no longer a loss: with both drafts present the start-over below declines,
-            // the checkpoint stays, and the checkpoint is what stops `runSyncPass` reaping the
-            // `serverID` draft. Both bodies survive. Note "retries next pass" means it
+            // the checkpoint stays, and the checkpoint is what stops `runSyncPass` marking the
+            // `serverID` draft failed. Both bodies survive. Note "retries next pass" means it
             // re-asks, not that it converges: if the document really is gone this re-takes
             // the same 404 on every trigger, indefinitely. That standoff is deliberate —
             // `runCreatePass` will not clear the checkpoint while the draft exists, and
-            // `runSyncPass` will not delete the draft while the record is checkpointed — and
+            // `runSyncPass` will not mark the draft failed while the record is checkpointed — and
             // it is bounded by the recovery affordance recorded as owed in the docs.
             //
             // The take-back carries the concurrency conjuncts for its own reason. It shares
@@ -2510,23 +2509,20 @@ final class DocumentSaveCoordinator {
             // nothing can answer. Drop `queued` first, or `clearResolvedConflict` →
             // `releaseHeldSave` pops the parked save and PATCHes the id that just 404'd.
             //
-            // An earlier revision discharged here *unconditionally*, arguing that
-            // `runSyncPass` skips a conflicted draft, so the reap it defers to could never run
-            // and the record would strand permanently. True, and beside the point: it ranked
-            // stranding above losing the body, which is backwards. The guards below are the
-            // correction, and this discharge now runs only once they have all passed.
+            // Discharging unconditionally would clear the conflict hold before we know no work
+            // survives under `serverID`. The guards below ensure discharge runs only once
+            // nothing remains under this id to protect.
             //
             // (Those statements are ~45 lines down, past the three guards and their own
             // rationale. This block is here because it explains why the *branch* ends the way
             // it does; the next paragraph starts a separate argument.)
             //
             // **Do not start over while work survives under the server id.** The checkpoint is
-            // the *only* thing protecting that draft: `isPendingCreate` is keyed on the local
-            // id, so `runSyncPass`'s delete branch skips it solely because
+            // the *only* thing keeping that draft out of `runSyncPass`'s 404/403 refusal:
+            // `isPendingCreate` is keyed on the local id, so that branch skips it solely because
             // `checkpointedRecord(forServerID:)` answers non-nil. Clearing `syncedServerID`
             // disarms that — and `runSyncPass` runs next in the same pass, takes the same 404,
-            // and removes the draft. That is content loss from one bare 404, with no process
-            // death and no editor open.
+            // and marks the draft failed while a re-POST mints a separate document.
             //
             // Gating on *concurrent* activity (a live save, an open editor) is not enough,
             // because the user who typed under `serverID` and then navigated away leaves no
@@ -3927,8 +3923,8 @@ final class DocumentSaveCoordinator {
             // **Leaving the local side untouched is not enough.** With the tombstone gone,
             // every one of its suppressions is off — and `runSyncPass`, later in this very
             // pass, then finds a draft whose document now 404s (because we just deleted it),
-            // passes all four of its guards, and reaps it. The user pressed "keep this
-            // document" and lost both the document and the only copy of their unsaved text.
+            // passes all of its guards, and marks it failed under a dead id that can never sync.
+            // The user pressed "keep this document", not "strand my draft on a deleted page".
             //
             // So the undo is *honoured* instead: the server copy is gone, and the way to keep
             // the content is to create it again. `reviveAsLocalDocument` re-mints it as a
@@ -3937,21 +3933,19 @@ final class DocumentSaveCoordinator {
             // `.notFound` start-over — this gives the plain server document the same recovery.
             guard pendingDeletes[tombstone.documentID] != nil else {
                 // **Deliberately does not defer to an open editor**, unlike every other record
-                // remover here — deferring was tried and is the unsafe option. The tombstone is
-                // already gone, so nothing suppresses `runSyncPass` any more: later in this
-                // same pass it GETs a document that now 404s and reaps the draft, which is the
-                // exact loss the revive exists to prevent. Nor does deferring survive a
-                // relaunch, where `openEditors` is empty but so is the tombstone, so the revive
-                // is never reconsidered and the reap simply wins.
+                // remover here — deferring is unsafe. The tombstone is already gone, so nothing
+                // suppresses `runSyncPass` any more: later in this same pass it GETs a document
+                // that now 404s and marks the draft failed under a dead id. Nor does deferring
+                // survive a relaunch, where `openEditors` is empty and so is the tombstone, so
+                // the revive is never reconsidered and the draft sits failed under a dead id.
                 //
-                // The cost is real, and larger than an earlier version of this comment claimed:
-                // a screen open on the dead id is torn down by the announcement below
+                // A screen open on the dead id is torn down by the announcement below
                 // (`EditorViewModel.handleDeletionLanded`), so it does **not** keep its
                 // in-memory content. What the revived document carries is the draft — or,
                 // failing that, the cached body — as read a few lines down, so anything typed
                 // since the last autosave flush is in neither. That window is bounded by the
-                // autosave debounce and is the accepted price of not losing the *whole* body,
-                // which is what deferring costs.
+                // autosave debounce and is the accepted price of not stranding the *whole* body
+                // under a dead id, which is what deferring costs.
                 reviveAsLocalDocument(documentID: tombstone.documentID, ownerUserID: currentUserID)
                 continue
             }
@@ -4138,8 +4132,8 @@ final class DocumentSaveCoordinator {
     /// Re-mint a document whose deletion the user undid **after** the DELETE had already
     /// landed, so their content survives an outcome nothing on the device could prevent.
     ///
-    /// The server copy is gone and its id is dead: no draft under it can ever sync, and the
-    /// 404 reap in `runSyncPass` would take that draft on this very pass now that the
+    /// The server copy is gone and its id is dead: no draft under it can ever sync, and
+    /// `runSyncPass` would mark it failed under that dead id on this very pass now that the
     /// tombstone no longer suppresses it. Creating the document again is the only reading of
     /// "keep this document" that keeps anything, and the machinery already exists — the
     /// checkpointed path reaches the same place through its `.notFound` start-over.
@@ -4202,7 +4196,8 @@ final class DocumentSaveCoordinator {
         // The body is seeded **in the same call that mints the record**, so it is on disk under
         // the new id before the old one is touched. Writing it afterwards left a two-write
         // window in which the body existed only at the old id — whose tombstone the undo has
-        // already removed, so a kill there would let the next launch's 404 reap take it.
+        // already removed, so a kill there would leave the body stranded and failing under
+        // that dead id on the next launch.
         let revived = createLocalDocument(
             title: title, parentID: nil, ownerUserID: ownerUserID, seedMarkdown: markdown)
         purgeLocalTraces(documentID: documentID)
@@ -4466,7 +4461,7 @@ final class DocumentSaveCoordinator {
             // A save that FAILED this session is a retry candidate the user may still
             // be looking at (its draft is their only copy), owned by the reading
             // surface's "Couldn't save · tap to retry". Reconciling it here would
-            // silently delete visible content — skip it.
+            // race or overwrite that state behind the user's back — skip it.
             if case .failed = state(for: draft.documentID) { continue }
             // A recorded conflict waits for the user's explicit choice — never push
             // over it and never discard it here.
@@ -4532,17 +4527,25 @@ final class DocumentSaveCoordinator {
                     }
                     // Legacy (baseline-less) classic drafts — rule 3's tolerance fallback.
                     // Skip drafts that may belong to pending creates, checkpointed migrations, or
-                    // pending deletes (including when the create store is unreadable) so we never
+                    // pending deletes (and whenever either store is unreadable) so we never
                     // stamp a conflict onto them.
                     guard !isPendingCreate(documentID: draft.documentID) else { continue }
                     guard !createStoreUnreadable else { continue }
                     guard anyCheckpointedRecord(forServerID: draft.documentID) == nil else { continue }
                     guard !isPendingDelete(documentID: draft.documentID) else { continue }
+                    guard !deleteStoreUnreadable else { continue }
                     // Never delete waiting edits automatically: record a conflict so the user
                     // chooses Keep mine / Keep server, matching native drafts.
                     recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
                 }
             } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
+                // The session may have removed, replaced, or started editing/saving this draft
+                // while we awaited — never stamp `.failed` onto a state that has moved on.
+                guard inFlight[draft.documentID] == nil,
+                    queued[draft.documentID] == nil,
+                    !isLiveReplicaHeld(draft.documentID),
+                    draftStore.draft(for: draft.documentID) == draft
+                else { continue }
                 if draft.replica != nil {
                     markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
                     continue

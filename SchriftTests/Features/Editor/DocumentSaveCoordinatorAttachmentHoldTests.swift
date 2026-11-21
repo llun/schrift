@@ -255,7 +255,8 @@ final class DocumentSaveCoordinatorAttachmentHoldTests: XCTestCase {
         let (coordinator, drafts) = makeCoordinator()
         // A draft left by a previous process: no in-memory state, so nothing but the draft's
         // own content can tell the pass to leave it alone. Reaching the decision would risk
-        // rule 3 answering `.discardServerWins` and deleting the user's queued photo with it.
+        // rule 3 answering `.discardServerWins` and stamping a conflict before attachment
+        // replay uploads and rewrites the placeholder.
         drafts.save(
             PendingDraft(
                 documentID: documentID, title: "Doc", markdown: heldMarkdown,

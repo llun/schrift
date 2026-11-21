@@ -87,7 +87,7 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
     /// nothing about the suppressions. The 404 on everything else is what a queued deletion
     /// actually predicts (our own DELETE may have landed in a pass that died before its
     /// cleanup) and is indistinguishable from a co-author's delete — which is exactly why
-    /// the reap must not fire on it.
+    /// the sync pass must not act on it.
     private func stubGoneServer(log: RequestRecorder) {
         let userBody = Data(
             """
@@ -261,7 +261,7 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
     /// **Protection is unconditional.** A tombstone queued against another server — or by
     /// another account — is still mirrored, because `runSyncPass` walks every draft on the
     /// device and is not origin-scoped either. Mirroring only the matching ones would leave a
-    /// foreign tombstone's draft unsuppressed, and the pass would reap it on the 404.
+    /// foreign tombstone's draft unsuppressed, and the pass would mark it failed on the 404.
     func testAForeignTombstoneIsStillProtective() {
         let elsewhere = makeEnvironment(serverOrigin: "https://other.example.org")
         elsewhere.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: otherUser)
@@ -313,8 +313,8 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
 
     /// The draft of a document queued for deletion is the undo's only payload — whatever the
     /// user typed before deciding. The pass must neither push it (racing our own DELETE) nor
-    /// reap it on the 404 a queued deletion actually predicts.
-    func testATombstonedDraftIsNeitherFetchedNorReaped() async {
+    /// mark it failed on the 404 a queued deletion actually predicts.
+    func testATombstonedDraftIsNeitherFetchedNorMarkedFailed() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
         env.drafts.save(draft(serverID))
@@ -352,9 +352,9 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
             "the document is reconciled again")
     }
 
-    /// A legacy (baseline-less) draft routes to the clock-tolerance rule, whose launch-only
-    /// branch is the loop's *other* deleting line. It must be suppressed too.
-    func testTheLaunchDiscardNeverDeletesATombstonedDraft() async {
+    /// A legacy (baseline-less) draft routes to rule 3 (`.discardServerWins`), which records a
+    /// conflict. A tombstoned draft must be skipped without stamping a conflict either.
+    func testLegacyStaleTombstonedDraftNeverRecordsAConflict() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
         env.drafts.save(
@@ -740,11 +740,10 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertFalse(env.coordinator.isPendingDelete(documentID: serverID))
     }
 
-    /// **The undo race must not cost the user their text.** The DELETE lands, the undo arrives
-    /// too late — and then, *in the same pass*, `runSyncPass` finds a draft whose document now
-    /// 404s, with the tombstone gone so none of its suppressions apply, and reaps it. The user
-    /// pressed "keep this document" and lost both the document and their only copy of the
-    /// unsaved text.
+    /// **The undo race must not strand the user's text on a dead id.** The DELETE lands, the
+    /// undo arrives too late — and then, *in the same pass*, `runSyncPass` finds a draft whose
+    /// document now 404s, with the tombstone gone so none of its suppressions apply, and marks
+    /// it failed under a dead id that can never sync. The user pressed "keep this document".
     ///
     /// The fix keeps the work by re-minting the document as a locally-created one, which is the
     /// honest reading of the undo: the server copy is gone, so the way to keep the content is to
@@ -984,10 +983,10 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
             "the checkpoint stands rather than being cleared by an unverifiable 404")
     }
 
-    /// The reap's sibling guard. With the tombstones undecodable `isPendingDelete` answers
-    /// false for every tombstoned document, so a 404 caused by the app's own DELETE reads as a
-    /// co-author's delete and takes the draft — the undo's only payload.
-    func testAnUnreadableDeleteStoreAlsoSuppressesThe404Reap() async {
+    /// The 404/403 refusal's sibling guard. With the tombstones undecodable `isPendingDelete`
+    /// answers false for every tombstoned document, so a 404 caused by the app's own DELETE
+    /// would otherwise mark the draft failed while its deletion is unknown.
+    func testAnUnreadableDeleteStoreSuppresses404FailureStamping() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
         env.drafts.save(draft(serverID, markdown: "the user's only copy"))
@@ -1003,6 +1002,45 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertEqual(
             relaunched.coordinator.state(for: serverID), .idle,
             "and must skip without marking the draft failed")
+    }
+
+    /// The `.discardServerWins` branch's sibling guard. With the tombstones undecodable
+    /// `isPendingDelete` answers false for every tombstoned document, so a stale legacy draft
+    /// belonging to an unknown deletion must skip without recording a conflict.
+    func testAnUnreadableDeleteStoreSuppressesLegacyConflictRecordingToo() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        // Baseline-less and far older than the server → rule 3 answers `.discardServerWins`.
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Doc", markdown: "legacy body",
+                updatedAt: Date(timeIntervalSince1970: 1), baseline: nil))
+        env.defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingDeletes")
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        let id = serverID.uuidString.lowercased()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(
+                statusCode: 200, headers: [:],
+                body: Data(
+                    """
+                    {"id": "\(id)", "title": "Server copy", "content": "# Server moved on",
+                     "created_at": "2026-03-01T12:00:00Z", "updated_at": "2030-01-01T00:00:00Z"}
+                    """.utf8), error: nil)
+        }
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertGreaterThan(
+            log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0,
+            "the pass must actually reach the decision — otherwise this proves nothing")
+        XCTAssertEqual(
+            env.drafts.draft(for: serverID)?.markdown, "legacy body",
+            "unknown tombstones must keep the draft untouched")
+        XCTAssertNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "unknown tombstones must skip without recording a conflict")
+        XCTAssertEqual(relaunched.coordinator.state(for: serverID), .idle)
     }
 
     /// A landed deletion tells the lists, so a row already on screen leaves rather than
@@ -1098,10 +1136,10 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
     }
 
     /// **The revive runs even with an editor open on the dying id**, unlike every other record
-    /// remover here. Deferring was the obvious choice and is the unsafe one: the tombstone is
-    /// already gone, so `runSyncPass` later in the same pass reaps the draft — the exact loss
-    /// the revive prevents — and a relaunch never reconsiders it, since `openEditors` is empty
-    /// but so is the tombstone. Preserving the body wins over preserving the screen's backing.
+    /// remover here. Deferring is unsafe: the tombstone is already gone, so `runSyncPass` later
+    /// in the same pass marks the draft failed under a dead id — and a relaunch never
+    /// reconsiders the revive, since `openEditors` is empty and so is the tombstone. Carrying
+    /// the body to a new local document wins over preserving the dead screen's backing.
     func testTheReviveRunsEvenWithAnEditorOpenOnTheDyingID() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
@@ -1121,7 +1159,7 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         let revived = env.creates.allCreates().first
         XCTAssertNotNil(revived, "the body was carried to a document that can actually be sent")
         XCTAssertEqual(env.drafts.draft(for: revived!.localID)?.markdown, "the user's only copy")
-        XCTAssertNil(env.drafts.draft(for: serverID), "nothing is left under the dead id to be reaped")
+        XCTAssertNil(env.drafts.draft(for: serverID), "nothing is left failing under the dead id")
     }
 
     /// A foreign tombstone is never sent — and, because the gate is checked before the

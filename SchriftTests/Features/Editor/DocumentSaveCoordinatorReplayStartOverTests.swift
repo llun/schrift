@@ -200,9 +200,9 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
     /// Dropping the checkpoint severs the last thing tying it to the record, **orphaning** the
     /// body: the re-POST mints a different server id and its body chain looks under the local
     /// id and the new one, never the old, so it builds an *empty* document in place of the
-    /// text — and the stranded draft is separately reaped by `runSyncPass`'s 404 rule. (That
-    /// draft is never covered by the pending-create hold in either ordering; the hold is keyed
-    /// on the local id.)
+    /// text — and the stranded draft is left failing under a dead id when `runSyncPass`
+    /// GETs it and takes the same 404. (That draft is never covered by the pending-create
+    /// hold in either ordering; the hold is keyed on the local id.)
     func testAStartOverTakesTheOrphanedBodyBackToTheLocalID() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
@@ -228,13 +228,9 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
         XCTAssertEqual(
             relaunched.drafts.draft(for: local.id)?.markdown, "# Only copy",
             "and the body came back to the id a fresh create will look for")
-        // Deliberately *not* asserting the server-id draft is gone. It would be — but not
-        // necessarily because the take-back removed it: `runSyncPass` runs next in this same
-        // pass, is not gated by the pending-create hold (keyed on the local id), GETs that
-        // draft, meets the same 404 and reaps it. So the assertion passes even with the
-        // take-back's `remove` deleted, which makes it a claim the test cannot establish.
-        // Pinning move-versus-copy here would need that draft's own GET to succeed, and it
-        // cannot: it names the id that just 404'd.
+        XCTAssertNil(
+            relaunched.drafts.draft(for: serverID),
+            "the take-back moved the draft off the dead server id")
     }
 
     /// The tail of `discardPendingWork` belongs to the document being **deleted**, not to the
@@ -399,7 +395,7 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
             "the local body is not overwritten by the server-id draft")
         XCTAssertEqual(
             relaunched.drafts.draft(for: serverID)?.markdown, "# Against the real document",
-            "and the server-id body survives the pass rather than being reaped by it")
+            "and the server-id body stays untouched while the checkpoint stands")
     }
 
     /// **A delete arriving under the server id must clear the record too.** Once checkpointed,
@@ -593,7 +589,7 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
         // The user typed under the server id, a conflict held the push — and they navigated
         // away, so no editor is open and no save is in flight. That is the whole point: the
         // work at stake leaves no witness of *concurrent* activity, so a gate that only asks
-        // about concurrency lets the discharge through and reaps the draft.
+        // about concurrency lets the discharge through and leaves the draft failing on a 404.
         relaunched.coordinator.recordConflict(documentID: serverID, serverUpdatedAt: Date())
         relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# Held")
 

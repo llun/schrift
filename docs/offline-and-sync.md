@@ -935,17 +935,11 @@ branch instead of popping a banner. Outcomes:
   must not remain readable in the durable cache. Draft lifecycle stays with the
   coordinator (`recoverDrafts` keeps drafts on 404/403 and marks them `.failed`).
 - **Displayed source was a stored draft (source 2) and the user has NOT edited
-  this session:** re-run today's staleness check. If
-  `fetched.updatedAt > draft.updatedAt + pendingDraftClockTolerance`, the server
-  wins — install the fetched content directly (replacing blocks/title and
-  resetting the dirty baseline, matching today's behavior where the stale draft
-  would never have been shown), remove the draft after re-checking it is
-  unchanged (mirroring `recoverDrafts`' re-check,
-  `DocumentSaveCoordinator.swift:107–109`, since the user may have started
-  editing during the await), update the cache, and set `lastSyncedAt`. Otherwise
-  (draft within tolerance) fall through to the dirty rule below. Without this,
-  the draft-first display would permanently shadow a newer server copy and a
-  resumed edit could full-overwrite it.
+  this session:** reconcile via `draftSyncDecision`. A waiting draft is never
+  discarded automatically: when the server moved on (`.conflict`, or legacy
+  `.discardServerWins`), keep the draft on screen, record a conflict so the user
+  chooses Keep mine / Keep server, and cache the server copy. Otherwise (`.push`),
+  adopt any server rename, cache the server copy, and enqueue the draft.
 - **On-screen content is dirty** (in-flight save, a within-tolerance draft, or
   any edit made this session): update the cache silently for next time; **never**
   show a banner or disturb the edits. Conflict handling stays with the save
@@ -992,27 +986,20 @@ branch instead of popping a banner. Outcomes:
   load-bearing: it is the only affordance that unpins such a document. (Tap-to-edit
   reaches `saveNow` too, and works offline since 2026-08-01, but it is not a *retry* —
   it re-enters the session rather than resending.)
-  **`pendingDraftClockTolerance` may only discard a draft *stranded by an earlier
-  session*** — never one the retry affordance is holding. This rule runs both at
-  launch (`recoverDrafts`) **and mid-session** — `syncPendingDrafts` is the
-  repeatable funnel the reconnect/foreground triggers fire, so it no longer runs
-  only "on a document nobody is looking at". Because of that it **skips a
-  `.failed` draft** (`if case .failed = state(for:) { continue }`): a draft whose
-  save failed *this* session is a retry candidate with its "Couldn't save" retry
-  on screen, exactly why `reconcileDraft` returns early on
-  `saveState == .failed`. A transient/transport save failure (offline, 5xx, rate
-  limit) is classified as **`.pendingSync`** rather than `.failed` (see the save
-  states below), and gets the same protection on **both** sides: a beyond-window
-  `.pendingSync` draft is **never discarded** — `runSyncPass` records a **`SyncConflict`**
-  for it instead (the `.discardServerWins` → `case .pendingSync` arm), so a queued offline
-  edit the server has moved past becomes a *question*, not a silent deletion and not a
-  silent overwrite. (Merely *skipping* it, as an earlier revision did, stranded it: never
-  pushed, never discarded, and — the decision not being `.conflict` — no pill either, so the
-  only escape left was a retry tap that overwrote the newer server copy with no prompt at
-  all.) `reconcileDraft`'s early return covers `.failed` **and** `.pendingSync` so a plain
-  pull-to-refresh can't drop it either — and it still **records a conflict on the way out**,
-  because keeping the draft is not the same as staying blind to the server. Applying the
-  tolerance rule to either deletes visible content.
+  **`pendingDraftClockTolerance` never discards a waiting draft.** Because
+  `syncPendingDrafts` is the repeatable funnel for launch (`recoverDrafts`),
+  reconnect, and foreground triggers, it runs on documents the user may be
+  looking at. It **skips a `.failed` draft**
+  (`if case .failed = state(for:) { continue }`), which is owned by the
+  "Couldn't save" retry affordance. A transient/transport save failure (offline,
+  5xx, rate limit) is classified as **`.pendingSync`** rather than `.failed`
+  (see the save states below), and `.discardServerWins` records a
+  **`SyncConflict`** for both `.pendingSync` and idle legacy drafts so a queued
+  edit the server has moved past becomes a *question*, never a silent deletion
+  or overwrite. `reconcileDraft`'s early return covers `.failed` **and**
+  `.pendingSync` so a pull-to-refresh does not re-enqueue behind those
+  affordances while still **recording a conflict on the way out**, because
+  keeping the draft is not the same as staying blind to the server.
   An *idle* stranded (legacy, baseline-less) draft beyond the window is never deleted by
   `runSyncPass`: `.discardServerWins` records a conflict on both launch and mid-session
   passes so the user chooses Keep mine / Keep server, and `reconcileDraft` does the
@@ -1921,8 +1908,8 @@ is the only honest value at mint time — there is no server state to descend fr
 — but a baseline-less draft routes to `draftSyncDecision` rule 3, the 120 s clock
 tolerance. The instant the create POST lands, the new document's `updated_at` is
 *now* while the draft's is however long ago the user last typed, which offline is
-the entire point. Rule 3 would answer `.discardServerWins`, and the launch pass
-would **delete the body**, leaving the empty document the POST had just created.
+the entire point. Rule 3 would answer `.discardServerWins`, raising a false
+conflict against the empty document the POST had just created.
 So migration must stamp one before the draft is replayed — saying what the body
 **descends from**, which is not always what was observed. Undiverged that *is* the
 observed state: the create response on a fresh POST (where `markdown: ""` is provable,
@@ -1982,7 +1969,7 @@ Three ordering rules make it safe, all for reasons this document has met before:
   leaves states on disk in which part of a subtree is gone and the rest is not, which is the
   dangling-record resurrection above reached through a kill rather than a bug.
 - **Records before drafts**, the same order the single-document delete already uses: a draft
-  with no record is inert and the sync pass's ordinary 404 rule reaps it, where a record with
+  with no record is inert (only hitting 404 and marking failed if synced), where a record with
   no draft POSTs an empty document under its mint title.
 - **A sub-page whose editor is open is re-parented to the root rather than deleted.** Every
   other record remover in the coordinator defers to an open editor, and this is the only one
@@ -2227,8 +2214,7 @@ already-recorded ghost residual below, not a new one.
 - **`discardPendingWork(localID)` is less thorough than its server-id twin.** On a
   checkpointed record it takes the `isPendingCreate` branch and removes only the local
   draft, leaving a `serverID` draft and its id-keyed maps behind — where the
-  `checkpointedRecord(forServerID:)` branch sweeps both. It self-heals via the server `DELETE` the local-delete branch now issues (the record goes, so the sweep guard passes and the ordinary 404
-  rule reaps it), but the local-delete branch should square the two.
+  `checkpointedRecord(forServerID:)` branch sweeps both. After the server `DELETE` the local-delete branch issues, the record goes and the stray draft only hits 404/failed, so the local-delete branch should square the two.
 - **Carrying a rename through the adopt-the-server branch.** Since `postedTitle` landed,
   the code *can* prove a local rename is newer than the name the server learned — the
   evidence objection that justified writing nothing there is spent. What still blocks it is
@@ -2256,8 +2242,8 @@ already-recorded ghost residual below, not a new one.
 - **An escape for a checkpoint that keeps 404ing with work under its server id.** The
   start-over now declines while a `serverID` draft survives, so a genuinely deleted
   document leaves the record checkpointed indefinitely: three GETs plus a `/users/me/` per trigger — four, once `runSyncPass` also fetches the surviving draft's document, the body on
-  disk, nothing reaping it and no way to see it. That is deliberate — the alternative
-  deleted the only copy on a proxy hiccup — but it is the same shape as the `.forbidden`
+  disk, nothing clearing it and no way to see it. That is deliberate — the alternative
+  strands the draft failing under a dead id while re-POSTing a duplicate — but it is the same shape as the `.forbidden`
   resume below and wants the same affordance: surface the stranded body and let the user
   keep or discard it. Until then the escape is manual (resolve the conflict, or discard the
   document, which the create UI now can).
@@ -2274,10 +2260,9 @@ already-recorded ghost residual below, not a new one.
   never be replayed here** — another account's, or an unattributable one. Their
   content is protected, but they are invisible, unsendable, and not deletable
   through any UI, and they hold a full document body in UserDefaults indefinitely.
-  Note this is a *change*: before the holds, such a draft was eventually reaped by
-  the sync pass's 404/403 branch. The same affordance owes a way to clear a
+  The same affordance owes a way to clear a
   **quarantined** blob, whose bytes are written once and never read or removed —
-  and whose mere existence keeps draft cleanup suppressed on that device.
+  and whose mere existence keeps 404/403 refusal and legacy conflict stamping suppressed on that device.
 
 ### The create replay (2026-08-01)
 
@@ -2700,15 +2685,15 @@ one is removed, so that no instant exists with the content nowhere — and the
 checkpoint is the last thing tying it to the record. Clear it first and the body is
 **orphaned**: the re-POST mints a *different* server id and its body chain looks under
 the local id and the new one, never the old, so it builds an empty document, and the
-stranded draft is separately reaped by `runSyncPass`, which GETs it and takes the same 404.
+stranded draft is left failing under a dead id when `runSyncPass` GETs it and takes the same 404.
 
 **And it starts over only when nothing is left under that id.** The premise of the whole
 branch is "the checkpointed document is gone", and a bare `.notFound` does not establish
 that — a proxy hiccup maps to it too ([`standards/editor-save.md`](standards/editor-save.md) invariant 0c). Two effects hang off that
-premise, and both are destructive: discharging the conflict drops the held keystrokes, and
+premise: discharging the conflict drops the held keystrokes, and
 clearing `syncedServerID` disarms the server-id suppression above — after which
-`runSyncPass`, next in the *same* pass and on the *same* 404, deletes the draft. So one
-spurious 404 could take the user's only copy, with no process death and no editor open.
+`runSyncPass`, next in the *same* pass and on the *same* 404, marks the draft failed while
+a re-POST mints a separate document.
 
 **And a missing draft is not evidence there never was one.** The gate below asks whether
 work survives under the server id — but a save that started *and settled successfully*
@@ -2739,10 +2724,8 @@ draft would yank the screen's disk backing and split the conflict mirror
 This does mean a genuinely deleted document can strand: checkpointed forever, two GETs per
 trigger, its body on disk but unreachable. That is the same stuck-but-lossless outcome the
 `.forbidden` resume already accepts, and it is bounded by the same owed recovery affordance —
-recorded below. An earlier revision discharged instead, reasoning that `runSyncPass` skips a
-conflicted draft so the reap would never run and the record would strand permanently. True,
-but it ranked the harms backwards: stranding is recoverable and deleting the only copy is
-not, which is the hierarchy the rest of this file already applies.
+recorded below. Discharging unconditionally would drop the conflict hold on a bare 404;
+stranding is recoverable whereas dropping the hold is not.
 
 **Order is the whole point.** These are two independent
 UserDefaults keys, so a kill between them is a real state: move-then-clear is
@@ -2755,10 +2738,8 @@ draft is the user's own separate work, which must not overwrite the local body. 
 fetch succeeded; here it 404'd, so the document is *probably* gone — a bare
 `.notFound` is not proof, which is the whole reason for the guard described above.)
 That case is no longer a loss: with both drafts present the start-over declines too,
-the checkpoint survives, and the checkpoint is what stops `runSyncPass` reaping the
-`serverID` draft in the same pass. Both bodies stay on disk. An earlier revision of
-this paragraph described the opposite — the newer server-id body dropped while the
-older local one is re-POSTed — which is exactly the loss that guard closed.
+the checkpoint survives, and the checkpoint is what stops `runSyncPass` marking the
+`serverID` draft failed in the same pass. Both bodies stay on disk.
 
 **`.notFound` only, never `.forbidden`** — a bare 403
 is not evidence a document is gone (an ancestor access recompute can 403
@@ -2972,9 +2953,9 @@ response and nowhere else yet — plus the deleted document's own level, or an i
 *its* children re-creates the entry the purge just dropped. The editor's Subpages list bumps
 `childrenGeneration` for the identical reason.
 
-**An unreadable delete store also suppresses the 404/403 failure stamp.** `pendingDeletes` is empty then, so
-`isPendingDelete` answers false for every tombstoned document and a 404 caused by the app's own
-DELETE would otherwise mark the draft `.failed`.
+**An unreadable delete store also suppresses the 404/403 failure stamp and `.discardServerWins` conflict stamp.** `pendingDeletes` is empty then, so
+`isPendingDelete` answers false for every tombstoned document and a 404 or stale legacy
+check on an unknown tombstone would otherwise mark the draft `.failed` or conflicted.
 
 When a deletion lands, every list holding the row **drops it** rather than letting it
 un-strike back into looking alive — `observeDocumentDeleted` is a fan-out precisely because
@@ -3010,9 +2991,9 @@ it wrong cost the user their text.
 
 Leaving the local side untouched is **not** enough. With the tombstone gone, every one of
 its suppressions is off, and `runSyncPass` — later in that very pass — finds a draft whose
-document now 404s (because the pass itself just deleted it), passes all four of its guards,
-and reaps it. The user pressed "keep this document" and lost both the document and the only
-copy of their unsaved text.
+document now 404s (because the pass itself just deleted it), passes all of its guards,
+and marks it failed under a dead id that can never sync. The user pressed "keep this
+document", not "strand my draft on a deleted page".
 
 So the undo is *honoured* instead. `reviveAsLocalDocument` re-mints the document as one this
 device owns, carrying the body over from the draft (or, failing that, the cached copy), and
@@ -3020,10 +3001,10 @@ the create replay POSTs it. That is exactly what the checkpointed path already g
 through its `.notFound` start-over; this gives the plain server document the same recovery.
 **The revive runs even with an editor open on the dying id**, unlike every other record
 remover here. Deferring is the obvious choice and the unsafe one: the tombstone is already
-gone, so `runSyncPass` later in the same pass reaps the draft — the exact loss the revive
-prevents — and a relaunch never reconsiders it, since `openEditors` is empty but so is the
-tombstone. A screen still open on the dead id keeps its in-memory content and loses only its
-disk backing, and that content is what was just carried into the revived document.
+gone, so `runSyncPass` later in the same pass marks the draft failed under a dead id — and
+a relaunch never reconsiders the revive, since `openEditors` is empty and so is the
+tombstone. A screen still open on the dead id is torn down, and its flushed body was just
+carried into the revived document.
 
 **A checkpointed record takes a different branch, and must.** Its body still lives under the
 record's `localID` — the migration has not moved it — so a revive keyed on the *server* id

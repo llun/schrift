@@ -359,6 +359,27 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
         XCTAssertEqual(savesInFlight(log), 0)
     }
 
+    /// A 404/403 landing after the draft was removed or replaced during the await must not
+    /// stamp `.failed` onto a document that has moved on.
+    func testSyncPassDoesNotMarkFailedWhenDraftChangesDuring404Fetch() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Old", updatedAt: Date()))
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return MockURLProtocol.Stub(statusCode: 404, headers: [:], body: Data(), error: nil, delay: 0.3)
+        }
+
+        async let sync: Void = coordinator.syncPendingDrafts()
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1 }
+        coordinator.discardPendingWork(documentID: documentID)
+        await sync
+
+        XCTAssertEqual(coordinator.state(for: documentID), .idle)
+        XCTAssertNil(coordinator.failureReport(for: documentID))
+        XCTAssertNil(draftStore.draft(for: documentID))
+    }
+
     func testRecoverDraftsRunsOnlyOnce() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log)
@@ -430,13 +451,12 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
     }
 
     /// A save that FAILED this session leaves a `.failed` state and its draft (the
-    /// user's only copy). Firing `syncPendingDrafts()` mid-session must NOT
-    /// tolerance-discard it even when the server has moved far past the draft —
-    /// that would silently delete visible content the retry affordance still owns.
+    /// user's only copy). Firing `syncPendingDrafts()` mid-session must NOT reconcile
+    /// or stamp a conflict onto it — that draft is owned by the retry affordance.
     func testSyncPendingDraftsSkipsAFailedSaveDraft() async {
         let log = RequestRecorder()
         let (coordinator, draftStore, _) = makeCoordinator()
-        // Far-future server updated_at: the raw tolerance rule WOULD discard the draft.
+        // Far-future server updated_at: reconciling would record a conflict.
         let futureBody = Data(
             """
             {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}

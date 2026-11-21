@@ -166,15 +166,24 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
 
         // A mid-session trigger keeps the draft and records a conflict.
         await coordinator.syncPendingDrafts()
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 1)
         XCTAssertEqual(
             draftStore.draft(for: documentID)?.markdown, "# Stale",
             "a repeatable trigger must not delete a waiting classic draft")
         XCTAssertNotNil(coordinator.conflict(for: documentID))
 
-        // Launch recovery also keeps the draft and conflict.
-        await coordinator.recoverDrafts()
-        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Stale", "launch recovery never discards it")
-        XCTAssertNotNil(coordinator.conflict(for: documentID))
+        // Launch recovery on a fresh unconflicted draft also keeps it and records a conflict.
+        let (launchCoordinator, launchDraftStore, _) = makeCoordinator()
+        launchDraftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Stale",
+                updatedAt: Date(timeIntervalSince1970: 0)))
+        await launchCoordinator.recoverDrafts()
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 2)
+        XCTAssertEqual(
+            launchDraftStore.draft(for: documentID)?.markdown, "# Stale",
+            "launch recovery never discards it")
+        XCTAssertNotNil(launchCoordinator.conflict(for: documentID))
         XCTAssertEqual(savesInFlight(log), 0)
     }
 

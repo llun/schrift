@@ -369,12 +369,11 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             "the held save is kept, not dropped on the floor")
     }
 
-    // MARK: - Hold 2: the sync pass must not destroy a local document
+    // MARK: - Hold 2: the sync pass must not fetch or fail a local document
 
     /// The pass GETs every draft's document before deciding. A local id 404s, and the
-    /// existing catch removes the draft — which for a document that exists nowhere else
-    /// is the user's only copy. Without this guard the first launch, foreground, or
-    /// reconnect after creating a document offline silently deletes it.
+    /// catch marks the draft `.failed` as a missing server document. Skipping keeps local
+    /// creates owned by the create replay.
     /// Deliberately does **not** enqueue first: a queued save would make the pre-existing
     /// `queued[…] == nil` guard `continue` on the next line, so the test would stay green
     /// with hold 2 deleted and would be pinning machinery that predates this change.
@@ -501,15 +500,12 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertEqual(defaults.data(forKey: "dev.llun.Schrift.pendingDrafts.unreadable"), Data("not json".utf8))
     }
 
-    /// The **other** deleting line in `runSyncPass` — the `.discardServerWins` launch branch —
-    /// carries the same `!createStoreUnreadable` guard, and its sibling below cannot cover it:
-    /// that test drives a 404, which reaches the *catch*. Getting here needs a draft whose
-    /// baseline is nil (rule 3) against a server that has moved past it, on a launch pass.
-    /// The line's own comment calls it unreachable today, since every writer of a draft under
-    /// a freshly-minted server id stamps a baseline — but a hand-built baseline-less draft is
-    /// exactly what that shape looks like, and it is the one create-related deleting line the
-    /// suite otherwise never executes.
-    func testAnUnreadableCreateStoreSuppressesTheLaunchDiscardToo() async {
+    /// The `.discardServerWins` branch in `runSyncPass` carries the same `!createStoreUnreadable`
+    /// guard, and its sibling below cannot cover it: that test drives a 404, which reaches the
+    /// *catch*. Getting here needs a baseline-less draft (rule 3) against a server that has moved
+    /// past it. Without the guard, an unreadable create store would stamp a conflict onto a draft
+    /// that may belong to an unknown local create.
+    func testAnUnreadableCreateStoreSuppressesLegacyConflictRecordingToo() async {
         let log = RequestRecorder()
         let stale = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
         MockURLProtocol.stubHandler = { request in
@@ -557,8 +553,8 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
 
     /// The whole hold rests on the create store decoding. If it ever doesn't, the records
     /// are *unknown* — not absent — so any draft might belong to a local document, and the
-    /// 404 branch must skip without deleting or marking failed.
-    func testAnUnreadableCreateStoreSuppressesTheSyncPassDeleteEntirely() async {
+    /// 404 branch must skip without marking failed.
+    func testAnUnreadableCreateStoreSuppresses404FailureStamping() async {
         let log = RequestRecorder()
         MockURLProtocol.stubHandler = { request in
             log.record(request)

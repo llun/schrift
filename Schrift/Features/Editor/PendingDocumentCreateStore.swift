@@ -236,34 +236,34 @@ final class PendingDocumentCreateStore {
     /// which is a different thing from "there are none".
     ///
     /// The distinction is load-bearing rather than pedantic: the holds key off these
-    /// records, and `runSyncPass` deletes a draft whose document 404s. Reading a corrupt
-    /// blob as "no local documents exist" would therefore disarm every hold and let the
-    /// next sync pass destroy the content of every offline-created document at once. The
-    /// coordinator asks this at init and suppresses that delete entirely.
+    /// records, and `runSyncPass` marks a draft failed on 404/403 (and stamps a conflict on
+    /// `.discardServerWins`). Reading a corrupt blob as "no local documents exist" would
+    /// disarm every hold and let the next sync pass stamp `.failed` or a conflict onto
+    /// offline-created documents whose records are merely unreadable. The coordinator asks
+    /// this at init and suppresses both branches while create records are unknown.
     ///
-    /// That suppression only has to cover the 404 branch. Every other draft-deleting path
-    /// falls into one of two classes, neither of which can fire under corruption. Some
-    /// require a *successful* server interaction with that **client-minted** id — a landed PATCH, a 200
-    /// `formattedContent`, a successful DELETE (`resolveConflictKeepingServer`,
-    /// `finish`'s success and discarded branches) — and a client-minted id can never get one. The rest are
-    /// the replay's own (the migration's draft move, the `.notFound` take-back, the
-    /// adopt-the-server branch, `discardPendingWork`'s checkpointed branch), and they read
-    /// the same empty mirror a corrupt blob produces, so they never run at all. (Note the
-    /// first criterion is about the *local* id: a draft under a checkpointed record's
-    /// **server** id gets a 200 `formattedContent` perfectly well, which is why both of
-    /// `runSyncPass`'s deleting lines carry an explicit `createStoreUnreadable` guard rather
-    /// than resting on this argument.) Under corruption a local document
-    /// degrades to `.failed` with its draft intact, never to deletion.
+    /// Every other draft-mutating path falls into one of two classes, neither of which can
+    /// fire under corruption. Some require a *successful* server interaction with that
+    /// **client-minted** id — a landed PATCH, a 200 `formattedContent`, a successful DELETE
+    /// (`resolveConflictKeepingServer`, `finish`'s success and discarded branches) — and a
+    /// client-minted id can never get one. The rest are the replay's own (the migration's
+    /// draft move, the `.notFound` take-back, the adopt-the-server branch,
+    /// `discardPendingWork`'s checkpointed branch), and they read the same empty mirror a
+    /// corrupt blob produces, so they never run at all. (Note the first criterion is about
+    /// the *local* id: a draft under a checkpointed record's **server** id gets a 200
+    /// `formattedContent` perfectly well, which is why both the 404/403 refusal and
+    /// `.discardServerWins` branches in `runSyncPass` carry an explicit `createStoreUnreadable`
+    /// guard rather than resting on this argument.) Under corruption a local document's draft
+    /// stays untouched rather than being marked failed or conflicted.
     /// **Sticky across launches, deliberately.** Quarantining preserves the record *bytes*,
-    /// but on its own it buys nothing for the thing that matters: the live key comes back
-    /// clean, so the next launch re-arms the 404 branch and deletes the drafts belonging to
-    /// those unknown records — exactly the loss the suppression exists to prevent. So a
-    /// surviving quarantine keeps answering true.
+    /// but on its own it leaves the live key clean, so the next launch would re-arm those
+    /// `runSyncPass` branches against drafts belonging to the unknown records. A surviving
+    /// quarantine therefore keeps answering true.
     ///
-    /// The cost is that drafts for genuinely-deleted server documents stop being cleaned up
-    /// on this device until the quarantine is cleared, which nothing does yet. That is the
-    /// right side to err on — a stale draft is inert, a deleted one is gone — and clearing
-    /// it belongs with the recovery affordance the docs already record as owed.
+    /// The cost is that 404/403 refusals and legacy conflicts stop stamping on this device
+    /// until the quarantine is cleared, which nothing does yet. That is the right side to err
+    /// on — leaving drafts untouched is recoverable — and clearing it belongs with the
+    /// recovery affordance the docs already record as owed.
     var holdsUnreadableData: Bool {
         userDefaults.data(forKey: Self.quarantineKey) != nil || liveDataIsUnreadable
     }

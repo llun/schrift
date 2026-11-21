@@ -997,7 +997,7 @@ markdown write endpoint**. Understand this before touching the save path:
   Three ordering rules: **every record in one
   store write**, the root's included (`PendingDocumentCreateStore.remove(localIDs:)` — a loop
   would leave a half-deleted subtree, i.e. the dangling-record resurrection reached through a
-  kill); **records before drafts** (a draft with no record is inert and the 404 rule reaps it,
+  kill); **records before drafts** (a draft with no record is inert and only 404s/fails if synced,
   a record with no draft POSTs an empty document); and **a sub-page whose editor is open is
   re-parented to the root rather than deleted** — every other record remover defers to an open
   editor, and this is the only one that would take a live screen's disk backing, while merely
@@ -1051,12 +1051,12 @@ markdown write endpoint**. Understand this before touching the save path:
   *server* id, and the checkpoint is the last thing tying it to the record — so
   clearing first **orphans** the body: the re-POST mints a different server id and
   its body chain never looks under the old one, so it builds an **empty** document,
-  and the stranded draft is separately reaped by `runSyncPass`'s 404 rule.
+  and the stranded draft is left failing under a dead id once `runSyncPass` GETs it and takes the same 404.
   **And it starts over only when nothing is left under that id.** A bare `.notFound` is not
-  proof the document is gone (invariant 0c), yet two destructive effects hang off that
+  proof the document is gone (invariant 0c), yet two effects hang off that
   premise: discharging the conflict drops the held keystrokes, and clearing `syncedServerID`
   disarms the server-id suppression — after which `runSyncPass`, next in the *same* pass on
-  the *same* 404, deletes the draft. Gating on *concurrent* activity is insufficient, because
+  the *same* 404, marks the draft failed while a re-POST mints a separate document. Gating on *concurrent* activity is insufficient, because
   the user who typed under `serverID` and navigated away leaves no such witness and theirs is
   the work at stake; the sufficient question is whether anything remains to lose, so the
   start-over requires `draftStore.draft(for: serverID) == nil` — **and `!mayPredateSave(marker)`
@@ -1169,8 +1169,8 @@ markdown write endpoint**. Understand this before touching the save path:
   baseline-less draft routes to `draftSyncDecision` rule 3's 120 s tolerance — and
   the moment a create POST lands, the new document's `updated_at` is *now* while
   the draft's is hours old, which is the point of creating offline. Rule 3 would
-  answer `.discardServerWins` and the launch pass would delete the body, leaving
-  the empty document the POST just made. **But it must say what the body *descends
+  answer `.discardServerWins` and raise a false conflict against the empty document
+  the POST just made. **But it must say what the body *descends
   from*, not what was observed** — where those differ, stamping the observation is
   self-defeating: a diverged resume would hand `draftSyncBodyDecision` rule 2 a proof
   (`serverUpdatedAt <= baselineDate`, trivially true of the state it was copied
@@ -1179,7 +1179,7 @@ markdown write endpoint**. Understand this before touching the save path:
   held save full-overwrites the co-author **by way of** the conflict meant to stop
   it. Diverged, the baseline is therefore a `nil` clock and an empty body — what an
   offline body actually descends from — which re-reaches `.conflict` while staying
-  non-nil so rule 3 can never discard. **The baseline is not the only proof that has
+  non-nil so rule 3's clock-tolerance fallback never runs. **The baseline is not the only proof that has
   to be withheld.** Rule 1 (`serverHoldsOurLastPush`) is consulted *before* rule 2, and
   `enqueue` stamps the draft's `lastPushedMarkdown` from
   `lastConfirmedPushMarkdown[serverID]` — which can hold the very body just conflicted
@@ -1221,9 +1221,9 @@ markdown write endpoint**. Understand this before touching the save path:
   one always had. The queued path clears nothing local; see `handleDidQueueDelete` under
   the conflict-lifecycle rule below.
   **Five suppressions, each for a named failure.** `runSyncPass` skips a tombstoned draft
-  pre-fetch and restates it in both the 404/403 catch and the `.discardServerWins` branch
-  so a tombstoned draft is never marked failed or stamped with a conflict while the
-  deletion is cancellable. `runCreatePass` holds a record whose `parentID` is tombstoned — that parent is
+  pre-fetch and restates `isPendingDelete` (and `deleteStoreUnreadable`) in both the
+  404/403 catch and the `.discardServerWins` branch so a tombstoned draft is never marked
+  failed or stamped with a conflict while the deletion is cancellable or unknown. `runCreatePass` holds a record whose `parentID` is tombstoned — that parent is
   a *real* server document, so the POST would **succeed** and file a new sub-page into
   something about to be deleted — and refuses to resume a record whose `syncedServerID` is
   tombstoned, **which is the resurrection guard**: past it the resume reads the expected
@@ -1240,8 +1240,8 @@ markdown write endpoint**. Understand this before touching the save path:
   good), everything else keeps the tombstone.
   **The undo can lose its race, and leaving the local side untouched is not enough.** With
   the tombstone gone every suppression is off, so `runSyncPass` — later in the *same* pass —
-  finds a draft whose document now 404s (because the pass just deleted it), passes all four
-  guards, and reaps it: the user pressed "keep this document" and lost their text.
+  finds a draft whose document now 404s (because the pass just deleted it), passes all of
+  its guards, and marks it failed under a dead id that can never sync.
   `reviveAsLocalDocument` honours the undo instead, re-minting the document locally with the
   body carried over so the create replay POSTs it — the same recovery the checkpointed path
   already got from its `.notFound` start-over. Accepted: it comes back as a root, under a new
@@ -1726,11 +1726,11 @@ markdown write endpoint**. Understand this before touching the save path:
   (fire-and-forget on the main actor, entry re-read at fire time). It never bumps
   `replicaVersions`/`remoteChangeTokens`/`localEditVersions` — the cleanup is derived from
   an inbound update, not a new remote change or a local edit — and a reader never publishes.
-- **The 404/403 sweep has a third suppression, and it is keyed on the *server* id.**
+- **The 404/403 refusal and `.discardServerWins` branches have a third suppression, keyed on the *server* id.**
   `isPendingCreate` covers the local id only, so it misses the draft the migration writes
   under `serverID` before removing the local one — which in that window is the **only
-  copy**. `runSyncPass`'s delete branch therefore also skips any id a checkpointed record
-  is waiting to migrate onto. Only the delete, never the push: the push is what clears
+  copy**. Both branches therefore also skip any id a checkpointed record
+  is waiting to migrate onto. Only those branches, never the push: the push is what clears
   `finishMigration`'s both-drafts guard.
 - **A photo picked with no network becomes a placeholder image block, and a
   *content-keyed* save hold is what keeps it off the wire.**
@@ -2126,9 +2126,9 @@ markdown write endpoint**. Understand this before touching the save path:
   which flips `canEngageLiveEditing` false so the next `persistLiveSnapshot` is held by the
   coordinator's enqueue-hold instead of full-overwriting it, and the document downgrades to
   classic; a non-diverged stash still drops silently, exactly as before.
-  `reconcileDraft`'s server-wins rule still installs directly even mid-edit,
-  which is why `install(...)` clears `focusedBlockID`/`cursorRequest`/`selection`
-  — every content swap re-identifies the blocks.
+  Every content swap (initial load, clean revalidation, explicit "Keep the server
+  version") routes through `install(...)`, which clears
+  `focusedBlockID`/`cursorRequest`/`selection` because every swap re-identifies the blocks.
 - **Four invariants keep the full-overwrite save from eating content.** Every one
   was learned the hard way; each has a named regression test.
   0. **Never enqueue a save for content that isn't loaded.** `startEditing` guards
@@ -2183,7 +2183,8 @@ markdown write endpoint**. Understand this before touching the save path:
   1b. **A stored draft that wins the tolerance rule with `saveState == .idle` and no
      pending save has no funnel at all** — `flushPendingChanges` needs `isDirty`,
      `saveNow` and the retry caption need `.failed`, `recoverDrafts` runs once per
-     process — and the tolerance rule will eventually delete it. So `reconcileDraft`
+     process — and the draft would sit unpushed (or conflict once the server moves past the
+     tolerance window). So `reconcileDraft`
      **hands it back to the save pipeline**, keyed off *that state*, never off which
      screen instance recovered it: a fresh view model (pop back, reopen — the natural
      reaction to "no longer available") restores the draft locally and recovers
@@ -2212,13 +2213,11 @@ markdown write endpoint**. Understand this before touching the save path:
      load-bearing** — it is the only affordance that unpins such a document,
      which is why it outranks the offline wording (tap-to-edit reaches `saveNow`
      too, and now works offline, but it is not a *retry* — it re-enters the
-     session rather than resending). **`pendingDraftClockTolerance`
-     may only discard a draft *stranded by an earlier session*** — that is
-     `recoverDrafts`' job. A draft whose save failed *this* session is a retry
-     candidate the user is looking at, so `reconcileDraft` returns early on
-     `saveState == .failed` **and `.pendingSync`** (a queued offline edit a
-     pull-to-refresh must not drop). Applying the tolerance rule to either deletes
-     visible content. That early return still **records a conflict** on the way out if
+     session rather than resending). **Waiting drafts are never discarded automatically.**
+     A draft whose save failed *this* session or is queued for sync is owned by the
+     on-screen retry/pending affordance, so `reconcileDraft` returns early on
+     `saveState == .failed` **and `.pendingSync`** without re-enqueueing behind it.
+     That early return still **records a conflict** on the way out if
      the fetch shows the server diverged — detection is non-destructive, and skipping it
      let a "tap to retry" overwrite an already-fetched web edit. The comparison mixes clocks — `draft.updatedAt` is the device's,
      `formatted.updatedAt` the server's **last write** — so a slow device shrinks
