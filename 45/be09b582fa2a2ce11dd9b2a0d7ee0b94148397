@@ -1,0 +1,63 @@
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_4fb28ab57323fe::t_1fea7c2d2e507f 1262-1263
+  s_4fb28ab57323fe::t_6e36e31bd07129 1261
+  s_0303642889c22e::t_4d24f757181a3e 1260
+SchriftTests/Features/Editor/EditorViewModelTestCase.swift
+  s_0303642889c22e::t_f00b5b69f7b48f 68-70,119-120
+docs/offline-and-sync.md
+  s_0303642889c22e::t_dc1574f38602d9 439-440,524-525,1302-1303
+docs/standards/editor-save.md
+  s_0303642889c22e::t_61062bb729bf52 2013-2014,2027-2029
+Schrift/Core/Localization/Strings+th.swift
+  s_0303642889c22e::t_7fa4187b375571 46
+Schrift/Features/Editor/EditorViewModel.swift
+  s_0303642889c22e::t_2f29ae1a7d5a5b 2071-2072,2074
+Schrift/Features/Editor/PagesTreeDrawer.swift
+  s_0303642889c22e::t_e7b90c0da8f231 320-321
+Schrift/Features/Editor/PagesTreeViewModel.swift
+  s_0303642889c22e::t_99419792f65358 417,419
+Schrift/Features/Home/HomeViewModel.swift
+  s_0303642889c22e::t_877d3a696c8e82 815-818,878-882
+SchriftTests/Features/Connect/ConnectViewModelTests.swift
+  s_0303642889c22e::t_84eb8280cb5137 11-17,197,204-206
+SchriftTests/Features/Editor/DocumentSaveCoordinatorCreateTests.swift
+  s_0303642889c22e::t_a55c24db100f5b 138-151
+SchriftTests/Features/Editor/EditorViewModelChildrenTests.swift
+  s_0303642889c22e::t_2a341c640bdfa3 57-59,729-754
+SchriftTests/Features/Editor/EditorViewModelLocalDocumentTests.swift
+  s_0303642889c22e::t_39e816175f01ac 255-273,319-320
+SchriftTests/Features/Editor/NewDocumentEntryTests.swift
+  s_0303642889c22e::t_16937c934362d0 36-38
+SchriftTests/Features/Editor/PagesTreeViewModelTests.swift
+  s_0303642889c22e::t_ffef4e01417cb9 66-68,416-417,429-453,807-808
+SchriftTests/Features/Home/HomeViewModelCreateTests.swift
+  s_0303642889c22e::t_e05b4f110579fa 142-159
+SchriftTests/Features/Home/HomeViewModelTestCase.swift
+  s_0303642889c22e::t_ee394ce7a59b98 104-106
+docs/architecture.md
+  s_0303642889c22e::t_cc61b108ae6282 25-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45be09b582fa2a2ce11dd9b2a0d7ee0b94148397",
+  "prompts": {},
+  "sessions": {
+    "s_0303642889c22e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b9e80880-6d1c-448c-bf09-ce18b6ac927f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
