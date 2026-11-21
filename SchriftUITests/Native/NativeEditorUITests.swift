@@ -1482,8 +1482,10 @@ final class NativeEditorUITests: XCTestCase {
         let finished = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "pass|", "fail|"),
             object: status)
+        // The sweep takes close to two minutes on CI's iOS 27 simulator; the
+        // waiter only bounds a hang, the result's metrics are what the test checks.
         XCTAssertEqual(
-            XCTWaiter.wait(for: [finished], timeout: 120), .completed, "scroll sampler finished: \(status.label)")
+            XCTWaiter.wait(for: [finished], timeout: 240), .completed, "scroll sampler finished: \(status.label)")
 
         let result = status.label
         print("S2_SAMPLER_RESULT: \(result)")

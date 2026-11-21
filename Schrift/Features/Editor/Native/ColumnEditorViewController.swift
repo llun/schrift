@@ -873,7 +873,10 @@ final class ColumnTextContainer: UIScrollView {
     }
 
     /// Scrolls the caret (or the selection's end) of `view` into sight. A
-    /// caret off screen is where TextKit estimates it: place, lay out, place again.
+    /// caret off screen is where TextKit estimates it: place, lay out, place
+    /// again, until the scroll stops moving. On iOS 27 the estimate for text
+    /// far below the screen can take more than three passes to settle, so the
+    /// loop allows up to eight; it ends early once the caret is in sight.
     func reveal(_ view: NativeTextView) {
         let id = ObjectIdentifier(view)
         revealing = true
@@ -881,7 +884,7 @@ final class ColumnTextContainer: UIScrollView {
             revealing = false
             selections[id] = view.selectedRange
         }
-        for _ in 0..<3 {
+        for _ in 0..<8 {
             guard let region = regions[id], let end = view.selectedTextRange?.end else { return }
             let caret = view.caretRect(for: end)
             guard caret.minY.isFinite, caret.height.isFinite else { return }
