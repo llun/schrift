@@ -812,6 +812,10 @@ final class HomeViewModel {
     /// kept and protected but listed to nobody and replayed never, so minting one would create
     /// a document the user can never see again. Failing closed with the ordinary error is the
     /// honest outcome; it needs one successful `/users/me/` ever, on any launch.
+    ///
+    /// Nil too when the native editor is on and no server setup is saved: there is no
+    /// collaboration org to seed a replica from, so it shows `create.needs_online` rather than
+    /// mint a classic draft the old editor would own.
     private func createLocalDocument() -> Document? {
         guard let ownerUserID = signedInUser.userID else {
             errorKey = .home_error_create
@@ -871,7 +875,11 @@ final class HomeViewModel {
             // `.sessionExpired` is deliberately *not* a fallback either: the re-login sheet
             // is already up, and the document would be minted against an account the user is
             // in the middle of re-authenticating.
-            if let apiError = error as? DocsAPIError, retryableSaveFailure(apiError) {
+            // Online, so "go online" would be the wrong advice: with no saved server setup
+            // the fallback keeps the create's own failure rather than minting a classic draft.
+            if let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
+                !saveCoordinator.localCreateNeedsServerSetup
+            {
                 return createLocalDocument()
             }
             errorKey = .home_error_create

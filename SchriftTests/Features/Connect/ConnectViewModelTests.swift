@@ -8,6 +8,13 @@ private let identityStub = MockURLProtocol.Stub(
     body: Data(#"{"id":"11111111-1111-4111-8111-111111111111"}"#.utf8), error: nil)
 private let docs6ConfigStub = MockURLProtocol.Stub(
     statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+/// A Docs 6 config that also names its yhub org, so the remembered config can be checked for
+/// the collaboration org the native editor's offline create needs.
+private let docs6ConfigWithOrgStub = MockURLProtocol.Stub(
+    statusCode: 200, headers: [:],
+    body: Data(
+        #"{"RELEASE_VERSION":"6.0.0","COLLABORATION_WS_URL":"https://docs.llun.dev/ws/v1/acme"}"#.utf8),
+    error: nil)
 private let legacyConfigStub = MockURLProtocol.Stub(
     statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"5.4.1"}"#.utf8), error: nil)
 
@@ -187,15 +194,16 @@ final class ConnectViewModelTests: XCTestCase {
     func testADocs6SignInRemembersTheFullConfigForTheOrigin() async throws {
         let configs = ServerConfigStore(userDefaults: userDefaults)
         let viewModel = makeViewModel(serverConfigStore: configs) { request in
-            request.url?.absoluteString.hasSuffix("/config/") == true ? docs6ConfigStub : identityStub
+            request.url?.absoluteString.hasSuffix("/config/") == true ? docs6ConfigWithOrgStub : identityStub
         }
         viewModel.serverURLInput = "docs.llun.dev"
         viewModel.startSignIn()
 
         await viewModel.handleLoginComplete()
 
-        XCTAssertEqual(
-            configs.config(forServerOrigin: "https://docs.llun.dev")?.releaseVersion, "6.0.0")
+        let config = configs.config(forServerOrigin: "https://docs.llun.dev")
+        XCTAssertEqual(config?.releaseVersion, "6.0.0")
+        XCTAssertEqual(config?.collaborationOrg, "acme")
     }
 
     func testALegacyServerRefusesSignInWithTheUnsupportedErrorAndRecordsLegacy() async throws {

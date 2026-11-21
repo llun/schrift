@@ -2068,8 +2068,10 @@ final class EditorViewModel {
             if let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
                 let ownerUserID = signedInUser.userID
             {
+                // Online, so "go online" would be the wrong advice: keep the create's own
+                // failure rather than minting a classic draft.
                 if saveCoordinator.localCreateNeedsServerSetup {
-                    showError(.create_needs_online)
+                    showError(.editor_error_add_subpage)
                     return nil
                 }
                 // **Nothing is appended.** `mergedSubpages` merges the scoped

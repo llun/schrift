@@ -101,6 +101,9 @@ class HomeViewModelTestCase: XCTestCase {
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        // Pinned off: the default reads `UserDefaults.standard`, so a simulator with the native
+        // editor on would refuse every local mint these tests expect.
+        coordinator.nativeEditorEnabled = { false }
         return HomeViewModel(
             client: client,
             cache: cache ?? makeCache(),

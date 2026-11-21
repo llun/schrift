@@ -1257,10 +1257,10 @@ final class DocumentSaveCoordinator {
     ///
     /// That is narrower than "has local children", and it has to be. A sub-page created offline
     /// under an ordinary **server** document is an ordinary record too — `addSubpage` mints one
-    /// whenever the POST fails retryably — but deleting that server document takes *neither*
-    /// cascade branch in `discardPendingWork`, so the sub-page survives and the replay's probe
-    /// eventually re-roots it into Home. Announcing a deletion there would put a false sentence
-    /// in a destructive confirmation. So this resolves the id the way the cascade does, and
+    /// whenever the POST fails retryably and a server setup is saved — but deleting that server
+    /// document takes *neither* cascade branch in `discardPendingWork`, so the sub-page survives
+    /// and the replay's probe eventually re-roots it into Home. Announcing a deletion there
+    /// would put a false sentence in a destructive confirmation. So this resolves the id the way the cascade does, and
     /// answers false wherever the cascade would not run.
     ///
     /// Both ids, because the two are used at different moments in a record's life: a sub-page

@@ -139,6 +139,24 @@ final class HomeViewModelCreateTests: HomeViewModelTestCase {
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Untitled document"])
     }
 
+    /// Online, so "go online" would be the wrong advice: with no saved server setup the
+    /// retryable fallback keeps the create's own failure instead of minting.
+    func testCreateDocumentOnATransportErrorKeepsTheErrorWhenTheNativeEditorHasNoCachedConfig() async {
+        let signedIn = makeSignedInUser()
+        let viewModel = makeViewModel(signedInUser: signedIn)
+        viewModel.saveCoordinator.nativeEditorEnabled = { true }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        let document = await viewModel.createDocument()
+
+        XCTAssertNil(document)
+        XCTAssertEqual(viewModel.errorKey, .home_error_create)
+        XCTAssertEqual(viewModel.saveCoordinator.pendingCreatesVersion, 0, "nothing minted")
+        XCTAssertTrue(viewModel.recentDocuments.isEmpty)
+    }
+
     /// The other half: a server that answered and *declined*. Minting a local document there
     /// would promise a replay that will be declined again, so this keeps the error.
     func testCreateDocumentStillReportsARejectionOnTheMerits() async {

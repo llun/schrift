@@ -135,6 +135,20 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertFalse(coordinator.localCreateNeedsServerSetup)
     }
 
+    /// The mint itself is not gated: `reviveAsLocalDocument` calls it to carry content over
+    /// from a dead id, and refusing there would drop the user's work. The `create.needs_online`
+    /// refusal lives in the affordances, not here.
+    func testCreateLocalDocumentStillMintsWithTheNativeEditorOnAndNoCachedConfig() {
+        let (coordinator, _) = makeCoordinatorWithConfigStore()
+        coordinator.nativeEditorEnabled = { true }
+
+        let document = coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+
+        XCTAssertTrue(coordinator.isPendingCreate(documentID: document.id))
+        XCTAssertEqual(coordinator.pendingCreatesVersion, 1)
+    }
+
     /// Once the replay has POSTed it, the server owns the document — the fetched list is
     /// where it belongs. Surfacing it here as well would show the row twice, under an id
     /// the fetched list cannot match (local vs server), which no de-duplication can fix.

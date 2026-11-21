@@ -414,8 +414,9 @@ final class PagesTreeViewModel {
                 createErrorKey = .pages_error_create
                 return nil
             }
+            // Online, so "go online" would be the wrong advice: keep the create's own failure.
             if coordinator.localCreateNeedsServerSetup {
-                createErrorKey = .create_needs_online
+                createErrorKey = .pages_error_create
                 return nil
             }
             // Returns *here* rather than falling through to the append below, exactly as the

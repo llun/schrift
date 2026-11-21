@@ -43,7 +43,7 @@ enum Strings_th {
         .common_clear_search: "ล้างการค้นหา",
         .common_you: "(คุณ)",
         .common_loading: "กำลังโหลด",
-        .create_needs_online: "ออนไลน์เพื่อสร้างหน้า",
+        .create_needs_online: "เชื่อมต่ออินเทอร์เน็ตเพื่อสร้างหน้า",
         .search_results_one: "%d ผลลัพธ์",
         .search_results_other: "%d ผลลัพธ์",
 
