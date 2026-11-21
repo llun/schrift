@@ -43,6 +43,7 @@ enum Strings_es {
         .common_clear_search: "Borrar búsqueda",
         .common_you: "(tú)",
         .common_loading: "Cargando",
+        .create_needs_online: "Conéctate para crear una página.",
         .search_results_one: "%d resultado",
         .search_results_other: "%d resultados",
 

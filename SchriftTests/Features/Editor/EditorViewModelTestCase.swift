@@ -111,6 +111,7 @@ class EditorViewModelTestCase: XCTestCase {
             client: client, draftStore: draftStore, contentCache: contentCache,
             createStore: createStore,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
             serverOrigin: "https://docs.example.com", backgroundTasks: .noop)
         let document = coordinator.createLocalDocument(
             title: "Untitled document", parentID: nil,

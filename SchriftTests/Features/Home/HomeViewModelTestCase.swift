@@ -88,6 +88,9 @@ class HomeViewModelTestCase: XCTestCase {
             client: client, draftStore: draftStore,
             // Its own directory too, never the real Application Support one: since this PR a
             // delete routes through `purgeLocalTraces`, which removes cached document bodies.
+            replicaStore: ReplicaStore(
+                directory: contentCacheDirectory.appendingPathComponent("ReplicaDrafts"),
+                ownershipStore: ReplicaOwnershipStore(userDefaults: defaults)),
             contentCache: DocumentContentCacheStore(directory: contentCacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),

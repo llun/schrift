@@ -862,6 +862,10 @@ markdown write endpoint**. Understand this before touching the save path:
   `createLocalDocument(title:parentID:ownerUserID:)` mints the record **plus a
   seed draft** (so the editor's existing draft precedence renders it unchanged)
   and sets `.pendingSync` — nothing is syncing, but the work is on the device.
+  **With the native editor on and no cached Docs 6 config there is no org to seed
+  a replica from**, so the create affordances refuse with `create.needs_online`
+  rather than mint a classic draft; `reviveAsLocalDocument` is exempt because it
+  must never drop the content it carries.
   `discardPendingWork` drops the record with the draft, or a replay would resurrect
   what the user threw away. **But "a local delete is purely local" holds only while
   the record is un-checkpointed** — once `syncedServerID` is set the POST has landed

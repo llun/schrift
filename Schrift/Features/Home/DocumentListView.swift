@@ -11,6 +11,9 @@ struct DocumentListView: View {
     var onSearchTap: (() -> Void)? = nil
     /// When set, shows a "New doc" nav-bar action that creates and opens a document.
     var onNewDocument: (() -> Void)? = nil
+    /// When set, the create-needs-online banner offers a Retry that runs the same
+    /// create-and-open flow as the "New doc" action.
+    var onRetryCreate: (() -> Void)? = nil
 
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -58,6 +61,11 @@ struct DocumentListView: View {
                                 }
                             }
                             Spacer(minLength: 0)
+                            if viewModel.errorKey == .create_needs_online, let onRetryCreate {
+                                DocsButton(
+                                    title: loc[.common_retry], variant: .secondary, size: .small,
+                                    action: onRetryCreate)
+                            }
                             // Through `IconButton` rather than a bare 13pt glyph:
                             // it keeps the small visual box but floors the tap
                             // target at 44pt, which a footnote-sized close cross

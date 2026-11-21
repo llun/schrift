@@ -293,6 +293,28 @@ final class EditorViewModelLocalDocumentTests: EditorViewModelTestCase {
         XCTAssertEqual(env.viewModel.mergedSubpages?.map(\.id), [child!.id], "and it shows immediately")
     }
 
+    /// With the native editor on and no cached server config there is no collaboration org to
+    /// seed a replica from, so "Add a subpage" asks the user to go online instead of minting a
+    /// classic draft.
+    func testAddSubpageAsksToGoOnlineWhenTheNativeEditorHasNoCachedConfig() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeLocalEnvironment()
+        env.coordinator.nativeEditorEnabled = { true }
+
+        let child = await env.viewModel.addSubpage()
+
+        XCTAssertNil(child)
+        XCTAssertEqual(env.viewModel.errorKey, .create_needs_online)
+        XCTAssertEqual(log.methods.count, 0)
+        XCTAssertTrue(
+            env.createStore.allCreates().allSatisfy { $0.parentID != env.document.id },
+            "nothing minted under the parent")
+    }
+
     /// Nothing may be filed inside a document that has just been deleted. The screen stays
     /// interactive between the Options sheet dismissing and the pop, and offline the POST fails
     /// `.network` — so without this the fallback mints a sub-page naming a record the delete has

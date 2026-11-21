@@ -31,6 +31,7 @@ final class ConnectViewModelTests: XCTestCase {
 
     private func makeViewModel(
         serverCapabilities: ServerCapabilityStore? = nil,
+        serverConfigStore: ServerConfigStore? = nil,
         stub: @escaping @Sendable (URLRequest) -> MockURLProtocol.Stub
     ) -> ConnectViewModel {
         MockURLProtocol.stubHandler = stub
@@ -40,6 +41,7 @@ final class ConnectViewModelTests: XCTestCase {
             sessionStore: sessionStore,
             recentServers: recentServers,
             serverCapabilities: serverCapabilities ?? ServerCapabilityStore(userDefaults: userDefaults),
+            serverConfigStore: serverConfigStore ?? ServerConfigStore(userDefaults: userDefaults),
             apiClientFactory: { serverURL in
                 DocsAPIClient(
                     baseURL: serverURL.appendingPathComponent("api/v1.0/"),
@@ -178,6 +180,22 @@ final class ConnectViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorKey)
         XCTAssertEqual(capabilities.capability(forServerOrigin: "https://docs.llun.dev"), .docs6)
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/api/v1.0/config/"), 1)
+    }
+
+    /// The whole config is kept, not just the capability: the native editor's offline create
+    /// needs the collaboration org, and RootView's hook only fills it later.
+    func testADocs6SignInRemembersTheFullConfigForTheOrigin() async throws {
+        let configs = ServerConfigStore(userDefaults: userDefaults)
+        let viewModel = makeViewModel(serverConfigStore: configs) { request in
+            request.url?.absoluteString.hasSuffix("/config/") == true ? docs6ConfigStub : identityStub
+        }
+        viewModel.serverURLInput = "docs.llun.dev"
+        viewModel.startSignIn()
+
+        await viewModel.handleLoginComplete()
+
+        XCTAssertEqual(
+            configs.config(forServerOrigin: "https://docs.llun.dev")?.releaseVersion, "6.0.0")
     }
 
     func testALegacyServerRefusesSignInWithTheUnsupportedErrorAndRecordsLegacy() async throws {

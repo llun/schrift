@@ -13,6 +13,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case common_clear_search = "common.clear_search"  // "Clear search"
     case common_you = "common.you"  // "(you)" — suffix after the current user's name
     case common_loading = "common.loading"  // "Loading" — placeholder-list accessibility label
+    // Creating a page while the native editor is on but no server config is cached
+    case create_needs_online = "create.needs_online"  // "Go online to create a page."
     // Search results plural
     case search_results_one = "search.results.one"  // "%d result"
     case search_results_other = "search.results.other"  // "%d results"

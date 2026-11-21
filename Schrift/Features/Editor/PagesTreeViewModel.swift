@@ -388,6 +388,10 @@ final class PagesTreeViewModel {
                 createErrorKey = .pages_error_create
                 return nil
             }
+            if coordinator.localCreateNeedsServerSetup {
+                createErrorKey = .create_needs_online
+                return nil
+            }
             child = coordinator.createLocalDocument(
                 title: "Untitled subpage", parentID: parent, ownerUserID: ownerUserID)
             expanded.insert(parent)
@@ -408,6 +412,10 @@ final class PagesTreeViewModel {
                 let coordinator = saveCoordinator, let ownerUserID = signedInUser.userID
             else {
                 createErrorKey = .pages_error_create
+                return nil
+            }
+            if coordinator.localCreateNeedsServerSetup {
+                createErrorKey = .create_needs_online
                 return nil
             }
             // Returns *here* rather than falling through to the append below, exactly as the

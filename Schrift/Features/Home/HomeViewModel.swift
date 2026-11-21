@@ -817,6 +817,12 @@ final class HomeViewModel {
             errorKey = .home_error_create
             return nil
         }
+        // With the native editor on but no cached server config there is no collaboration org
+        // to seed a replica from, and a classic draft would be the old editor's page.
+        if saveCoordinator.localCreateNeedsServerSetup {
+            errorKey = .create_needs_online
+            return nil
+        }
         return saveCoordinator.createLocalDocument(
             title: "Untitled document", parentID: nil, ownerUserID: ownerUserID)
     }

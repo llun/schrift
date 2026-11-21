@@ -711,6 +711,10 @@ final class DocumentSaveCoordinator {
         cachedServerConfig()?.usesCollaborationYDocServer == true
     }
 
+    /// True when a local create would have no collaboration org to seed a native replica from,
+    /// so the caller must ask the user to go online rather than mint a classic draft.
+    var localCreateNeedsServerSetup: Bool { nativeEditorEnabled() && cachedDocs6Org() == nil }
+
     private func cachedDocs6Org() -> String? {
         guard let config = cachedServerConfig(), config.usesCollaborationYDocServer else { return nil }
         return config.collaborationOrg

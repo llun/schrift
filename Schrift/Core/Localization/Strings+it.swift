@@ -44,6 +44,7 @@ enum Strings_it {
         .common_clear_search: "Cancella ricerca",
         .common_you: "(tu)",
         .common_loading: "Caricamento",
+        .create_needs_online: "Vai online per creare una pagina.",
         .search_results_one: "%d risultato",
         .search_results_other: "%d risultati",
 

@@ -41,6 +41,7 @@ enum Strings_zhHant {
         .common_clear_search: "清除搜尋",
         .common_you: "(你)",
         .common_loading: "正在載入",
+        .create_needs_online: "連線以建立頁面。",
         .search_results_one: "%d 個結果",
         .search_results_other: "%d 個結果",
 

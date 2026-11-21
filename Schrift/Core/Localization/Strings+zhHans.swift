@@ -41,6 +41,7 @@ enum Strings_zhHans {
         .common_clear_search: "清除搜索",
         .common_you: "(你)",
         .common_loading: "正在加载",
+        .create_needs_online: "联网以创建页面。",
         .search_results_one: "%d 条结果",
         .search_results_other: "%d 条结果",
 

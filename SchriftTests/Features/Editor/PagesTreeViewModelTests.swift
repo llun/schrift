@@ -406,6 +406,26 @@ final class PagesTreeViewModelTests: XCTestCase {
         XCTAssertEqual(env.viewModel.rows.map(\.document.id), [created!.id], "and it shows in the tree")
     }
 
+    /// With the native editor on and no cached server config there is no collaboration org to
+    /// seed a replica from, so the drawer asks the user to go online instead of minting a
+    /// classic draft.
+    func testAddingAPageUnderALocalRootAsksToGoOnlineWhenTheNativeEditorHasNoCachedConfig() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeLocalRootViewModel()
+        env.coordinator.nativeEditorEnabled = { true }
+
+        let created = await env.viewModel.addPage(under: env.root.id)
+
+        XCTAssertNil(created)
+        XCTAssertEqual(env.viewModel.createErrorKey, .create_needs_online)
+        XCTAssertEqual(log.methods.count, 0)
+        XCTAssertTrue(env.viewModel.rows.isEmpty, "nothing minted")
+    }
+
     /// The gap this closes: the row is merged in at **read** time, so it survives the view
     /// model being rebuilt — which is what happens every time the editor screen is recreated.
     func testALocalPageSurvivesAViewModelRecreation() async {

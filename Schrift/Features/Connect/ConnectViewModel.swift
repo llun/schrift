@@ -12,12 +12,14 @@ final class ConnectViewModel {
     let sessionStore: SessionStore
     let recentServers: RecentServersStore
     private let serverCapabilities: ServerCapabilityStore
+    private let serverConfigStore: ServerConfigStore
     private let apiClientFactory: (URL) -> DocsAPIClient
 
     init(
         sessionStore: SessionStore,
         recentServers: RecentServersStore,
         serverCapabilities: ServerCapabilityStore = ServerCapabilityStore(),
+        serverConfigStore: ServerConfigStore = ServerConfigStore(),
         apiClientFactory: @escaping (URL) -> DocsAPIClient = { serverURL in
             DocsAPIClient(baseURL: serverURL.appendingPathComponent("api/v1.0/"))
         }
@@ -25,6 +27,7 @@ final class ConnectViewModel {
         self.sessionStore = sessionStore
         self.recentServers = recentServers
         self.serverCapabilities = serverCapabilities
+        self.serverConfigStore = serverConfigStore
         self.apiClientFactory = apiClientFactory
     }
 
@@ -70,8 +73,14 @@ final class ConnectViewModel {
             // a pre-Docs 6 server is refused here rather than failing request by request later.
             // A fetch that proves nothing (offline, 5xx, undecodable) is *unknown*, never
             // legacy — it signs in normally and the launch gate re-checks next time.
-            let capability = serverCapability(from: await fetchServerConfig(client))
+            let configResult = await fetchServerConfig(client)
+            let capability = serverCapability(from: configResult)
             if let origin = siteOrigin(for: serverURL) {
+                // Keep the whole config, not just the capability: the native editor's offline
+                // create needs the collaboration org, and RootView's hook only fills it later.
+                if case .success(let config) = configResult {
+                    serverConfigStore.remember(config, forServerOrigin: origin)
+                }
                 // An answer that proves nothing also clears a stale cached legacy: the user just
                 // proved the server answers, so the launch gate must not block them on old news.
                 if let capability {
