@@ -245,8 +245,7 @@ final class PendingDocumentCreateStore {
     /// falls into one of two classes, neither of which can fire under corruption. Some
     /// require a *successful* server interaction with that **client-minted** id — a landed PATCH, a 200
     /// `formattedContent`, a successful DELETE (`resolveConflictKeepingServer`,
-    /// `discardStoredDraft`, `finish`'s success and discarded branches, the
-    /// `.discardServerWins` branch) — and a client-minted id can never get one. The rest are
+    /// `finish`'s success and discarded branches) — and a client-minted id can never get one. The rest are
     /// the replay's own (the migration's draft move, the `.notFound` take-back, the
     /// adopt-the-server branch, `discardPendingWork`'s checkpointed branch), and they read
     /// the same empty mirror a corrupt blob produces, so they never run at all. (Note the

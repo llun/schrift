@@ -170,9 +170,6 @@ final class DocumentSaveCoordinator {
     /// A trigger that arrived while a pass was running. Coalesced into another pass
     /// rather than dropped — see `syncPendingDrafts`.
     private var needsAnotherSyncPass = false
-    /// Whether a coalesced pass still owes the launch-recovery semantics (the only
-    /// place a stale legacy draft may be discarded outright).
-    private var pendingLaunchRecovery = false
     /// Documents whose queued draft conflicts with the server (the sync path or the
     /// editor detected the server moved on). The push is **held** until the user
     /// resolves it via `resolveConflictKeeping{Local,Server}`.
@@ -1046,10 +1043,9 @@ final class DocumentSaveCoordinator {
         // tolerance. The instant the create POST lands, the new document's `updated_at` is
         // *now* while this draft's `updatedAt` is whenever the user last typed — hours ago,
         // which is the whole point of creating offline. Rule 3 would answer
-        // `.discardServerWins` and the launch pass would **delete the body**, leaving the
-        // empty document the POST just made. Migration must stamp one before the draft is
-        // replayed, saying what the body **descends from** — the create response on an
-        // undiverged fresh POST, a `formattedContent` fetch on an undiverged resume, and a
+        // `.discardServerWins`, raising a false conflict against the empty document the POST
+        // just made. Migration must stamp one before the draft is replayed, saying what the
+        // body **descends from** — the create response on an undiverged fresh POST, a `formattedContent` fetch on an undiverged resume, and a
         // nil clock with an empty body when the two have **diverged**, where claiming the
         // observed state would prove the very push the conflict is holding. See
         // `migrateCreatedDocument`.
@@ -2730,14 +2726,8 @@ final class DocumentSaveCoordinator {
         // body. `finishMigration`'s both-drafts guard does *not* cover it, since it keys on
         // draft presence rather than on `queued`.
         //
-        // Unreachable today — but not for the reason it is tempting to give. There *is* a
-        // remover that leaves `queued` populated, and it is already wired in production:
-        // `discardStoredDraft`, from `EditorViewModel.reconcileDraft`. What makes it
-        // unreachable is narrower: `reconcileDraft` is only ever entered past `apply`'s
-        // `pendingSave != nil` divert, so `queued` is provably nil there — and, now that the
-        // create UI does open editors on local ids, `revalidate` and `refresh` both guard on
-        // `!isLocalDocument`, which makes `reconcileDraft` unreachable for one. The site to
-        // watch is a change to either of those two guards.
+        // Unreachable today: no remover leaves `queued` populated. A new one that does is the
+        // site to watch.
         let body = queued[localID]?.markdown ?? draft?.markdown ?? migrated?.markdown ?? ""
         // **The title is a merge, not a race.** The body's "newest wins" rule does not carry
         // over: on a resume the document has been an ordinary Home row under its server id for
@@ -2770,7 +2760,7 @@ final class DocumentSaveCoordinator {
         // not what we just observed.** Stamping one is mandatory either way: a baseline-less
         // draft routes to `draftSyncDecision` rule 3's 120 s clock tolerance, and a document
         // created hours ago offline is far outside it, so the replay would answer
-        // `.discardServerWins` and the launch pass would delete the body.
+        // `.discardServerWins` and raise a false conflict.
         //
         // But the two paths descend from different things, and stamping the observed state on
         // both is self-defeating. When the server has moved to a body we have never seen, ours
@@ -3790,13 +3780,13 @@ final class DocumentSaveCoordinator {
     func recoverDrafts() async {
         guard !hasRecoveredDrafts else { return }
         hasRecoveredDrafts = true
-        await syncPendingDrafts(isLaunchRecovery: true)
+        await syncPendingDrafts()
     }
 
     /// Replays drafts left behind by a previous session (or a save that failed /
     /// was queued offline) against the current server copy. A draft is re-saved
     /// unless the document changed on the server after the draft was written —
-    /// fresher edits made elsewhere win over a stale draft.
+    /// when the server moved on, the pass records a conflict for the user to resolve.
     ///
     /// Unlike `recoverDrafts()` this is **repeatable**: it is the funnel for the
     /// reconnect, foreground and launch triggers, so it self-guards against
@@ -3805,8 +3795,7 @@ final class DocumentSaveCoordinator {
     /// failed on) the very drafts the new trigger cares about — a reconnect landing
     /// mid-run is exactly that — so returning early would lose it until the next
     /// background→foreground cycle.
-    func syncPendingDrafts(isLaunchRecovery: Bool = false) async {
-        if isLaunchRecovery { pendingLaunchRecovery = true }
+    func syncPendingDrafts() async {
         guard !isSyncingDrafts else {
             needsAnotherSyncPass = true
             return
@@ -3815,8 +3804,6 @@ final class DocumentSaveCoordinator {
         defer { isSyncingDrafts = false }
         repeat {
             needsAnotherSyncPass = false
-            let launchPass = pendingLaunchRecovery
-            pendingLaunchRecovery = false
             // Creates first, inside the same pass. Note what that ordering does and does not
             // buy: a *successful* migration ends in an `enqueue` that `runSyncPass` then skips
             // — undiverged it went straight to `start` and set `inFlight`; diverged it is
@@ -3850,7 +3837,7 @@ final class DocumentSaveCoordinator {
             // run after the create pass, because a photo in a locally-created document cannot
             // be uploaded until that document has a server id.
             await runAttachmentPass()
-            await runSyncPass(isLaunchRecovery: launchPass)
+            await runSyncPass()
         } while needsAnotherSyncPass
     }
 
@@ -4450,7 +4437,7 @@ final class DocumentSaveCoordinator {
         updatePendingAttachment(record)
     }
 
-    private func runSyncPass(isLaunchRecovery: Bool) async {
+    private func runSyncPass() async {
         for draft in draftStore.allDrafts() {
             if let reference = draft.replica {
                 guard reference.scope.documentID == draft.documentID,
@@ -4464,27 +4451,13 @@ final class DocumentSaveCoordinator {
                 }
             }
             // A document the server has never seen cannot be reconciled against it: the GET
-            // below would 404, and the catch at the bottom of this loop removes the draft on
-            // a 404 — which for a locally-created document is the user's only copy. This
-            // guard is why creating offline is safe at all; the create replay (a separate
-            // pass) is what actually POSTs these.
+            // below would 404 and mark the draft failed. The create replay owns these.
             guard !isPendingCreate(documentID: draft.documentID) else { continue }
-            // A document the user has asked to delete is reconciled with nothing. Pushing its
-            // draft would race our own queued DELETE for no gain, and the 404/403 branch below
-            // would *reap* that draft — which is the undo's whole payload, and the only copy of
-            // whatever the user typed before deciding to delete. Both halves matter: skipping
-            // the fetch is what keeps the pass quiet, and the restatement at each deleting line
-            // is what keeps the draft safe if this guard is ever moved.
+            // A document queued for deletion is reconciled with nothing: pushing races our own
+            // DELETE, and a 404/403 would mark the draft failed while the deletion is cancellable.
             guard !isPendingDelete(documentID: draft.documentID) else { continue }
-            // A draft still naming an un-uploaded photo cannot be reconciled either, and this
-            // skip is **load-bearing rather than an economy**. The `.push` branch below would
-            // re-enter `enqueue` and be held there, true — but the decision has two other
-            // outcomes, and one of them deletes. A placeholder draft that carries no baseline
-            // (a legacy chain, or a relaunch that reset the in-memory state to `.idle`) reaches
-            // rule 3, and once the server's `updated_at` is past the 120s tolerance that answers
-            // `.discardServerWins`, whose launch-pass branch removes the draft — taking the
-            // queued photo and every text edit beside it. the attachment replay is what unblocks
-            // this document; until then its body is not this pass's to judge.
+            // A draft still naming an un-uploaded photo cannot be reconciled until attachment
+            // replay uploads and rewrites it; reconciling earlier would park or stamp a conflict.
             guard !markdownReferencesPendingAttachment(draft.markdown) else { continue }
             guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
             // A held writable replica sends its own step2 diff, so replaying this markdown could
@@ -4557,100 +4530,35 @@ final class DocumentSaveCoordinator {
                         recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
                         continue
                     }
-                    // Legacy (baseline-less) drafts only — rule 3's tolerance fallback.
-                    switch state(for: draft.documentID) {
-                    case .pendingSync:
-                        // (`.failed` cannot reach here — it `continue`s at the top of the loop,
-                        // owned by the reading surface's retry.)
-                        // The user has *visible* unsaved work — the "syncs when online"
-                        // caption is on screen — that the server has already
-                        // moved past. Discarding it would delete content they are looking
-                        // at. But silently skipping it (what this did) **stranded** them:
-                        // never pushed, never discarded, and — because the decision is not
-                        // `.conflict` — no pill either, so the only remaining funnel was a
-                        // retry tap, which full-overwrites the newer server copy with no
-                        // prompt at all. Give it the same funnel a real conflict gets.
-                        recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
-                    case .idle, .saving, .saved, .failed:
-                        // `recoverDrafts()` runs at launch, before any editor is on screen,
-                        // so discarding there is safe — and that is the only place this used
-                        // to run. It is now a **repeatable** trigger (reconnect, foreground),
-                        // and the editor may be *displaying* this very draft: removing it
-                        // would leave on-screen content with no disk backing, and the next
-                        // keystroke would full-overwrite the newer server body. Off the
-                        // launch path, leave it to the editor's own `reconcileDraft`, which
-                        // discards **and installs** the winning body atomically, on the
-                        // screen that is actually showing it.
-                        guard isLaunchRecovery else { continue }
-                        // The loop's *other* deleting line. Its local-id half is covered by the
-                        // `isPendingCreate` guard before the fetch, but the server-id half is
-                        // not — so state the same invariant here rather than relying on a
-                        // caller, exactly as the 404/403 branch does. Unreachable today
-                        // (`.discardServerWins` is rule 3, which needs a nil baseline, and every
-                        // writer of a draft under a freshly-minted server id stamps one), but a
-                        // hand-built baseline-less draft is what that shape naturally looks
-                        // like, which is how it would become reachable.
-                        guard !createStoreUnreadable else { continue }
-                        guard anyCheckpointedRecord(forServerID: draft.documentID) == nil else { continue }
-                        // And never a draft whose deletion is queued: it is the undo's only
-                        // payload. Unreachable through the guard at the top of the loop, and
-                        // stated here for the same reason its three neighbours are — this is
-                        // the line that would do the deleting.
-                        guard !isPendingDelete(documentID: draft.documentID) else { continue }
-                        draftStore.remove(documentID: draft.documentID)
-                        syncBackupExclusion(for: draft.documentID, scope: draft.replica?.scope)
-                    }
+                    // Legacy (baseline-less) classic drafts — rule 3's tolerance fallback.
+                    // Skip drafts that may belong to pending creates, checkpointed migrations, or
+                    // pending deletes (including when the create store is unreadable) so we never
+                    // stamp a conflict onto them.
+                    guard !isPendingCreate(documentID: draft.documentID) else { continue }
+                    guard !createStoreUnreadable else { continue }
+                    guard anyCheckpointedRecord(forServerID: draft.documentID) == nil else { continue }
+                    guard !isPendingDelete(documentID: draft.documentID) else { continue }
+                    // Never delete waiting edits automatically: record a conflict so the user
+                    // chooses Keep mine / Keep server, matching native drafts.
+                    recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
                 }
             } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
                 if draft.replica != nil {
                     markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
                     continue
                 }
-                // Belt and braces. The guard at the top of the loop means a pending create
-                // never reaches this GET, but this is the line that would delete the only
-                // copy of a locally-created document if it ever did — so it states the
-                // invariant rather than relying on a caller ten lines above.
+                // Skip drafts that may belong to pending creates, checkpointed migrations, or
+                // pending deletes (and whenever either store is unreadable) so we never mark
+                // them failed as missing server documents.
                 guard !isPendingCreate(documentID: draft.documentID) else { continue }
-                // And if the create store would not decode, we do not *know* which drafts
-                // belong to local documents — so delete none of them. Cleaning up nothing
-                // is a recoverable failure; deleting every offline-created document's only
-                // copy because a schema slip read as "there are no local documents" is not.
                 guard !createStoreUnreadable else { continue }
-                // **And never the server-id half of a checkpointed record.** `isPendingCreate`
-                // is keyed on the *local* id, so it does not cover the draft the migration
-                // writes under `serverID` before removing the local one — and in that window
-                // that draft is the **only copy** of the body. The `.notFound` start-over
-                // rescues it by moving it back; `.forbidden` has no such branch and would land
-                // here, as would any pass where the record is simply not replayable this
-                // session — a foreign origin, another account, an unknown owner, a failing
-                // `/users/me/`, or an open editor — since `runCreatePass` skips those before
-                // the take-back can run. (Not a build-scoped block or a `.failed` state:
-                // neither can coexist with a checkpoint, since `replayCreate` clears both
-                // stamps in the same write that sets it and `markCreateRejected` only ever
-                // fires pre-checkpoint.) Deleting it makes
-                // the later migration find an all-nil body chain and build an *empty* document
-                // in place of the user's text — the same loss the take-back exists to prevent,
-                // reached one error over. Only the **delete** is withheld: the push path above
-                // must keep running, since it is what clears `finishMigration`'s both-drafts
-                // guard.
                 guard anyCheckpointedRecord(forServerID: draft.documentID) == nil else { continue }
-                // **And never a draft whose deletion is queued.** A 404 here is exactly what a
-                // tombstone predicts — the DELETE may already have landed in a pass that died
-                // before its cleanup ran — but it is also what a *co-author's* delete looks
-                // like, and the two are indistinguishable. Reaping on either would take the
-                // undo's only payload while the deletion is still cancellable. The tombstone's
-                // own completion removes this draft, in an order a crash cannot tear.
                 guard !isPendingDelete(documentID: draft.documentID) else { continue }
-                // **And not while the tombstones are unknown.** With the delete store
-                // undecodable `pendingDeletes` is empty, so the guard above answers false for
-                // *every* tombstoned document — and a 404 caused by the app's own DELETE
-                // landing in a pass that died before its cleanup then reads as a co-author's
-                // delete, taking the undo's only payload. Same asymmetry `createStoreUnreadable`
-                // states two guards up: cleaning up nothing is recoverable, deleting the only
-                // copy is not.
                 guard !deleteStoreUnreadable else { continue }
-                draftStore.remove(documentID: draft.documentID)
-                syncBackupExclusion(for: draft.documentID, scope: draft.replica?.scope)
+                // Never delete waiting classic edits here: a 404/403 may be transient or revoked
+                // access while the draft is the user's only copy. Mark failed so the user decides
+                // via Retry or Discard.
+                markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
             } catch {
                 // Leave the draft for a later sync (e.g. offline right now).
                 if draft.replica != nil {
@@ -4960,15 +4868,6 @@ final class DocumentSaveCoordinator {
         return true
     }
 
-    /// Removes a stored draft only if it is still exactly the given draft —
-    /// the user may have produced a newer one while the caller awaited
-    /// (mirrors the draft-replay re-check in `syncPendingDrafts`).
-    func discardStoredDraft(_ draft: PendingDraft) {
-        guard draftStore.draft(for: draft.documentID) == draft else { return }
-        draftStore.remove(documentID: draft.documentID)
-        syncBackupExclusion(for: draft.documentID, scope: draft.replica?.scope)
-    }
-
     /// Drops all queued/stored work for a document (delete flow). An already
     /// in-flight PATCH cannot be meaningfully cancelled — but it can still *land*
     /// before the server processes the DELETE, and `finish`'s success path would
@@ -5106,7 +5005,7 @@ final class DocumentSaveCoordinator {
     /// write the full body straight back into the content cache — on a 403 that is
     /// revoked content reappearing on disk. Unlike `discardPendingWork`, the draft
     /// stays: it is the user's only copy of unsaved work, and `recoverDrafts()`
-    /// decides its fate next launch (replay if reachable, purge on a real 404/403).
+    /// decides its fate next launch (replay if reachable, mark failed on a real 404/403).
     func suppressLocalWriteThrough(documentID: UUID) {
         queued[documentID] = nil
         // Clear any conflict record: on a 404/403 the draft survives (it's the user's

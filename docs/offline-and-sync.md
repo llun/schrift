@@ -933,7 +933,7 @@ branch instead of popping a banner. Outcomes:
   editing disabled (no "Synced" caption, no enqueueable saves that can only 404).
   The `.forbidden` purge is also a privacy requirement: revoked-access content
   must not remain readable in the durable cache. Draft lifecycle stays with the
-  coordinator (`recoverDrafts` already drops drafts on 404/403).
+  coordinator (`recoverDrafts` keeps drafts on 404/403 and marks them `.failed`).
 - **Displayed source was a stored draft (source 2) and the user has NOT edited
   this session:** re-run today's staleness check. If
   `fetched.updatedAt > draft.updatedAt + pendingDraftClockTolerance`, the server
@@ -1013,12 +1013,10 @@ branch instead of popping a banner. Outcomes:
   pull-to-refresh can't drop it either — and it still **records a conflict on the way out**,
   because keeping the draft is not the same as staying blind to the server. Applying the
   tolerance rule to either deletes visible content.
-  An *idle* stranded (legacy, baseline-less) draft beyond the window is discarded **only on
-  the launch pass** (`syncPendingDrafts(isLaunchRecovery:)`, which only `recoverDrafts()`
-  sets): mid-session the editor may be *displaying* that draft, and removing it there leaves
-  on-screen content with no disk backing — the next keystroke would then full-overwrite the
-  newer server body. Off the launch path it is left to `reconcileDraft`, which discards
-  **and installs** the winning body atomically, on the screen actually showing it.
+  An *idle* stranded (legacy, baseline-less) draft beyond the window is never deleted by
+  `runSyncPass`: `.discardServerWins` records a conflict on both launch and mid-session
+  passes so the user chooses Keep mine / Keep server, and `reconcileDraft` does the
+  same when the editor opens it first.
   Overlapping triggers are **coalesced, not dropped**: a reconnect landing during an
   in-progress (failing) pass would otherwise be lost until the next foreground cycle.
   The comparison mixes clocks — `draft.updatedAt` is the device's,
@@ -1892,11 +1890,10 @@ matches the invariant.
    `.failed` drafts, so the document would be wedged out of the very replay meant
    to create it. Write-ahead and latest-wins still apply; only `start` is withheld.
 2. **`runSyncPass` skips it.** That pass GETs each draft's document before
-   deciding, and its `.notFound`/`.forbidden` catch **removes the draft**. For a
-   locally-created document that draft is the only copy, so without the skip the
-   first launch, foreground, or reconnect after creating offline silently deletes
-   the document. The catch re-checks the same predicate, because that is the line
-   that would do the deleting.
+   deciding, and its `.notFound`/`.forbidden` catch marks classic drafts `.failed`
+   (waiting classic drafts are never deleted automatically). Skipping keeps local
+   creates owned by the create replay, and the catch re-checks the same predicate
+   so a local create is never marked failed as a missing server document.
 3. **`releaseHeldSave` refuses.** One of the two paths that call `start` without
    passing through `enqueue`'s hold — reached from `clearResolvedConflict`, which
    the editor calls from five places — so releasing a hold on a local document
@@ -2899,12 +2896,11 @@ two sibling paths to `start` always had — safe to omit while `clearResolvedCon
 nils the conflict on the line before, was its only caller, and a full-overwrite of the
 co-author's body the moment a caller that does not clear it was added.
 
-`runSyncPass` skips a tombstoned draft before the fetch, and restates that at **both**
-of its deleting lines (the 404/403 catch and the launch-only `.discardServerWins`
-branch), in the file's existing belt-and-braces style. The draft is the undo's only
-payload; pushing it would race our own DELETE, and reaping it on the 404 a queued
-deletion actually predicts would destroy it — that 404 is also exactly what a
-co-author's delete looks like, and the two are indistinguishable.
+`runSyncPass` skips a tombstoned draft before the fetch, and restates that in both
+the 404/403 catch and the `.discardServerWins` branch, in the file's existing
+belt-and-braces style. The draft is the undo's only payload; pushing it would race our
+own DELETE, and marking it failed or recording a conflict while the deletion is
+cancellable would be wrong.
 
 `runCreatePass` holds a record whose `parentID` is tombstoned. Unlike the local-parent
 case, that parent *is* a real server document, so the POST would **succeed** — filing a
@@ -2976,10 +2972,9 @@ response and nowhere else yet — plus the deleted document's own level, or an i
 *its* children re-creates the entry the purge just dropped. The editor's Subpages list bumps
 `childrenGeneration` for the identical reason.
 
-**An unreadable delete store also suppresses the 404 reap.** `pendingDeletes` is empty then, so
+**An unreadable delete store also suppresses the 404/403 failure stamp.** `pendingDeletes` is empty then, so
 `isPendingDelete` answers false for every tombstoned document and a 404 caused by the app's own
-DELETE reads as a co-author's delete — taking the undo's only payload. Same asymmetry the
-create store's guard states: cleaning up nothing is recoverable, deleting the only copy is not.
+DELETE would otherwise mark the draft `.failed`.
 
 When a deletion lands, every list holding the row **drops it** rather than letting it
 un-strike back into looking alive — `observeDocumentDeleted` is a fan-out precisely because
@@ -3177,11 +3172,9 @@ lands, with no per-record bookkeeping.
 
 Three properties are easy to get wrong and are each worth a regression test:
 
-- **`runSyncPass`'s skip prevents deletion, not a wasted fetch.** The `.push` branch
-  would be held by `enqueue` anyway — but a placeholder draft carrying no baseline (a
-  legacy chain, or a relaunch that reset the in-memory state to `.idle`) reaches rule 3,
-  and past the tolerance `.discardServerWins` *removes the draft*, taking the queued
-  photo and every text edit beside it.
+- **`runSyncPass`'s skip prevents premature conflict stamping, not just a wasted fetch.** The `.push` branch
+  would be held by `enqueue` anyway, while `.conflict` or `.discardServerWins` would
+  record a conflict before attachment replay uploads and rewrites the placeholder.
 - **The predicate and the rewriter must agree on identity.** `pendingAttachmentID`
   tolerates either case and a trailing slash, and `parseImageLine` classifies on a
   lowercased scheme — so both are matched pairs of the same question. Too strict in the

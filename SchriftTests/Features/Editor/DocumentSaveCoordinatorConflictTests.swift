@@ -151,12 +151,10 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
         await waitUntil { self.savesInFlight(log) >= 2 }
     }
 
-    /// `.discardServerWins` is the legacy (baseline-less) tolerance path. `syncPendingDrafts`
-    /// is now repeatable (reconnect/foreground), and the editor may be *displaying* that
-    /// draft — deleting it there would leave on-screen content with no disk backing, and the
-    /// next keystroke would full-overwrite the newer server body. Only launch recovery, which
-    /// runs before any editor exists, may discard outright.
-    func testAStaleLegacyDraftIsOnlyDiscardedByLaunchRecovery() async {
+    /// `.discardServerWins` is the legacy (baseline-less) tolerance path. Neither a mid-session
+    /// sync pass nor launch recovery may delete waiting classic edits: both keep the draft and
+    /// record a conflict so the user chooses Keep mine / Keep server.
+    func testAStaleLegacyDraftIsNeverDiscardedAndRecordsAConflict() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log)  // server updated_at 2026-01-15
         let (coordinator, draftStore, _) = makeCoordinator()
@@ -166,15 +164,18 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
                 documentID: documentID, title: "Doc", markdown: "# Stale",
                 updatedAt: Date(timeIntervalSince1970: 0)))
 
-        // A mid-session trigger (reconnect/foreground) must NOT delete it.
+        // A mid-session trigger keeps the draft and records a conflict.
         await coordinator.syncPendingDrafts()
-        XCTAssertNotNil(
-            draftStore.draft(for: documentID),
-            "a repeatable trigger must not delete a draft an open editor may be displaying")
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# Stale",
+            "a repeatable trigger must not delete a waiting classic draft")
+        XCTAssertNotNil(coordinator.conflict(for: documentID))
 
-        // Launch recovery may.
+        // Launch recovery also keeps the draft and conflict.
         await coordinator.recoverDrafts()
-        XCTAssertNil(draftStore.draft(for: documentID), "launch recovery discards it")
+        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Stale", "launch recovery never discards it")
+        XCTAssertNotNil(coordinator.conflict(for: documentID))
+        XCTAssertEqual(savesInFlight(log), 0)
     }
 
     /// A legacy (baseline-less) draft whose save is queued offline and whose server has
@@ -290,9 +291,9 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
             "the content landed, so the push is recorded even though the save hard-failed")
     }
 
-    /// A launch recovery that arrives *while a pass is already running* must still get its
-    /// launch semantics — it is the only place a stale legacy draft may be discarded outright.
-    func testALaunchRecoveryArrivingMidPassStillPerformsItsDiscard() async {
+    /// Even when launch recovery overlaps a mid-session sync pass, a stale legacy draft is
+    /// never discarded — it is kept and recorded as a conflict.
+    func testALaunchRecoveryArrivingMidPassKeepsStaleLegacyDraftAsConflict() async {
         let log = RequestRecorder()
         let (coordinator, draftStore, _) = makeCoordinator()
         // Baseline-less and far older than the 2026-01-15 fixture → `.discardServerWins`.
@@ -306,16 +307,16 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
             return .init(statusCode: 200, headers: [:], body: body, error: nil, delay: 0.3)
         }
 
-        // A mid-session pass starts (it will NOT discard) …
         async let midSession: Void = coordinator.syncPendingDrafts()
         await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1 }
-        // … and launch recovery arrives while it is still in flight.
         await coordinator.recoverDrafts()
         await midSession
 
-        XCTAssertNil(
-            draftStore.draft(for: documentID),
-            "the coalesced pass must still carry the launch-recovery semantics, or the discard is lost")
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# Stale",
+            "launch recovery arriving mid-pass must keep the waiting classic draft")
+        XCTAssertNotNil(coordinator.conflict(for: documentID))
+        XCTAssertEqual(savesInFlight(log), 0)
     }
 
     /// Keep-mine on a **legacy** (baseline-less) draft. Advancing its baseline needs a body to

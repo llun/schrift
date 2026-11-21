@@ -330,6 +330,7 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertEqual(
             env.drafts.draft(for: serverID)?.markdown, "the user's only copy",
             "and the undo still has something to restore")
+        XCTAssertEqual(env.coordinator.state(for: serverID), .idle)
     }
 
     /// The same protection must survive an undo: once the tombstone is gone the document is
@@ -366,6 +367,8 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         await env.coordinator.recoverDrafts()
 
         XCTAssertEqual(env.drafts.draft(for: serverID)?.markdown, "legacy body")
+        XCTAssertNil(env.coordinator.conflict(for: serverID))
+        XCTAssertEqual(env.coordinator.state(for: serverID), .idle)
     }
 
     /// A conflict recorded before the deletion was queued parks the save. Nothing must
@@ -996,7 +999,10 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
 
         XCTAssertEqual(
             env.drafts.draft(for: serverID)?.markdown, "the user's only copy",
-            "unknown tombstones must not license the reap")
+            "unknown tombstones must keep the draft untouched")
+        XCTAssertEqual(
+            relaunched.coordinator.state(for: serverID), .idle,
+            "and must skip without marking the draft failed")
     }
 
     /// A landed deletion tells the lists, so a row already on screen leaves rather than

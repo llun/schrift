@@ -299,21 +299,28 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
     }
 
-    func testRecoverDraftsDiscardsDraftOlderThanServer() async {
+    func testRecoverDraftsRecordsConflictForLegacyIdleDraftWhenServerMovedOn() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log)
         let (coordinator, draftStore, _) = makeCoordinator()
         draftStore.save(
             PendingDraft(
                 documentID: documentID, title: "Doc", markdown: "# Stale", updatedAt: Date(timeIntervalSince1970: 0)))
+        XCTAssertEqual(coordinator.state(for: documentID), .idle)
 
         await coordinator.recoverDrafts()
 
-        XCTAssertNil(draftStore.draft(for: documentID))
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# Stale",
+            "launch recovery must never delete a waiting classic draft")
+        XCTAssertNotNil(
+            coordinator.conflict(for: documentID),
+            "server moving on records a conflict so the user chooses Keep mine / Keep server")
+        XCTAssertNotNil(draftStore.draft(for: documentID)?.conflictServerUpdatedAt)
         XCTAssertEqual(savesInFlight(log), 0)
     }
 
-    func testRecoverDraftsDropsDraftForInaccessibleDocument() async {
+    func testRecoverDraftsKeepsClassicDraftAndMarksFailedOnNotFound() async {
         let log = RequestRecorder()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
@@ -324,7 +331,31 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
 
         await coordinator.recoverDrafts()
 
-        XCTAssertNil(draftStore.draft(for: documentID))
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# Gone",
+            "a 404 during draft sync must keep the classic draft rather than deleting it")
+        XCTAssertTrue(isFailed(coordinator.state(for: documentID)))
+        XCTAssertEqual(coordinator.failureReport(for: documentID), "Draft sync refused: DocsAPIError.notFound")
+        XCTAssertEqual(savesInFlight(log), 0)
+    }
+
+    func testRecoverDraftsKeepsClassicDraftAndMarksFailedOnForbidden() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 403, headers: [:], body: Data(), error: nil)
+        }
+        let (coordinator, draftStore, _) = makeCoordinator()
+        draftStore.save(
+            PendingDraft(documentID: documentID, title: "Doc", markdown: "# Forbidden", updatedAt: Date()))
+
+        await coordinator.recoverDrafts()
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# Forbidden",
+            "a 403 during draft sync must keep the classic draft rather than deleting it")
+        XCTAssertTrue(isFailed(coordinator.state(for: documentID)))
+        XCTAssertEqual(coordinator.failureReport(for: documentID), "Draft sync refused: DocsAPIError.forbidden")
         XCTAssertEqual(savesInFlight(log), 0)
     }
 
@@ -463,24 +494,6 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
         }
 
         XCTAssertNil(contentCache.content(for: documentID))
-    }
-
-    func testDiscardStoredDraftRemovesOnlyIfUnchanged() {
-        let (coordinator, draftStore, _) = makeCoordinator(backgroundTasks: .noop)
-        let original = PendingDraft(
-            documentID: documentID, title: "A", markdown: "a", updatedAt: Date(timeIntervalSince1970: 100))
-        draftStore.save(original)
-
-        // Draft changed since the caller captured it: keep the newer one.
-        let newer = PendingDraft(
-            documentID: documentID, title: "B", markdown: "b", updatedAt: Date(timeIntervalSince1970: 200))
-        draftStore.save(newer)
-        coordinator.discardStoredDraft(original)
-        XCTAssertEqual(draftStore.draft(for: documentID), newer)
-
-        // Unchanged: removed.
-        coordinator.discardStoredDraft(newer)
-        XCTAssertNil(draftStore.draft(for: documentID))
     }
 
     func testDiscardPendingWorkDropsDraft() {

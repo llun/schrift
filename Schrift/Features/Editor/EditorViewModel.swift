@@ -1322,30 +1322,12 @@ final class EditorViewModel {
             saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
             cacheServerCopy(formatted, leafNesting: leafNesting)
         case .discardServerWins:
-            // **Never discard a draft the user is being asked about.** `runSyncPass` refuses to
-            // touch a draft under a recorded conflict; this path had no such guard, and the
-            // save *state* does not survive a relaunch even though the conflict now does — so a
-            // legacy draft whose conflict was rehydrated came back as `.idle`, skipped the
-            // `.failed`/`.pendingSync` branch above, fell to rule 3, and had the very work the
-            // pill was asking about **deleted from under the question**. Keep it and re-record:
-            // the conflict is exactly what `runSyncPass` records for this state.
-            if saveCoordinator.conflict(for: documentID) != nil {
-                saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
-                cacheServerCopy(formatted, leafNesting: leafNesting)
-                return
-            }
-            // Legacy (baseline-less) stranded draft the server has moved past — server
-            // wins, and the draft goes. `discardStoredDraft` re-checks identity; install
-            // only on success. Installing over a surviving draft would leave unsaved work
-            // on disk that isn't on screen — the state every rule here exists to prevent.
-            saveCoordinator.discardStoredDraft(draft)
-            guard saveCoordinator.storedDraft(documentID: documentID) == nil else {
-                cacheServerCopy(formatted, leafNesting: leafNesting)
-                return
-            }
-            // The local work is gone, so no conflict record may outlive it (the lifecycle rule).
-            saveCoordinator.clearResolvedConflict(documentID: documentID)
-            installFetched(formatted, leafNesting: leafNesting)
+            // A legacy (baseline-less) draft the server has moved past is still the user's
+            // waiting work: it is never discarded automatically. Ask, exactly as `runSyncPass`
+            // does for this state — keep the draft on screen, record the conflict, and let the
+            // user choose Keep mine / Keep the server version.
+            saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
+            cacheServerCopy(formatted, leafNesting: leafNesting)
         }
     }
 

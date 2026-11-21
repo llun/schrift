@@ -788,6 +788,9 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         XCTAssertEqual(
             relaunched.drafts.draft(for: serverID)?.markdown, "# The only copy",
             "the sweep must not delete the body of a checkpointed record")
+        XCTAssertEqual(
+            relaunched.coordinator.state(for: serverID), .idle,
+            "and must skip without marking a checkpointed record's draft failed")
     }
 
     /// A rename made **on this device, under the server id** must survive the migration.
@@ -862,7 +865,11 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
 
         XCTAssertEqual(
             relaunched.drafts.draft(for: serverID)?.markdown, "# The only copy",
-            "the launch discard must not delete a checkpointed record's only copy")
+            "the launch pass must not delete a checkpointed record's only copy")
+        XCTAssertNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "and must skip without stamping a conflict onto a checkpointed record")
+        XCTAssertEqual(relaunched.coordinator.state(for: serverID), .idle)
     }
 
     /// **Both sides renamed.** A rename made *before* the POST is already the server's name,

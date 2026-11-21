@@ -841,11 +841,11 @@ markdown write endpoint**. Understand this before touching the save path:
      `runSyncPass` *skips*, wedging the document out of the replay meant to
      create it. Write-ahead and latest-wins still apply; only `start` is withheld.
   2. **`runSyncPass` skips it** — that pass GETs each draft's document before
-     deciding, and its `.notFound`/`.forbidden` catch **removes the draft**. For a
-     document that exists nowhere else that draft is the only copy, so without the
-     skip the first launch/foreground/reconnect after creating offline silently
-     deletes it. The 404 catch re-checks the same predicate, because that is the
-     line that would do the deleting.
+     deciding, and its `.notFound`/`.forbidden` catch marks classic drafts
+     `.failed` (waiting classic drafts are never deleted automatically). Skipping
+     keeps local creates owned by the create replay, and the catch re-checks the
+     same predicate so a local create is never marked failed as a missing server
+     document.
   3. **`releaseHeldSave` refuses** — one of two paths that call `start`
      without passing through `enqueue`'s hold, reached from
      `clearResolvedConflict`, which the editor calls from five places. Releasing
@@ -945,8 +945,9 @@ markdown write endpoint**. Understand this before touching the save path:
   **The create store's `try?` decode is all-or-nothing, so an undecodable blob means the
   records are *unknown*, not absent** — which would disarm every hold and let the
   next sync pass delete every offline-created document's only copy.
-  `holdsUnreadableData` detects it and suppresses `runSyncPass`'s delete branch
-  outright: cleaning up nothing is recoverable, that is not. Two details make that
+  `holdsUnreadableData` detects it and suppresses `runSyncPass`'s 404/403
+  refusal and `.discardServerWins` conflict stamp so unknown local creates stay
+  untouched. Two details make that
   real rather than nominal — the unreadable bytes are **quarantined** to
   `…pendingCreates.unreadable` before the live key is reused (every
   read-modify-write here reads through a `loadAll` that answers empty for a corrupt
@@ -1220,9 +1221,9 @@ markdown write endpoint**. Understand this before touching the save path:
   one always had. The queued path clears nothing local; see `handleDidQueueDelete` under
   the conflict-lifecycle rule below.
   **Five suppressions, each for a named failure.** `runSyncPass` skips a tombstoned draft
-  pre-fetch and restates it at **both** deleting lines (the draft is the undo's only
-  payload, and the 404 a queued deletion predicts is indistinguishable from a co-author's
-  delete). `runCreatePass` holds a record whose `parentID` is tombstoned — that parent is
+  pre-fetch and restates it in both the 404/403 catch and the `.discardServerWins` branch
+  so a tombstoned draft is never marked failed or stamped with a conflict while the
+  deletion is cancellable. `runCreatePass` holds a record whose `parentID` is tombstoned — that parent is
   a *real* server document, so the POST would **succeed** and file a new sub-page into
   something about to be deleted — and refuses to resume a record whose `syncedServerID` is
   tombstoned, **which is the resurrection guard**: past it the resume reads the expected
@@ -1820,10 +1821,8 @@ markdown write endpoint**. Understand this before touching the save path:
     someone quoted the scheme in a code block, where there is no image leaf to delete and
     therefore no escape from the hold. The `contains` check is only a fast path.
   - `runSyncPass`'s skip is **load-bearing, not an economy**: the `.push` branch would be
-    held by `enqueue` anyway, but a placeholder draft carrying no baseline (a legacy
-    chain, or a relaunch that reset the in-memory state to `.idle`) reaches rule 3, and
-    past the 120s tolerance that answers `.discardServerWins` — whose launch-pass branch
-    *deletes the draft*, taking the queued photo and every text edit beside it.
+    held by `enqueue` anyway, while `.conflict` or `.discardServerWins` would record a
+    conflict before attachment replay uploads and rewrites the placeholder.
   - `releaseHeldSave` also gained a **conflict** guard, as defence in depth rather than
     as any path's primary gate: nothing can rewrite a parked `PendingSave` in place, so
     the attachment replay re-`enqueue`s the rewritten body (which re-derives every hold
@@ -1843,11 +1842,12 @@ markdown write endpoint**. Understand this before touching the save path:
   whose "Couldn't save" affordance is on screen); a beyond-window **`.pendingSync`** draft
   is never discarded but **recorded as a conflict** (skipping it silently stranded it —
   never pushed, never discarded, no pill, so the only escape was a retry tap that
-  overwrote the newer server copy unasked); and a stale **legacy** draft may be discarded
-  outright **only on the launch pass** (`isLaunchRecovery`), since mid-session the editor
-  may be *displaying* it and removing it would leave on-screen content with no disk
-  backing — off that path it is left to `reconcileDraft`, which discards *and installs*
-  the winning body atomically.
+  overwrote the newer server copy unasked); and a stale **legacy** (baseline-less) draft
+  is never deleted by `runSyncPass` — `.discardServerWins` records a conflict on both
+  launch and mid-session passes so the user chooses Keep mine / Keep server, and a
+  404/403 marks a waiting classic draft `.failed` rather than deleting it (matching native
+  drafts). `EditorViewModel.reconcileDraft` records the same conflict when the editor
+  opens the draft first.
 - **A failed save is classified, not just failed.** `retryableSaveFailure` routes a
   transient/transport failure (offline, 5xx, rate limit) to **`.pendingSync`**
   ("Saved on this device · syncs when online") rather than the hard `.failed` reserved
@@ -1859,9 +1859,10 @@ markdown write endpoint**. Understand this before touching the save path:
   still equals the baseline body — a web *rename* bumps `updated_at` without touching
   content) ⇒ `.push`, otherwise ⇒ **`.conflict`**; (3) no baseline (a legacy draft) ⇒ fall
   back to `pendingDraftClockTolerance` (120 s added to the draft's client timestamp;
-  within the window the draft wins, beyond it the server copy wins and the draft is
-  dropped). **A baseline-carrying draft is never silently discarded** — the tolerance
-  rule is now only the legacy path.
+  within the window the draft wins, beyond it `.discardServerWins` is returned, which
+  `runSyncPass` records as a conflict rather than deleting the draft). **A
+  baseline-carrying draft is never silently discarded** — the tolerance rule is only the
+  legacy path.
 - **A conflict is detected and *asked about*, never auto-merged** (there is no on-device
   Yjs decoder and no CRDT). `.conflict` records a `SyncConflict` (the server's
   `updated_at` only — no server markdown, so "keep the server" must re-fetch), which

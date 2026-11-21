@@ -393,6 +393,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0, "hold 2: no GET at all")
         XCTAssertNotNil(draftStore.draft(for: document.id))
         XCTAssertNotNil(createStore.create(for: document.id))
+        XCTAssertEqual(coordinator.state(for: document.id), .pendingSync)
     }
 
     /// The same protection has to survive a *relaunch*, because that is when
@@ -415,6 +416,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0)
         XCTAssertEqual(draftStore.draft(for: document.id)?.markdown, "# Typed offline")
         XCTAssertNotNil(createStore.create(for: document.id))
+        XCTAssertEqual(relaunched.state(for: document.id), .pendingSync)
     }
 
     /// The state has to survive a relaunch too: `states` is in-memory while the record is
@@ -547,12 +549,15 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertEqual(
             draftStore.draft(for: stale)?.markdown, "# Written offline",
             "unknown records must not read as 'no local documents exist' here either")
+        XCTAssertNil(
+            coordinator.conflict(for: stale),
+            "unknown create records must skip without recording a conflict")
+        XCTAssertEqual(coordinator.state(for: stale), .idle)
     }
 
     /// The whole hold rests on the create store decoding. If it ever doesn't, the records
     /// are *unknown* — not absent — so any draft might belong to a local document, and the
-    /// 404 branch would delete every offline-created document's only copy at once. Cleaning
-    /// up nothing is recoverable; that is not.
+    /// 404 branch must skip without deleting or marking failed.
     func testAnUnreadableCreateStoreSuppressesTheSyncPassDeleteEntirely() async {
         let log = RequestRecorder()
         MockURLProtocol.stubHandler = { request in
@@ -583,6 +588,9 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertEqual(
             draftStore.draft(for: orphanedByCorruption)?.markdown, "# Written offline",
             "unknown records must not read as 'no local documents exist'")
+        XCTAssertEqual(
+            coordinator.state(for: orphanedByCorruption), .idle,
+            "unknown create records must skip without marking the draft failed")
     }
 
     /// The fail-safe only buys one process unless the unreadable bytes are moved aside:
@@ -689,9 +697,9 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             "Untitled document")
     }
 
-    /// A real server document is unaffected: its 404 still means "deleted elsewhere",
-    /// and its draft is still dropped. The guard must be narrow.
-    func testAServerDocumentsDraftIsStillDroppedOnA404() async {
+    /// A real server document is not skipped by the pending-create guard: its 404 reaches
+    /// the refusal branch, keeps the draft, and marks it `.failed`. The guard must be narrow.
+    func testAServerDocumentsDraftIsMarkedFailedOnA404() async {
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
         let (coordinator, draftStore, _) = makeCoordinator()
         let serverID = UUID()
@@ -700,7 +708,12 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
 
         await coordinator.syncPendingDrafts()
 
-        XCTAssertNil(draftStore.draft(for: serverID))
+        XCTAssertEqual(draftStore.draft(for: serverID)?.markdown, "# Stale")
+        if case .failed = coordinator.state(for: serverID) {
+        } else {
+            XCTFail("Expected .failed, got \(coordinator.state(for: serverID))")
+        }
+        XCTAssertEqual(coordinator.failureReport(for: serverID), "Draft sync refused: DocsAPIError.notFound")
     }
 
     // MARK: - Deleting a local document

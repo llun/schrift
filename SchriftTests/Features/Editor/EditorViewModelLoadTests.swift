@@ -71,8 +71,10 @@ final class EditorViewModelLoadTests: EditorViewModelTestCase {
         XCTAssertTrue(blocksContentEqual(viewModel.blocks, [EditorBlock(kind: .paragraph, text: "Draft content")]))
     }
 
-    func testLoadIgnoresStoredDraftOlderThanServer() async {
-        let (viewModel, _, draftStore, _) = makeEnvironment()
+    /// Waiting edits are never dropped automatically: a legacy draft older than the server
+    /// copy stays on screen and the user is asked (a recorded conflict).
+    func testLoadKeepsAStoredDraftOlderThanServerAndAsks() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
         stubLoad(content: "Server content")
         draftStore.save(
             PendingDraft(
@@ -81,7 +83,9 @@ final class EditorViewModelLoadTests: EditorViewModelTestCase {
 
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.rawMarkdown, "Server content")
+        XCTAssertEqual(viewModel.rawMarkdown, "Stale draft")
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+        XCTAssertNotNil(coordinator.conflict(for: documentID))
     }
 
     // MARK: - Instant local phase + revalidation
