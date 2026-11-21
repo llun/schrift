@@ -676,8 +676,8 @@ final class EditorViewModel {
             serverBaseline = saveCoordinator.storedDraft(documentID: documentID)?.baseline
             displaySource = .pendingSave
         } else if let draft = saveCoordinator.storedDraft(documentID: documentID), draft.replica == nil {
-            // New: shown before any fetch (fixes drafts being unreachable
-            // offline). The server-wins staleness rule runs at revalidation.
+            // Shown before any fetch, so a draft is reachable offline. Revalidation decides
+            // whether it pushes or asks (a conflict); it never discards it.
             install(markdown: draft.markdown, title: draft.title, syncedAt: nil)
             serverBaseline = draft.baseline
             displaySource = .draft

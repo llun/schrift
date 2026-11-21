@@ -827,8 +827,8 @@ Choose the display source by precedence:
 2. Stored draft (`saveCoordinator.storedDraft`) — dirty, trusted local edits.
    Install with the draft markdown/title; no `syncedAt`. *(Showing this without a
    prior successful fetch is new; it fixes the current "drafts unreachable
-   offline" gap. The server-wins staleness rule is preserved — it moves to the
-   revalidation phase, below.)*
+   offline" gap. Revalidation, below, decides whether the draft pushes or asks with
+   a conflict; it is never discarded.)*
 3. **Cached content** (`contentCache.content(for:)`) — clean, previously synced.
    Install with the entry's markdown/title and `syncedAt` from the entry.
 4. **None of the above** — set `isLoading = true` and go straight to the fetch
