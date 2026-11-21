@@ -1175,7 +1175,7 @@ final class NativeEditorOpen {
         let otherScreens =
             coordinator.openEditorCount(documentID: viewModel.documentID)
             - (viewModel.isRegisteredOpenEditor ? 1 : 0)
-        if !viewModel.isEditing, !viewModel.isDirty, otherScreens <= 0 {
+        if enabled, !viewModel.isEditing, !viewModel.isDirty, otherScreens <= 0 {
             coordinator.convertUnsentClassicCreate(documentID: viewModel.documentID)
         }
         switch coordinator.nativeOwnership(documentID: viewModel.documentID) {
