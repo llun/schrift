@@ -1040,6 +1040,10 @@ final class NativeEditorOpen {
     enum Route {
         case loading, classic
         case native(NativeEditorSession)
+        /// A server document with waiting classic edits (classic draft, queued classic save,
+        /// or checkpointed create) opened while the native switch is on. Rendered read-only
+        /// inside the native shell until the edits sync or are resolved/discarded.
+        case waitingClassicEdits
         /// The marker says native owns this document, but its replica is
         /// missing or unreadable. Show the preserved read-only explanation;
         /// never open the classic writer over it.
@@ -1051,7 +1055,7 @@ final class NativeEditorOpen {
 
         var isNativeActive: Bool {
             switch self {
-            case .loading, .native, .preservedUnavailable, .unavailable:
+            case .loading, .native, .waitingClassicEdits, .preservedUnavailable, .unavailable:
                 return true
             case .classic:
                 return false
@@ -1060,9 +1064,17 @@ final class NativeEditorOpen {
     }
     private(set) var enabled = false
     private(set) var route: Route
+    /// True while a `.native` session is currently mounted on screen.
+    var isNativeSessionRoute: Bool {
+        if case .native = route { return true }
+        return false
+    }
+    /// True while a waiting-classic drain or manual Retry is actively running.
+    private(set) var isWaitingClassicSyncing = false
     /// Explains why editing is unavailable when `route` cannot enter Edit mode.
     private(set) var editUnavailableReason: NativeEditUnavailableReason?
     private var isOpen = false
+    private var lastIsOffline = false
     private let preference: @MainActor () -> Bool
     /// The Live collaboration preference, one input of the native live gate (PR09a).
     private let livePreference: @MainActor () -> Bool
@@ -1082,9 +1094,11 @@ final class NativeEditorOpen {
         let mention: Bool?
     }
     private enum OpenResult: Sendable {
-        /// A pre-Docs 6 server, or pending local work that arrived mid-fetch: the classic
-        /// editor owns the document until stages 2 and 5.
+        /// A pre-Docs 6 server, or non-waiting classic-only work (local create, pending delete,
+        /// switch off) that arrived mid-fetch.
         case classic
+        /// Waiting classic edits arrived mid-fetch while the native switch is on.
+        case waitingClassicEdits
         case unavailable(NativeOpenUnavailable)
         /// `ability`: the server's `abilities.update` and `abilities.mention` (nil: not asked, or no answer).
         case state(Data, config: ServerConfig, ability: ServerAbilityAnswer?)
@@ -1094,6 +1108,8 @@ final class NativeEditorOpen {
     /// close cancels both.
     private var reopenTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    private var waitingDrainTask: Task<Void, Never>?
+    private var waitingWorkTask: Task<Void, Never>?
     /// The last native session's close: the next open waits for it (the
     /// registry also serializes each scope's replica lifecycle, PR08c).
     private var closing: Task<Void, Never>?
@@ -1134,6 +1150,7 @@ final class NativeEditorOpen {
         pendingOpenStartNs =
             NativeEditorDiagnosticsStore.shared.isCollecting ? DispatchTime.now().uptimeNanoseconds : nil
         isOpen = true
+        lastIsOffline = isOffline
         activeViewModel = viewModel
         enabled = preference()
         self.canUpdate = false
@@ -1144,7 +1161,7 @@ final class NativeEditorOpen {
         // A reappearing classic editor keeps its SwiftUI identity and local
         // view state while the optional native eligibility read is in flight.
         switch route {
-        case .loading, .native, .preservedUnavailable, .unavailable:
+        case .loading, .native, .waitingClassicEdits, .preservedUnavailable, .unavailable:
             route = .loading
             viewModel.setNativeRouteActive(true)
         case .classic:
@@ -1181,6 +1198,7 @@ final class NativeEditorOpen {
         switch coordinator.nativeOwnership(documentID: viewModel.documentID) {
         case .unreadable:
             viewModel.seedNativeMetadataIfNeeded(includeLocalDrafts: false)
+            viewModel.setOpenEditorWritable(true)
             viewModel.setNativeRouteActive(true)
             editUnavailableReason = .preservedUnavailable
             route = .preservedUnavailable
@@ -1189,6 +1207,7 @@ final class NativeEditorOpen {
             // Another account's unsynced replica is never shown to this one.
             guard scope.ownerUserID == account else {
                 viewModel.seedNativeMetadataIfNeeded(includeLocalDrafts: false)
+                viewModel.setOpenEditorWritable(true)
                 viewModel.setNativeRouteActive(true)
                 editUnavailableReason = .preservedUnavailable
                 route = .preservedUnavailable
@@ -1200,6 +1219,7 @@ final class NativeEditorOpen {
                 restored = try await registry.open(store: coordinator.replicaStore, scope: scope, hooks: replicaHooks)
             } catch {
                 guard generation == request else { return }
+                viewModel.setOpenEditorWritable(true)
                 viewModel.setNativeRouteActive(true)
                 editUnavailableReason = .preservedUnavailable
                 route = .preservedUnavailable
@@ -1224,6 +1244,7 @@ final class NativeEditorOpen {
                     editUnavailableReason = unavailableReason(
                         for: session, viewModel: viewModel, hasEditAccess: canUpdate, hasAccount: account != nil)
                 }
+                viewModel.setOpenEditorWritable(true)
                 viewModel.setNativeRouteActive(true)
                 if let openStart = pendingOpenStartNs { session.markOpenStarted(openStart) }
                 route = .native(session)
@@ -1237,6 +1258,7 @@ final class NativeEditorOpen {
             // anywhere and take the unowned route, which re-seeds from the server
             // when typing is possible. Otherwise it stays read-only.
             guard enabled, coordinator.clearNativeOwnership(scope: scope) else {
+                viewModel.setOpenEditorWritable(true)
                 viewModel.setNativeRouteActive(true)
                 editUnavailableReason = .preservedUnavailable
                 route = .preservedUnavailable
@@ -1245,6 +1267,10 @@ final class NativeEditorOpen {
         case .none:
             break
         }
+        if hasWaitingClassicEdits(viewModel) {
+            showWaitingClassicEdits(viewModel: viewModel, isOffline: isOffline, request: request)
+            return
+        }
         guard canOpen(viewModel, isOffline: isOffline) else {
             // Offline or unreachable with nothing on this device is the one
             // pending-work gate the native surface answers itself: there is no
@@ -1252,6 +1278,7 @@ final class NativeEditorOpen {
             if offlineNeverOpened(viewModel, isOffline: isOffline) {
                 showUnavailable(.offlineNeverOpened, viewModel: viewModel)
             } else {
+                viewModel.setOpenEditorWritable(true)
                 viewModel.setNativeRouteActive(false)
                 route = .classic
             }
@@ -1276,10 +1303,9 @@ final class NativeEditorOpen {
                     return
                 }
                 guard !self.availabilityMoved(viewModel, isOffline: isOffline) else { return }
-                // Pending local work arrived while the fetch was in flight: the classic
-                // editor still owns it until stage 2 moves drafts to native.
+                // Pending local work arrived while the fetch was in flight.
                 guard self.canOpen(viewModel, isOffline: isOffline) else {
-                    continuation.yield(.classic)
+                    continuation.yield(self.hasWaitingClassicEdits(viewModel) ? .waitingClassicEdits : .classic)
                     return
                 }
                 // Asked beside the state, inside the same fetch.
@@ -1291,10 +1317,9 @@ final class NativeEditorOpen {
                     self.isCurrent(request: request, viewModel: viewModel, account: account)
                 else { return }
                 guard !self.availabilityMoved(viewModel, isOffline: isOffline) else { return }
-                // Pending local work arrived while the fetch was in flight: the classic
-                // editor still owns it until stage 2 moves drafts to native.
+                // Pending local work arrived while the fetch was in flight.
                 guard self.canOpen(viewModel, isOffline: isOffline) else {
-                    continuation.yield(.classic)
+                    continuation.yield(self.hasWaitingClassicEdits(viewModel) ? .waitingClassicEdits : .classic)
                     return
                 }
                 // The cache refresh only feeds the classic offline fallback: its
@@ -1306,18 +1331,20 @@ final class NativeEditorOpen {
                     self.isCurrent(request: request, viewModel: viewModel, account: account)
                 else { return }
                 guard !self.availabilityMoved(viewModel, isOffline: isOffline) else { return }
-                // Pending local work arrived while the fetch was in flight: the classic
-                // editor still owns it until stage 2 moves drafts to native.
+                // Pending local work arrived while the fetch was in flight.
                 guard self.canOpen(viewModel, isOffline: isOffline) else {
-                    continuation.yield(.classic)
+                    continuation.yield(self.hasWaitingClassicEdits(viewModel) ? .waitingClassicEdits : .classic)
                     return
                 }
                 continuation.yield(.state(state, config: config, ability: answer))
             } catch {
-                // Pending local work that arrived mid-fetch keeps its classic owner even
-                // when the fetch then fails (stage 2 moves drafts to native).
-                let pending = self.map { !$0.canOpenIgnoringConnectivity(viewModel) } ?? false
-                continuation.yield(pending ? .classic : .unavailable(.openFailed))
+                // Pending local work that arrived mid-fetch never gets hidden behind an open error.
+                if let self, self.hasWaitingClassicEdits(viewModel) {
+                    continuation.yield(.waitingClassicEdits)
+                } else {
+                    let pending = self.map { !$0.canOpenIgnoringConnectivity(viewModel) } ?? false
+                    continuation.yield(pending ? .classic : .unavailable(.openFailed))
+                }
             }
         }
         defer {
@@ -1341,17 +1368,25 @@ final class NativeEditorOpen {
                 settleWithoutAnswer(request: request, viewModel: viewModel, account: account, isOffline: isOffline)
                 return
             }
-            // Pending local work arrived while the fetch was in flight: the classic
-            // editor still owns it until stage 2 moves drafts to native.
+            // Pending local work arrived while the fetch was in flight.
             guard canOpenIgnoringConnectivity(viewModel) else {
-                viewModel.setNativeRouteActive(false)
-                route = .classic
+                if hasWaitingClassicEdits(viewModel) {
+                    showWaitingClassicEdits(viewModel: viewModel, isOffline: isOffline, request: request)
+                } else {
+                    viewModel.setOpenEditorWritable(true)
+                    viewModel.setNativeRouteActive(false)
+                    route = .classic
+                }
                 return
             }
             await activateFetchedState(
                 state: state, config: config, ability: ability, viewModel: viewModel, request: request,
                 account: account, canUpdate: canUpdate)
+        case .waitingClassicEdits:
+            guard isCurrent(request: request, viewModel: viewModel, account: account) else { return }
+            showWaitingClassicEdits(viewModel: viewModel, isOffline: isOffline, request: request)
         case .classic:
+            viewModel.setOpenEditorWritable(true)
             viewModel.setNativeRouteActive(false)
             route = .classic
         case .unavailable(let reason):
@@ -1402,6 +1437,7 @@ final class NativeEditorOpen {
             editUnavailableReason = unavailableReason(
                 for: session, viewModel: viewModel, hasEditAccess: verified, hasAccount: account != nil)
             viewModel.seedNativeMetadataIfNeeded()
+            viewModel.setOpenEditorWritable(true)
             viewModel.setNativeRouteActive(true)
             if let openStart = pendingOpenStartNs { session.markOpenStarted(openStart) }
             route = .native(session)
@@ -1414,6 +1450,7 @@ final class NativeEditorOpen {
             writable: writable)
         guard let seeded else { return }
         viewModel.seedNativeMetadataIfNeeded()
+        viewModel.setOpenEditorWritable(true)
         viewModel.setNativeRouteActive(seeded.isNativeActive)
         switch seeded {
         case .native(let restoredSession):
@@ -1425,7 +1462,7 @@ final class NativeEditorOpen {
                     for: restoredSession, viewModel: viewModel, hasEditAccess: verified, hasAccount: true)
         case .preservedUnavailable:
             editUnavailableReason = .preservedUnavailable
-        case .loading, .classic, .unavailable:
+        case .loading, .classic, .waitingClassicEdits, .unavailable:
             editUnavailableReason = nil
         }
         route = seeded
@@ -1636,6 +1673,7 @@ final class NativeEditorOpen {
                 viewModel.applyResolvedServerMetadataForNative(
                     formatted: formatted, leafNesting: leafNesting, installClassicFallback: true)
                 isOpen = true
+                viewModel.setOpenEditorWritable(true)
                 viewModel.setNativeRouteActive(false)
                 route = .classic
                 await viewModel.loadChildren()
@@ -2008,14 +2046,145 @@ final class NativeEditorOpen {
         guard isCurrent(request: request, viewModel: viewModel, account: account), case .loading = route else {
             return
         }
-        if offlineNeverOpened(viewModel, isOffline: isOffline) {
+        if hasWaitingClassicEdits(viewModel) {
+            showWaitingClassicEdits(viewModel: viewModel, isOffline: isOffline, request: request)
+        } else if offlineNeverOpened(viewModel, isOffline: isOffline) {
             showUnavailable(.offlineNeverOpened, viewModel: viewModel)
         } else if !canOpen(viewModel, isOffline: isOffline) {
+            viewModel.setOpenEditorWritable(true)
             viewModel.setNativeRouteActive(false)
             route = .classic
         } else {
             showUnavailable(.openFailed, viewModel: viewModel)
         }
+    }
+
+    private func hasWaitingClassicEdits(_ viewModel: EditorViewModel) -> Bool {
+        guard enabled, !viewModel.isLocalDocument, !viewModel.isDocumentPendingDelete,
+            !viewModel.isEditing, !viewModel.isDirty
+        else { return false }
+        let coordinator = viewModel.saveCoordinator
+        guard coordinator.cachedServerConfig()?.usesCollaborationYDocServer != false else { return false }
+        guard coordinator.nativeOwnership(documentID: viewModel.documentID) == .none else { return false }
+        return coordinator.hasWaitingClassicWork(documentID: viewModel.documentID)
+    }
+
+    private func showWaitingClassicEdits(viewModel: EditorViewModel, isOffline: Bool, request: Int) {
+        viewModel.seedWaitingClassicMetadataIfNeeded()
+        viewModel.setNativeRouteActive(true)
+        viewModel.setOpenEditorWritable(false)
+        editUnavailableReason = nil
+        route = .waitingClassicEdits
+        startObservingWaitingClassicWork(viewModel: viewModel, request: request)
+        let offline = isOffline || viewModel.availability.showsOfflineStatus
+        if !offline, !viewModel.isWaitingClassicFailed, viewModel.visibleNativeSyncConflict == nil {
+            startWaitingClassicDrain(viewModel: viewModel, request: request)
+        }
+    }
+
+    /// Connectivity changed while on `.waitingClassicEdits`: coming online starts the serialized
+    /// classic replay unless the draft is already `.failed` or waiting on a conflict decision.
+    func handleConnectivityChange(viewModel: EditorViewModel, isOffline: Bool) {
+        lastIsOffline = isOffline
+        guard isOpen, case .waitingClassicEdits = route else { return }
+        let offline = isOffline || viewModel.availability.showsOfflineStatus
+        guard !offline, !viewModel.isWaitingClassicFailed, viewModel.visibleNativeSyncConflict == nil else { return }
+        startWaitingClassicDrain(viewModel: viewModel, request: generation)
+    }
+
+    /// Manual Retry on `.waitingClassicEdits`: immediately switches the notice to "Syncing…",
+    /// clears terminal `.failed` state, and runs the serialized sync pass.
+    func retryWaitingClassicEdits(viewModel: EditorViewModel) async {
+        guard isOpen, case .waitingClassicEdits = route else { return }
+        let request = generation
+        isWaitingClassicSyncing = true
+        defer {
+            if generation == request {
+                isWaitingClassicSyncing = false
+            }
+        }
+        await viewModel.saveCoordinator.retryClassicDraft(documentID: viewModel.documentID)
+    }
+
+    /// Confirmed Discard on `.waitingClassicEdits`: removes the local classic draft, queued save,
+    /// pending attachments, failure state and checkpoint without deleting the server document,
+    /// then reopens natively (or shows `.unavailable` when offline or unreachable).
+    func discardWaitingClassicEdits(
+        viewModel: EditorViewModel, isOffline: Bool, canUpdate: Bool, canMention: Bool = false
+    ) async {
+        guard isOpen, case .waitingClassicEdits = route else { return }
+        let coordinator = viewModel.saveCoordinator
+        waitingWorkTask?.cancel()
+        waitingWorkTask = nil
+        waitingDrainTask?.cancel()
+        waitingDrainTask = nil
+        isWaitingClassicSyncing = false
+        guard coordinator.discardClassicDraft(documentID: viewModel.documentID) else {
+            startObservingWaitingClassicWork(viewModel: viewModel, request: generation)
+            return
+        }
+        if isOffline || viewModel.availability.showsOfflineStatus {
+            lastIsOffline = isOffline
+            self.rowCanUpdate = canUpdate
+            self.rowCanMention = canMention
+            showUnavailable(.offlineNeverOpened, viewModel: viewModel)
+            return
+        }
+        close()
+        await open(viewModel: viewModel, isOffline: isOffline, canUpdate: canUpdate, canMention: canMention)
+    }
+
+    private func startWaitingClassicDrain(viewModel: EditorViewModel, request: Int) {
+        guard waitingDrainTask == nil else { return }
+        isWaitingClassicSyncing = true
+        waitingDrainTask = Task { @MainActor [weak self, weak viewModel] in
+            defer {
+                if let self, self.generation == request {
+                    self.waitingDrainTask = nil
+                    self.isWaitingClassicSyncing = false
+                }
+            }
+            guard let viewModel else { return }
+            await viewModel.saveCoordinator.syncPendingDraftsAndAwaitCompletion()
+        }
+    }
+
+    private func startObservingWaitingClassicWork(viewModel: EditorViewModel, request: Int) {
+        waitingWorkTask?.cancel()
+        waitingWorkTask = Task { @MainActor [weak self, weak viewModel] in
+            while let self, let viewModel, !Task.isCancelled, self.isOpen, self.generation == request {
+                guard case .waitingClassicEdits = self.route else { return }
+                if !viewModel.hasWaitingClassicWork {
+                    if !viewModel.isDocumentPendingDelete {
+                        self.reopen(
+                            viewModel: viewModel,
+                            isOffline: self.lastIsOffline || viewModel.availability.isOffline,
+                            canUpdate: self.rowCanUpdate,
+                            canMention: self.rowCanMention)
+                    }
+                    return
+                }
+                await self.waitForWaitingClassicWorkChange(viewModel: viewModel)
+            }
+        }
+    }
+
+    private func waitForWaitingClassicWorkChange(viewModel: EditorViewModel) async {
+        let stream = AsyncStream<Void> { continuation in
+            var alreadyCleared = false
+            withObservationTracking {
+                alreadyCleared = !viewModel.hasWaitingClassicWork
+                _ = viewModel.isDocumentPendingDelete
+            } onChange: {
+                continuation.yield()
+                continuation.finish()
+            }
+            if alreadyCleared {
+                continuation.yield()
+                continuation.finish()
+            }
+        }
+        for await _ in stream { break }
     }
 
     /// Availability moved under an awaited fetch: the fetch yields nothing and the
@@ -2058,6 +2227,7 @@ final class NativeEditorOpen {
         if viewModel.contentCache.content(for: viewModel.documentID) == nil {
             viewModel.hasLocalCopy = hadLocalCopy
         }
+        viewModel.setOpenEditorWritable(true)
         viewModel.setNativeRouteActive(true)
         editUnavailableReason = nil
         route = .unavailable(reason)
@@ -2081,11 +2251,16 @@ final class NativeEditorOpen {
         rowCanUpdate = false
         canMention = false
         rowCanMention = false
+        isWaitingClassicSyncing = false
         generation += 1
         reopenTask?.cancel()
         reopenTask = nil
         refreshTask?.cancel()
         refreshTask = nil
+        waitingDrainTask?.cancel()
+        waitingDrainTask = nil
+        waitingWorkTask?.cancel()
+        waitingWorkTask = nil
         pendingOpen?.finish()
         pendingOpen = nil
         editUnavailableReason = nil
@@ -2093,7 +2268,7 @@ final class NativeEditorOpen {
         case .native(let session):
             closing = session.close()
             route = .loading
-        case .preservedUnavailable, .unavailable:
+        case .waitingClassicEdits, .preservedUnavailable, .unavailable:
             route = .loading
         case .loading, .classic:
             break

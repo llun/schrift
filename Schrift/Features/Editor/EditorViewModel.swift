@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Whether a recorded failure could be the body read's own, as opposed to the sub-page list
 /// read that `revalidate`/`refresh` issue alongside it. Both run concurrently, so the list's
@@ -207,6 +208,10 @@ final class EditorViewModel {
     /// Non-nil once a screen has registered. Its `deinit` is what releases the coordinator's
     /// hold — see `noteEditorAppeared`.
     private var openEditorRegistration: OpenEditorRegistration?
+    /// Separate writable-editor hold released synchronously when the screen enters the
+    /// read-only waiting-classic route so checkpointed creates can finish migrating.
+    private var writableEditorRegistration: OpenEditorRegistration?
+    @ObservationIgnored private var isOpenEditorWritable = true
     /// Whether this screen counts itself in the coordinator's open editors.
     var isRegisteredOpenEditor: Bool { openEditorRegistration != nil }
     /// Identifies this screen's rewrite-observer registration, so its deferred teardown removes
@@ -374,6 +379,52 @@ final class EditorViewModel {
 
     func setNativeRouteActive(_ active: Bool) {
         isNativeRouteActive = active
+    }
+
+    /// Toggles whether this screen holds a writable open-editor claim on `documentID`.
+    /// A read-only waiting-classic screen drops the writable hold synchronously so
+    /// checkpointed-create migration and attachment cleanup do not deadlock while open.
+    func setOpenEditorWritable(_ writable: Bool) {
+        guard isOpenEditorWritable != writable else { return }
+        isOpenEditorWritable = writable
+        guard openEditorRegistration != nil else { return }
+        if writable {
+            if writableEditorRegistration == nil {
+                saveCoordinator.retainWritableOpenEditor(documentID: documentID)
+                let coordinator = saveCoordinator
+                let id = documentID
+                writableEditorRegistration = OpenEditorRegistration {
+                    Task { @MainActor in
+                        coordinator.releaseWritableOpenEditor(documentID: id)
+                    }
+                }
+            }
+        } else if let registration = writableEditorRegistration {
+            registration.cancel()
+            writableEditorRegistration = nil
+            saveCoordinator.releaseWritableOpenEditor(documentID: documentID)
+        }
+    }
+
+    /// True while this server document still has classic edits, a queued/in-flight classic
+    /// save, or an unfinished checkpointed create waiting to sync.
+    var hasWaitingClassicWork: Bool {
+        saveCoordinator.hasWaitingClassicWork(documentID: documentID)
+    }
+
+    /// Live snapshot of waiting classic edits for the read-only waiting route.
+    var waitingClassicContent: DocumentSaveCoordinator.WaitingClassicContent? {
+        saveCoordinator.waitingClassicContent(documentID: documentID)
+    }
+
+    /// True when waiting classic edits are in a terminal `.failed` state (404/403/rejected).
+    var isWaitingClassicFailed: Bool {
+        saveCoordinator.isWaitingClassicFailed(documentID: documentID)
+    }
+
+    /// True while a classic push for this document is actively on the wire or `.saving`.
+    var isWaitingClassicInFlight: Bool {
+        saveCoordinator.isWaitingClassicInFlight(documentID: documentID)
     }
 
     // MARK: - Error state
@@ -554,7 +605,7 @@ final class EditorViewModel {
     /// saves a pointless retain/release pair and a main-actor hop per repeated `onAppear`.
     func noteEditorAppeared() {
         guard openEditorRegistration == nil else { return }
-        saveCoordinator.retainOpenEditor(documentID: documentID)
+        saveCoordinator.retainOpenEditor(documentID: documentID, isWritable: false)
         // Registered here, and released by the same token, so it exists for exactly as long as
         // this screen does. It lets the attachment replay rewrite this editor's in-memory copy
         // in the same turn it rewrites the draft — without it, a flush after the record was
@@ -576,7 +627,15 @@ final class EditorViewModel {
             // harmless: the only consumer is the replay, which is itself trigger-driven.
             Task { @MainActor in
                 coordinator.setPendingAttachmentRewriteObserver(nil, for: id, token: token)
-                coordinator.releaseOpenEditor(documentID: id)
+                coordinator.releaseOpenEditor(documentID: id, wasWritable: false)
+            }
+        }
+        if isOpenEditorWritable {
+            saveCoordinator.retainWritableOpenEditor(documentID: documentID)
+            writableEditorRegistration = OpenEditorRegistration {
+                Task { @MainActor in
+                    coordinator.releaseWritableOpenEditor(documentID: id)
+                }
             }
         }
     }
@@ -3904,6 +3963,20 @@ final class EditorViewModel {
         }
     }
 
+    /// Seeds metadata (`title`, cached `subpages`, `hasLocalCopy`) for the read-only
+    /// waiting-classic route from the waiting classic draft / queued save / checkpointed create
+    /// without invoking classic content loading or weakening `seedNativeMetadataIfNeeded`.
+    func seedWaitingClassicMetadataIfNeeded() {
+        if subpages == nil, let cachedChildren = childrenCache.children(for: documentID) {
+            subpages = cachedChildren
+        }
+        hasLocalCopy = true
+        if let waiting = saveCoordinator.waitingClassicContent(documentID: documentID) {
+            title = waiting.title
+            savedTitle = waiting.title
+        }
+    }
+
     /// Updates `title` for a native-owned document and schedules a debounced native save
     /// without invoking the classic Markdown dirty/autosave funnel.
     func updateNativeTitle(_ text: String, scheduleSave: () -> Void) {
@@ -4764,12 +4837,24 @@ final class EditorViewModel {
 /// `EditorViewModel.noteEditorAppeared` for what goes wrong otherwise. Tying it to an object
 /// owned by the view model turns "the view left the hierarchy" into the release, which is the
 /// event actually wanted and the one SwiftUI gives no direct hook for.
-private final class OpenEditorRegistration {
-    private let onRelease: @Sendable () -> Void
+private final class OpenEditorRegistration: Sendable {
+    private let onRelease: OSAllocatedUnfairLock<(@Sendable () -> Void)?>
 
     init(onRelease: @escaping @Sendable () -> Void) {
-        self.onRelease = onRelease
+        self.onRelease = OSAllocatedUnfairLock(initialState: onRelease)
     }
 
-    deinit { onRelease() }
+    /// Suppresses the `deinit` callback when the caller has already released synchronously.
+    func cancel() {
+        onRelease.withLock { $0 = nil }
+    }
+
+    deinit {
+        let release = onRelease.withLock { callback -> (@Sendable () -> Void)? in
+            let current = callback
+            callback = nil
+            return current
+        }
+        release?()
+    }
 }

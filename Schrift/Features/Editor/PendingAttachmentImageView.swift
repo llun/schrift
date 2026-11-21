@@ -19,6 +19,7 @@ struct PendingAttachmentImageView: View {
     @Environment(\.docsTheme) private var theme
     let alt: String
     let display: PendingAttachmentDisplay
+    var showsActions: Bool = true
     let onRetry: () -> Void
     let onRemove: () -> Void
 
@@ -35,14 +36,18 @@ struct PendingAttachmentImageView: View {
             VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
                 photo(data).opacity(0.5)
                 message(loc[.editor_attachment_failed], icon: .error)
-                actions(showsRetry: true)
+                if showsActions {
+                    actions(showsRetry: true)
+                }
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(label(loc[.editor_attachment_failed]))
         case .missing:
             VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
                 message(loc[.editor_attachment_missing], icon: .image)
-                actions(showsRetry: false)
+                if showsActions {
+                    actions(showsRetry: false)
+                }
             }
             .padding(DocsSpacing.spaceSM)
             .frame(maxWidth: .infinity, alignment: .leading)

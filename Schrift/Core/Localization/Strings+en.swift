@@ -552,6 +552,7 @@ enum Strings_en {
         .profile_native_editor_diagnostics_collect: "Collect native editor diagnostics",
         .profile_native_editor_diagnostics: "Copy native editor diagnostics",
         .toast_diagnostics_copied: "Diagnostics copied",
+        .toast_text_copied: "Text copied",
         .native_editor_owned_read_only_body:
             "This document is saved in the native editor's format. Editing is unavailable while the native editor is off; turn it on in Profile to continue.",
         .native_editor_owned_unavailable_title: "Native document unavailable",
@@ -602,5 +603,12 @@ enum Strings_en {
         .native_editor_block_columns: "Columns",
         .native_editor_block_heading: "Heading",
         .native_editor_block_paragraph: "Paragraph",
+        .native_editor_waiting_classic_offline: "Waiting to sync your offline edits",
+        .native_editor_waiting_classic_syncing: "Syncing…",
+        .native_editor_waiting_classic_failed: "Couldn't sync",
+        .native_editor_waiting_classic_copy_text: "Copy text",
+        .native_editor_waiting_classic_discard_title: "Discard offline edits?",
+        .native_editor_waiting_classic_discard_message:
+            "Your unsynced changes on this device will be permanently deleted.",
     ]
 }

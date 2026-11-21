@@ -639,6 +639,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case profile_native_editor_diagnostics_collect = "profile.native_editor_diagnostics_collect"  // "Collect native editor diagnostics"
     case profile_native_editor_diagnostics = "profile.native_editor_diagnostics"  // "Copy native editor diagnostics"
     case toast_diagnostics_copied = "toast.diagnostics_copied"  // "Diagnostics copied"
+    case toast_text_copied = "toast.text_copied"  // "Text copied"
     // Native read-only unavailability reasons
     case native_editor_read_only_unfamiliar_block = "native.editor.read_only_unfamiliar_block"
     // "Read-only: this document has a block the native editor can't edit yet (%@)"
@@ -675,5 +676,18 @@ enum L10nKey: String, CaseIterable, Sendable {
     case native_editor_block_columns = "native.editor.block_columns"  // "Columns"
     case native_editor_block_heading = "native.editor.block_heading"  // "Heading"
     case native_editor_block_paragraph = "native.editor.block_paragraph"  // "Paragraph"
+    // Waiting classic edits route in the native shell
+    case native_editor_waiting_classic_offline = "native.editor.waiting_classic_offline"
+    // "Waiting to sync your offline edits"
+    case native_editor_waiting_classic_syncing = "native.editor.waiting_classic_syncing"
+    // "Syncing…"
+    case native_editor_waiting_classic_failed = "native.editor.waiting_classic_failed"
+    // "Couldn't sync"
+    case native_editor_waiting_classic_copy_text = "native.editor.waiting_classic_copy_text"
+    // "Copy text"
+    case native_editor_waiting_classic_discard_title = "native.editor.waiting_classic_discard_title"
+    // "Discard offline edits?"
+    case native_editor_waiting_classic_discard_message = "native.editor.waiting_classic_discard_message"
+    // "Your unsynced changes on this device will be permanently deleted."
     // (screen-specific keys are added by B9, B11, Phase C, Phase F)
 }

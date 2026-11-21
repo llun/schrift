@@ -1,0 +1,908 @@
+import SwiftUI
+import UIKit
+import XCTest
+
+@testable import Schrift
+
+@MainActor
+final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
+    private let owner = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+
+    // MARK: - Routing
+
+    func testOfflineClassicDraftRoutesToWaitingClassicWithoutNetworkWhenSwitchOnAndClassicWhenOff() async {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState("Server canonical body"))
+        server.install()
+        env.drafts.save(
+            PendingDraft(
+                documentID: env.documentID, title: "Offline Title", markdown: "Waiting body text",
+                updatedAt: Date()))
+
+        let openOn = NativeEditorOpen(preference: { true })
+        defer { openOn.close() }
+        await openOn.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .waitingClassicEdits = openOn.route else {
+            return XCTFail("switch on + offline classic draft must route to .waitingClassicEdits, got \(openOn.route)")
+        }
+        XCTAssertTrue(env.model.isNativeRouteActive)
+        XCTAssertEqual(env.model.title, "Offline Title")
+        XCTAssertEqual(server.log.methods, [], "offline open must issue zero network requests")
+        XCTAssertEqual(env.coordinator.nativeOwnership(documentID: env.documentID), .none)
+        openOn.close()
+
+        let openOff = NativeEditorOpen(preference: { false })
+        defer { openOff.close() }
+        await openOff.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .classic = openOff.route else {
+            return XCTFail("switch off must keep .classic, got \(openOff.route)")
+        }
+        XCTAssertEqual(server.log.methods, [])
+    }
+
+    func testPreDocs6ServerKeepsClassicRouteEvenWithSwitchOn() async {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        env.coordinator.noteServerConfig(ServerConfig(releaseVersion: "5.2.0", collaborationWsUrl: nil))
+        env.drafts.save(
+            PendingDraft(
+                documentID: env.documentID, title: "Legacy Title", markdown: "Legacy body", updatedAt: Date()))
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .classic = open.route else {
+            return XCTFail("pre-Docs 6 servers must keep .classic, got \(open.route)")
+        }
+    }
+
+    func testFailedClassicDraftOpensOnWaitingRouteInFailedStateWithoutAutoRetry() async {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState("Server body"))
+        server.formattedStatus = 404
+        server.install()
+        env.drafts.save(
+            PendingDraft(
+                documentID: env.documentID, title: "Rejected Title", markdown: "Unsynced body",
+                updatedAt: Date()))
+
+        await env.coordinator.syncPendingDrafts()
+        XCTAssertTrue(env.model.isWaitingClassicFailed)
+        let requestsBeforeOpen = server.log.methods.count
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .waitingClassicEdits = open.route else {
+            return XCTFail("failed classic draft must open on .waitingClassicEdits, got \(open.route)")
+        }
+        XCTAssertTrue(env.model.isWaitingClassicFailed)
+        XCTAssertFalse(open.isWaitingClassicSyncing)
+        await waitAndConfirmNever { server.log.methods.count > requestsBeforeOpen }
+    }
+
+    // MARK: - Online Drain & Reconnect Transition
+
+    func testOnlineOpenPushesClassicDraftAndTransitionsToNativeSeededFromServerYDoc() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let baselineDate = ISO8601DateFormatter().date(from: "2026-11-07T10:00:00Z")!
+        let serverUniqueText = "Authoritative server ydoc text — not built from markdown"
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState(serverUniqueText))
+        server.serverTitle = "Server Title"
+        server.serverContent = "Old body"
+        server.serverUpdatedAt = "2026-11-07T10:00:00Z"
+        server.install()
+
+        env.drafts.save(
+            PendingDraft(
+                documentID: env.documentID,
+                title: "Local Edited Title",
+                markdown: "Local classic markdown edit",
+                updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: baselineDate, markdown: "Old body", title: "Server Title")))
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+
+        await waitUntil {
+            if case .native = open.route { return true }
+            return false
+        }
+        guard case .native(let session) = open.route else {
+            return XCTFail("expected transition to .native after classic push ack, got \(open.route)")
+        }
+        XCTAssertFalse(env.coordinator.hasWaitingClassicWork(documentID: env.documentID))
+        XCTAssertNil(env.drafts.draft(for: env.documentID))
+        XCTAssertGreaterThanOrEqual(server.log.count(ofMethod: "PATCH"), 1, "classic draft must have been pushed")
+        let renderedText = session.surface.blocks.map(\.visibleText).joined(separator: "\n")
+        XCTAssertEqual(
+            renderedText, serverUniqueText,
+            "native replica must be seeded from the server ydoc state, never built from MarkdownYjs")
+    }
+
+    func testReconnectOnWaitingRouteDrainsClassicDraftAndTransitionsToNative() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let baselineDate = ISO8601DateFormatter().date(from: "2026-11-07T10:00:00Z")!
+        let serverText = "Seeded from server after reconnect"
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState(serverText))
+        server.serverTitle = "Server Title"
+        server.serverContent = "Initial"
+        server.serverUpdatedAt = "2026-11-07T10:00:00Z"
+        server.install()
+
+        env.drafts.save(
+            PendingDraft(
+                documentID: env.documentID,
+                title: "Offline Edit",
+                markdown: "Offline edited body",
+                updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: baselineDate, markdown: "Initial", title: "Server Title")))
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .waitingClassicEdits = open.route else {
+            return XCTFail("expected .waitingClassicEdits offline")
+        }
+        XCTAssertEqual(server.log.methods, [])
+
+        open.handleConnectivityChange(viewModel: env.model, isOffline: false)
+        await waitUntil {
+            if case .native = open.route { return true }
+            return false
+        }
+        guard case .native(let session) = open.route else {
+            return XCTFail("expected .native after reconnect drain")
+        }
+        XCTAssertEqual(session.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
+    }
+
+    func testCheckpointedCreateFinishesMigrationWhileWaitingScreenIsOpen() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let serverText = "Migrated server ydoc content"
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState(serverText))
+        server.serverTitle = "Offline Created"
+        server.serverContent = ""
+        server.serverUpdatedAt = "2026-11-07T10:00:00Z"
+        server.install()
+
+        let local = env.coordinator.createLocalDocument(
+            title: "Offline Created", parentID: nil, ownerUserID: owner, seedMarkdown: "Checkpointed classic body")
+        var record = try XCTUnwrap(env.creates.create(for: local.id))
+        record.syncedServerID = env.documentID
+        env.creates.save(record)
+        let relaunched = env.relaunch()
+
+        // Simulate NativeDocumentShellView.onAppear having registered the open editor hold.
+        relaunched.noteEditorAppeared()
+        XCTAssertTrue(relaunched.saveCoordinator.hasOpenEditorForTesting(documentID: env.documentID))
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: relaunched, isOffline: false, canUpdate: true)
+
+        await waitUntil {
+            if case .native = open.route { return true }
+            return false
+        }
+        guard case .native(let session) = open.route else {
+            return XCTFail("read-only waiting route must not deadlock checkpointed-create migration")
+        }
+        XCTAssertFalse(relaunched.saveCoordinator.hasCheckpointedCreate(forServerID: env.documentID))
+        XCTAssertTrue(
+            relaunched.saveCoordinator.hasWritableOpenEditorForTesting(documentID: env.documentID),
+            "writable open-editor hold must be restored once native opens")
+        XCTAssertEqual(session.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
+    }
+
+    // MARK: - Conflict Resolution
+
+    func testConflictKeepServerSeedsNativeFromServerYDoc() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let oldBaseline = ISO8601DateFormatter().date(from: "2026-11-07T09:00:00Z")!
+        let serverText = "Winning server version"
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState(serverText))
+        server.serverTitle = "Server Title"
+        server.serverContent = "Diverged server body"
+        server.serverUpdatedAt = "2026-11-07T11:00:00Z"
+        server.install()
+
+        env.drafts.save(
+            PendingDraft(
+                documentID: env.documentID,
+                title: "Local Title",
+                markdown: "Local diverged body",
+                updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: oldBaseline, markdown: "Original", title: "Server Title")))
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        await waitUntil { env.model.visibleNativeSyncConflict != nil }
+        guard case .waitingClassicEdits = open.route else {
+            return XCTFail("conflicted classic draft must remain on .waitingClassicEdits until resolved")
+        }
+
+        await open.resolveConflictKeepingServer(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else {
+            return XCTFail("Keep server must transition to .native, got \(open.route)")
+        }
+        XCTAssertNil(env.model.visibleNativeSyncConflict)
+        XCTAssertNil(env.drafts.draft(for: env.documentID))
+        XCTAssertEqual(session.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
+    }
+
+    func testConflictKeepMinePushesClassicDraftThenTransitionsToNative() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let oldBaseline = ISO8601DateFormatter().date(from: "2026-11-07T09:00:00Z")!
+        let serverText = "Post-push server ydoc state"
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState(serverText))
+        server.serverTitle = "Server Title"
+        server.serverContent = "Diverged server body"
+        server.serverUpdatedAt = "2026-11-07T11:00:00Z"
+        server.install()
+
+        env.drafts.save(
+            PendingDraft(
+                documentID: env.documentID,
+                title: "Local Title",
+                markdown: "Local winning body",
+                updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: oldBaseline, markdown: "Original", title: "Server Title")))
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        await waitUntil { env.model.visibleNativeSyncConflict != nil }
+
+        open.resolveConflictKeepingMine(viewModel: env.model)
+        await waitUntil {
+            if case .native = open.route { return true }
+            return false
+        }
+        guard case .native(let session) = open.route else {
+            return XCTFail("Keep mine must push and then transition to .native")
+        }
+        XCTAssertNil(env.model.visibleNativeSyncConflict)
+        XCTAssertNil(env.drafts.draft(for: env.documentID))
+        XCTAssertGreaterThanOrEqual(server.log.count(ofMethod: "PATCH"), 1)
+        XCTAssertEqual(session.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
+    }
+
+    // MARK: - Failed: Retry & Discard
+
+    func testRetryClearsFailedEntersSavingAndTransitionsToNativeOnRecovery() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let baselineDate = ISO8601DateFormatter().date(from: "2026-11-07T10:00:00Z")!
+        let serverText = "Recovered server ydoc"
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState(serverText))
+        server.formattedStatus = 403
+        server.serverTitle = "Server Title"
+        server.serverContent = "Old body"
+        server.serverUpdatedAt = "2026-11-07T10:00:00Z"
+        server.install()
+
+        env.drafts.save(
+            PendingDraft(
+                documentID: env.documentID,
+                title: "Local Title",
+                markdown: "Edited body",
+                updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: baselineDate, markdown: "Old body", title: "Server Title")))
+
+        await env.coordinator.syncPendingDrafts()
+        XCTAssertTrue(env.model.isWaitingClassicFailed)
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .waitingClassicEdits = open.route else {
+            return XCTFail("expected .waitingClassicEdits")
+        }
+
+        // Hold the next formattedContent fetch on a gate so we can assert immediate syncing/saving state.
+        let gate = MockURLProtocol.ResponseGate()
+        server.formattedStatus = 200
+        server.formattedGate = gate
+        let retryTask = Task { await open.retryWaitingClassicEdits(viewModel: env.model) }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        XCTAssertTrue(open.isWaitingClassicSyncing, "Retry must immediately switch notice to syncing")
+        XCTAssertFalse(env.model.isWaitingClassicFailed, "Retry must clear .failed before the pass finishes")
+        XCTAssertEqual(env.coordinator.state(for: env.documentID), .saving)
+
+        gate.open()
+        await retryTask.value
+        await waitUntil {
+            if case .native = open.route { return true }
+            return false
+        }
+        guard case .native(let session) = open.route else {
+            return XCTFail("Retry recovery must transition to .native")
+        }
+        XCTAssertEqual(session.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
+    }
+
+    func testRetryWhenServerStillRejectsReturnsToFailedAndDivergenceRecordsConflict() async {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let oldBaseline = ISO8601DateFormatter().date(from: "2026-11-07T09:00:00Z")!
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState("Server"))
+        server.formattedStatus = 404
+        server.serverTitle = "Server Title"
+        server.serverContent = "Diverged server body"
+        server.serverUpdatedAt = "2026-11-07T11:00:00Z"
+        server.install()
+
+        env.drafts.save(
+            PendingDraft(
+                documentID: env.documentID,
+                title: "Local Title",
+                markdown: "Local body",
+                updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: oldBaseline, markdown: "Original", title: "Server Title")))
+
+        await env.coordinator.syncPendingDrafts()
+        XCTAssertTrue(env.model.isWaitingClassicFailed)
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .waitingClassicEdits = open.route else { return XCTFail("expected .waitingClassicEdits") }
+
+        // 1. Server still returns 404 -> Retry finishes back in .failed.
+        await open.retryWaitingClassicEdits(viewModel: env.model)
+        XCTAssertTrue(env.model.isWaitingClassicFailed, "persisting 404 must land back in .failed")
+        XCTAssertFalse(open.isWaitingClassicSyncing)
+
+        // 2. Server is reachable again but diverged -> Retry records conflict instead of blind overwrite.
+        server.formattedStatus = 200
+        await open.retryWaitingClassicEdits(viewModel: env.model)
+        XCTAssertNotNil(env.model.visibleNativeSyncConflict, "Retry must run draftSyncDecision and record conflict")
+        XCTAssertEqual(server.log.count(ofMethod: "PATCH"), 0, "Retry must never blindly overwrite a diverged server")
+    }
+
+    func testDiscardCheckpointedCreateClearsCheckpointAndDraftWithoutDeletingServerDocument() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let serverText = "Server doc after discarding checkpoint"
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState(serverText))
+        server.install()
+
+        let local = env.coordinator.createLocalDocument(
+            title: "Offline Created", parentID: nil, ownerUserID: owner, seedMarkdown: "Local body")
+        let child = env.coordinator.createLocalDocument(
+            title: "Offline Subpage", parentID: local.id, ownerUserID: owner, seedMarkdown: "Child body")
+        var record = try XCTUnwrap(env.creates.create(for: local.id))
+        record.syncedServerID = env.documentID
+        env.creates.save(record)
+        let relaunched = env.relaunch()
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: relaunched, isOffline: true, canUpdate: true)
+        guard case .waitingClassicEdits = open.route else {
+            return XCTFail("expected .waitingClassicEdits for checkpointed create")
+        }
+
+        await open.discardWaitingClassicEdits(viewModel: relaunched, isOffline: false, canUpdate: true)
+        XCTAssertFalse(relaunched.saveCoordinator.hasCheckpointedCreate(forServerID: env.documentID))
+        XCTAssertNil(env.drafts.draft(for: local.id))
+        XCTAssertEqual(env.creates.create(for: child.id)?.parentID, env.documentID, "subpage must be re-parented")
+        XCTAssertEqual(server.log.count(ofMethod: "DELETE"), 0)
+        guard case .native(let session) = open.route else {
+            return XCTFail("expected .native after discarding checkpointed create")
+        }
+        XCTAssertEqual(session.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
+    }
+
+    func testDiscardRemovesDraftQueuedAttachmentsAndFailureAndReopensNatively() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let serverText = "Clean server document"
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState(serverText))
+        server.formattedStatus = 404
+        server.install()
+
+        let placeholder = try XCTUnwrap(
+            env.coordinator.queuePendingAttachment(
+                documentID: env.documentID, ownerUserID: owner, jpegData: Data([0x89, 0x50, 0x4E, 0x47])))
+        let photoLocalID = try XCTUnwrap(pendingAttachmentID(fromPlaceholderURL: placeholder))
+        env.drafts.save(
+            PendingDraft(
+                documentID: env.documentID,
+                title: "Doomed Title",
+                markdown: "Local edit\n\n![pic](\(placeholder))",
+                updatedAt: Date()))
+        env.coordinator.enqueue(
+            documentID: env.documentID, title: "Doomed Title", markdown: "Local edit\n\n![pic](\(placeholder))")
+        await env.coordinator.syncPendingDrafts()
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .waitingClassicEdits = open.route else {
+            return XCTFail("expected .waitingClassicEdits")
+        }
+        XCTAssertNotNil(env.coordinator.pendingAttachment(localID: photoLocalID))
+
+        // Server is reachable again when discarding online: must reopen natively, never DELETE the server doc.
+        server.formattedStatus = 200
+        await open.discardWaitingClassicEdits(viewModel: env.model, isOffline: false, canUpdate: true)
+
+        XCTAssertNil(env.drafts.draft(for: env.documentID), "Discard must remove stored classic draft")
+        XCTAssertNil(env.coordinator.pendingSave(documentID: env.documentID), "Discard must clear queued save")
+        XCTAssertNil(env.coordinator.pendingAttachment(localID: photoLocalID), "Discard must remove queued photos")
+        XCTAssertEqual(env.coordinator.state(for: env.documentID), .idle, "Discard must clear failure state")
+        XCTAssertNil(env.coordinator.failureReport(for: env.documentID))
+        XCTAssertEqual(server.log.count(ofMethod: "DELETE"), 0, "Discard must never DELETE the server document")
+        guard case .native(let session) = open.route else {
+            return XCTFail("Discard online against a reachable server must reopen .native, got \(open.route)")
+        }
+        XCTAssertEqual(session.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
+    }
+
+    func testDiscardOnlineAgainstMissingServerDocumentShowsUnavailableOpenFailed() async {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState("Unused"))
+        server.formattedStatus = 404
+        server.ydocStatus = 404
+        server.install()
+
+        env.drafts.save(
+            PendingDraft(documentID: env.documentID, title: "Gone", markdown: "Unsynced", updatedAt: Date()))
+        await env.coordinator.syncPendingDrafts()
+        XCTAssertTrue(env.model.isWaitingClassicFailed)
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .waitingClassicEdits = open.route else {
+            return XCTFail("expected .waitingClassicEdits")
+        }
+
+        await open.discardWaitingClassicEdits(viewModel: env.model, isOffline: false, canUpdate: true)
+        XCTAssertNil(env.drafts.draft(for: env.documentID))
+        XCTAssertEqual(env.coordinator.state(for: env.documentID), .idle)
+        guard case .unavailable(.openFailed) = open.route else {
+            return XCTFail("Discard when server has no document must show .unavailable(.openFailed), got \(open.route)")
+        }
+    }
+
+    func testDiscardOfflineWithStaleClassicCacheNeverFallsBackToClassic() async {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        DocumentContentCacheStore(directory: env.directory).save(
+            CachedDocumentContent(
+                documentID: env.documentID, title: "Stale Cache", markdown: "Stale body", syncedAt: Date()))
+        env.drafts.save(
+            PendingDraft(documentID: env.documentID, title: "Unsynced", markdown: "Body", updatedAt: Date()))
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .waitingClassicEdits = open.route else {
+            return XCTFail("expected .waitingClassicEdits")
+        }
+
+        await open.discardWaitingClassicEdits(viewModel: env.model, isOffline: true, canUpdate: true)
+        XCTAssertNil(env.drafts.draft(for: env.documentID))
+        guard case .unavailable(.offlineNeverOpened) = open.route else {
+            return XCTFail("offline discard must land on .unavailable(.offlineNeverOpened), never .classic")
+        }
+    }
+
+    func testDiscardRefusesWhileClassicSaveIsInFlight() async {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let patchGate = MockURLProtocol.ResponseGate()
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState("Server"))
+        server.patchGate = patchGate
+        server.install()
+
+        env.coordinator.enqueue(documentID: env.documentID, title: "In Flight", markdown: "Saving now")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        XCTAssertFalse(
+            env.coordinator.discardClassicDraft(documentID: env.documentID),
+            "discardClassicDraft must be a no-op while a save is actively on the wire")
+        XCTAssertNotNil(env.drafts.draft(for: env.documentID))
+        patchGate.open()
+        await waitUntil { !env.coordinator.isWaitingClassicInFlight(documentID: env.documentID) }
+    }
+
+    // MARK: - Copy Text & View-Level Notice Tests
+
+    func testWaitingClassicNoticeStateMappingAndCopyTextFormatting() {
+        XCTAssertEqual(
+            waitingClassicNoticeState(hasConflict: false, isSyncing: false, isFailed: false),
+            .waitingOffline)
+        XCTAssertEqual(
+            waitingClassicNoticeState(hasConflict: false, isSyncing: true, isFailed: false),
+            .syncing)
+        XCTAssertEqual(
+            waitingClassicNoticeState(hasConflict: false, isSyncing: true, isFailed: true),
+            .syncing, "active Retry must immediately show syncing")
+        XCTAssertEqual(
+            waitingClassicNoticeState(hasConflict: false, isSyncing: false, isFailed: true),
+            .failed)
+        XCTAssertEqual(
+            waitingClassicNoticeState(hasConflict: true, isSyncing: false, isFailed: true),
+            .hidden, "conflicts are surfaced by the conflict pill and sheet")
+
+        XCTAssertEqual(
+            waitingClassicCopyText(title: "My Page", markdown: "Line 1\n\nLine 2"),
+            "My Page\n\nLine 1\n\nLine 2")
+        XCTAssertEqual(waitingClassicCopyText(title: "", markdown: "Only body"), "Only body")
+        XCTAssertEqual(waitingClassicCopyText(title: "Only title", markdown: ""), "Only title")
+        XCTAssertEqual(waitingClassicCopyText(title: "", markdown: ""), "")
+    }
+
+    func testWaitingClassicNoticeViewRendersStatesAndCopyWritesFormattedPayload() {
+        let suite = "NativeEditorWaitingClassicTests.NoticeView.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let loc = LocalizationStore(userDefaults: defaults)
+        loc.language = .english
+
+        var copiedPayload: String?
+        var retryTapped = false
+        var discardTapped = false
+
+        for state in [WaitingClassicNoticeState.waitingOffline, .syncing, .failed] {
+            let notice = WaitingClassicEditsNotice(
+                state: state,
+                onRetry: { retryTapped = true },
+                onCopyText: { copiedPayload = waitingClassicCopyText(title: "Draft Title", markdown: "Body text") },
+                onDiscard: { discardTapped = true }
+            )
+            .environment(loc)
+
+            let host = UIHostingController(rootView: notice)
+            host.view.frame = CGRect(x: 0, y: 0, width: 360, height: 140)
+            host.view.layoutIfNeeded()
+            let size = host.sizeThatFits(in: CGSize(width: 360, height: UIView.layoutFittingCompressedSize.height))
+            XCTAssertGreaterThan(size.height, 0, "notice must render non-zero height for \(state)")
+            if state == .failed {
+                XCTAssertGreaterThanOrEqual(size.height, DocsSpacing.rowMinHeight + 20)
+            }
+        }
+
+        let copyAction: (String) -> Void = { copiedPayload = $0 }
+        copyAction(waitingClassicCopyText(title: "Draft Title", markdown: "Body text"))
+        XCTAssertEqual(copiedPayload, "Draft Title\n\nBody text")
+        XCTAssertFalse(retryTapped)
+        XCTAssertFalse(discardTapped)
+        XCTAssertEqual(loc[.native_editor_waiting_classic_offline], "Waiting to sync your offline edits")
+        XCTAssertEqual(loc[.native_editor_waiting_classic_syncing], "Syncing…")
+        XCTAssertEqual(loc[.native_editor_waiting_classic_failed], "Couldn't sync")
+        XCTAssertEqual(loc[.native_editor_waiting_classic_copy_text], "Copy text")
+        XCTAssertEqual(loc[.toast_text_copied], "Text copied")
+        XCTAssertEqual(loc[.native_editor_waiting_classic_discard_title], "Discard offline edits?")
+        XCTAssertEqual(
+            loc[.native_editor_waiting_classic_discard_message],
+            "Your unsynced changes on this device will be permanently deleted.")
+    }
+
+    func testShellViewHostsWaitingClassicRouteReadOnlyWithoutClassicEditor() async {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let locSuite = "NativeEditorWaitingClassicTests.Shell.\(UUID().uuidString)"
+        let locDefaults = UserDefaults(suiteName: locSuite)!
+        defer { locDefaults.removePersistentDomain(forName: locSuite) }
+        let loc = LocalizationStore(userDefaults: locDefaults)
+        loc.language = .english
+
+        env.drafts.save(
+            PendingDraft(
+                documentID: env.documentID,
+                title: "Read-Only Title",
+                markdown: "# Heading\n\n- [ ] Checklist item\n\nBody paragraph",
+                updatedAt: Date()))
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .waitingClassicEdits = open.route else {
+            return XCTFail("expected .waitingClassicEdits")
+        }
+
+        var pasted: String?
+        let emptyPickerSource = NativeInlinePickerSource(
+            canInsertPageLink: { false },
+            pageLinkCandidates: { [] },
+            excludedDocumentID: env.documentID,
+            onRecordDocumentTitle: { _, _ in },
+            canMention: { false },
+            mentionState: { .idle },
+            requestMentions: { _ in })
+        let shell = NativeDocumentShellView(
+            route: open.route,
+            nativeOpen: open,
+            viewModel: env.model,
+            reach: .restricted,
+            serverHost: "docs.example.org",
+            serverOrigin: "https://docs.example.org",
+            childrenCache: env.model.childrenCache,
+            linkRole: nil,
+            initialIsFavorite: false,
+            pinRow: nil,
+            isOffline: true,
+            onDeleted: nil,
+            onOpenDocument: nil,
+            onCreatedDocument: nil,
+            makeInlinePickerSource: { emptyPickerSource },
+            onReopenAfterUndo: {},
+            copyTextToPasteboard: { pasted = $0 }
+        )
+        .environment(loc)
+
+        let host = UIHostingController(rootView: shell)
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        host.view.layoutIfNeeded()
+        XCTAssertEqual(host.view.bounds.size, CGSize(width: 390, height: 844))
+        XCTAssertFalse(env.model.isEditing, "waiting route must stay read-only")
+        XCTAssertNil(pasted)
+    }
+
+    // MARK: - Helpers
+
+    @MainActor
+    private struct Env {
+        let documentID: UUID
+        let defaults: UserDefaults
+        let suite: String
+        let directory: URL
+        let drafts: PendingDraftStore
+        let creates: PendingDocumentCreateStore
+        let deletes: PendingDocumentDeleteStore
+        let replicaStore: ReplicaStore
+        let coordinator: DocumentSaveCoordinator
+        let model: EditorViewModel
+
+        func relaunch() -> EditorViewModel {
+            let coordinator = DocumentSaveCoordinator(
+                client: model.client,
+                draftStore: PendingDraftStore(userDefaults: defaults),
+                replicaStore: replicaStore,
+                contentCache: model.contentCache,
+                createStore: PendingDocumentCreateStore(userDefaults: defaults),
+                deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+                attachmentStore: PendingAttachmentStore(
+                    userDefaults: defaults, directory: directory.appendingPathComponent("attachments")),
+                listCache: model.listCache,
+                childrenCache: model.childrenCache,
+                serverOrigin: model.client.serverOrigin,
+                backgroundTasks: .noop)
+            coordinator.nativeEditorEnabled = { true }
+            return EditorViewModel(
+                client: model.client,
+                documentID: documentID,
+                title: model.title,
+                saveCoordinator: coordinator,
+                signedInUser: model.signedInUser,
+                contentCache: model.contentCache,
+                childrenCache: model.childrenCache,
+                listCache: model.listCache,
+                availability: model.availability,
+                nativeEditorEnabled: { true })
+        }
+
+        func clean() {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+            MockURLProtocol.reset()
+        }
+    }
+
+    private func makeEnvironment() -> Env {
+        MockURLProtocol.reset()
+        let suite = "NativeEditorWaitingClassicTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WaitingClassic-\(UUID().uuidString)", isDirectory: true)
+        let client = DocsAPIClient(
+            baseURL: URL(string: "https://docs.example.org/api/v1.0/")!,
+            session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] })
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(owner)
+        let ownership = ReplicaOwnershipStore(userDefaults: defaults)
+        let replicaStore = ReplicaStore(
+            directory: directory.appendingPathComponent("ReplicaDrafts"),
+            ownershipStore: ownership)
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let creates = PendingDocumentCreateStore(userDefaults: defaults)
+        let deletes = PendingDocumentDeleteStore(userDefaults: defaults)
+        let attachments = PendingAttachmentStore(
+            userDefaults: defaults, directory: directory.appendingPathComponent("attachments"))
+        let contentCache = DocumentContentCacheStore(directory: directory)
+        let childrenCache = DocumentChildrenCacheStore(userDefaults: defaults)
+        let listCache = DocumentCacheStore(userDefaults: defaults)
+        let availability = OnlineAvailability(userDefaults: defaults)
+        let coordinator = DocumentSaveCoordinator(
+            client: client,
+            draftStore: drafts,
+            replicaStore: replicaStore,
+            contentCache: contentCache,
+            createStore: creates,
+            deleteStore: deletes,
+            attachmentStore: attachments,
+            listCache: listCache,
+            childrenCache: childrenCache,
+            serverOrigin: client.serverOrigin,
+            backgroundTasks: .noop)
+        coordinator.nativeEditorEnabled = { true }
+        let documentID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let model = EditorViewModel(
+            client: client,
+            documentID: documentID,
+            title: "Initial Row Title",
+            saveCoordinator: coordinator,
+            signedInUser: signedIn,
+            contentCache: contentCache,
+            childrenCache: childrenCache,
+            listCache: listCache,
+            availability: availability,
+            nativeEditorEnabled: { true })
+        return Env(
+            documentID: documentID, defaults: defaults, suite: suite, directory: directory,
+            drafts: drafts, creates: creates, deletes: deletes, replicaStore: replicaStore,
+            coordinator: coordinator, model: model)
+    }
+
+    private func serverYDocState(_ text: String) -> Data {
+        BlockNoteYjs.encode(
+            [BlockNoteBlock(node: "paragraph", props: Self.paragraphProps, runs: [InlineRun(text)], id: "srv-1")],
+            clientID: Self.seedClientID)
+    }
+}
+
+private final class WaitingClassicServerStub: @unchecked Sendable {
+    let log = RequestRecorder()
+    private let lock = NSLock()
+    private let owner: UUID
+    private var _ydocState: Data
+    private var _serverTitle = "Server Title"
+    private var _serverContent = "Server body"
+    private var _serverUpdatedAt = "2026-11-07T10:00:00Z"
+    private var _formattedStatus = 200
+    private var _ydocStatus = 200
+    var formattedGate: MockURLProtocol.ResponseGate?
+    var patchGate: MockURLProtocol.ResponseGate?
+
+    init(owner: UUID, ydocState: Data) {
+        self.owner = owner
+        self._ydocState = ydocState
+    }
+
+    var serverTitle: String {
+        get { locked { _serverTitle } }
+        set { locked { _serverTitle = newValue } }
+    }
+    var serverContent: String {
+        get { locked { _serverContent } }
+        set { locked { _serverContent = newValue } }
+    }
+    var serverUpdatedAt: String {
+        get { locked { _serverUpdatedAt } }
+        set { locked { _serverUpdatedAt = newValue } }
+    }
+    var formattedStatus: Int {
+        get { locked { _formattedStatus } }
+        set { locked { _formattedStatus = newValue } }
+    }
+    var ydocStatus: Int {
+        get { locked { _ydocStatus } }
+        set { locked { _ydocStatus = newValue } }
+    }
+
+    private func locked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+
+    func install() {
+        MockURLProtocol.stubHandler = { [weak self] request in
+            guard let self else {
+                return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+            }
+            self.log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            let method = request.httpMethod ?? "GET"
+            let json = ["Content-Type": "application/json"]
+            if url.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: json,
+                    body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if url.hasSuffix("/users/me/") {
+                let id = self.owner.uuidString.lowercased()
+                return .init(
+                    statusCode: 200, headers: json,
+                    body: Data(#"{"id":"\#(id)","email":"u@example.org","full_name":"User"}"#.utf8), error: nil)
+            }
+            if url.contains("/collaboration/ydoc/") {
+                if method == "PATCH" {
+                    return .init(
+                        statusCode: 204, headers: [:], body: Data(), error: nil, releasedBy: self.patchGate)
+                }
+                let status = self.ydocStatus
+                guard status == 200 else {
+                    return .init(statusCode: status, headers: json, body: Data("{}".utf8), error: nil)
+                }
+                let body =
+                    (try? JSONSerialization.data(
+                        withJSONObject: ["doc": self.locked { self._ydocState }.base64EncodedString()])) ?? Data()
+                return .init(statusCode: 200, headers: json, body: body, error: nil)
+            }
+            if url.contains("formatted-content") {
+                let status = self.formattedStatus
+                if status != 200 {
+                    return .init(
+                        statusCode: status, headers: json, body: Data("{}".utf8), error: nil,
+                        releasedBy: self.formattedGate)
+                }
+                let id =
+                    request.url?.path.split(separator: "/").first { UUID(uuidString: String($0)) != nil }
+                    .map(String.init) ?? "11111111-1111-4111-8111-111111111111"
+                let payload: [String: Any] = [
+                    "id": id,
+                    "title": self.serverTitle,
+                    "content": self.serverContent,
+                    "created_at": "2026-11-07T10:00:00Z",
+                    "updated_at": self.serverUpdatedAt,
+                ]
+                let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+                return .init(
+                    statusCode: 200, headers: json, body: data, error: nil, releasedBy: self.formattedGate)
+            }
+            if url.contains("/children/") {
+                return .init(
+                    statusCode: 200, headers: json, body: Data(#"{"count":0,"results":[]}"#.utf8), error: nil)
+            }
+            if url.hasSuffix("/content/"), method == "PATCH" {
+                return .init(
+                    statusCode: 200, headers: json, body: Data("{}".utf8), error: nil, releasedBy: self.patchGate)
+            }
+            if url.contains("/documents/"), method == "PATCH" {
+                return .init(statusCode: 200, headers: json, body: Data("{}".utf8), error: nil)
+            }
+            if url.contains("/documents/"), method == "GET" {
+                let docID =
+                    request.url?.path.split(separator: "/").first { UUID(uuidString: String($0)) != nil }
+                    .map(String.init) ?? "11111111-1111-4111-8111-111111111111"
+                let payload: [String: Any] = [
+                    "id": docID,
+                    "title": self.serverTitle,
+                    "excerpt": NSNull(),
+                    "abilities": ["update": true, "mention": false],
+                    "computed_link_reach": "restricted",
+                    "computed_link_role": NSNull(),
+                    "created_at": self.serverUpdatedAt,
+                    "creator": NSNull(),
+                    "depth": 1,
+                    "link_role": "reader",
+                    "link_reach": "restricted",
+                    "numchild": 0,
+                    "path": "0001",
+                    "updated_at": self.serverUpdatedAt,
+                    "user_role": "owner",
+                    "is_favorite": false,
+                ]
+                let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+                return .init(statusCode: 200, headers: json, body: data, error: nil)
+            }
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+    }
+}

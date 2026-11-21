@@ -187,11 +187,18 @@ in memory; reopen uses the earlier durable revision.
 Typing turns on at open only when all of these hold: the switch is on, the server is
 Docs 6, the signed-in user has `abilities.update`, the document is not a pending
 create or delete, no live owner holds it, it projects fully (fully modeled with a
-Markdown shadow), and there is no classic draft or queued classic save. A document
-with a classic draft stays classic until that draft syncs, except an unsent local create
-(no server id yet) whose draft and queued photos can carry over safely: with the switch on
-and a cached Docs 6 org it is converted to a native replica at the start of each replay
-pass, before the create pass, and on open, so it lands on the native route. A page whose
+Markdown shadow), and there is no classic draft or queued classic save. With the switch on,
+a server document with waiting classic edits (a classic `PendingDraft`, a queued classic save,
+or a checkpointed create's classic draft) opens on the read-only `.waitingClassicEdits` route
+inside `NativeDocumentShellView` rather than `ClassicEditorView`: the title and formatted blocks
+render read-only (with selectable text and queued photos), a notice card under the title reports
+waiting offline, syncing, or failed (offering Retry, Copy text, and confirmed Discard), conflicts
+use the existing pill and `ConflictSheetView`, online open and reconnect kick the serialized
+classic replay without blocking checkpointed-create migration, and once acknowledged the route
+reopens natively from the server's Yjs state. With the switch off (or on a pre-Docs 6 server),
+classic drafts keep the classic route. An unsent local create (no server id yet) whose draft
+and queued photos can carry over safely converts to a native replica at the start of each replay
+pass, before the create pass, and on open, so it lands on the native route; a local create whose
 Markdown `MarkdownYjs` would flatten (an `.unknown` block) stays classic. Every fetched Docs 6 document
 that reaches native with an account and scope — readers (`!verified`), non-typeable
 documents (`!session.canType`) included, though never while `mayType` is false (a marker would make the writer that holds the document refuse its own saves) — seeds a
@@ -327,10 +334,13 @@ pending. Offline and transient failures wait for the next pass
 (reconnect, foreground, launch); a rejection marks the record failed, answered from the inspector
 (Retry or Discard). Deleting the document or keeping the server version drops the signed-in account's records for it
 (another account's stay); a record waiting for a later pass says so on its card.
-Existing Markdown drafts retain their classic owner, except an unsent local create whose
-draft and queued photos convert to a native replica (switch on, cached Docs 6 org, safe to
-carry over); a page whose photos cannot carry over safely, or whose Markdown `MarkdownYjs`
-would flatten, stays classic and syncs through the classic replay.
+Existing server-document Markdown drafts sync through the classic replay while rendering
+read-only inside `NativeDocumentShellView` (`.waitingClassicEdits`) when the native switch is on,
+then transition to the editable native page seeded from the server's Yjs state once acknowledged;
+with the switch off they retain the classic route. An unsent local create whose draft and queued
+photos can carry over safely converts to a native replica (switch on, cached Docs 6 org); a local
+create whose photos cannot carry over safely, or whose Markdown `MarkdownYjs` would flatten,
+stays classic and syncs through the classic replay.
 
 ### Native shell persistence, conflict resolution, local-create migration, and sign-out purge (PR15)
 

@@ -299,9 +299,9 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         XCTAssertTrue(recorder.methods.isEmpty, "a late Retry must not fetch")
     }
 
-    /// Pending local work that arrives mid-fetch keeps the classic owner even when the
-    /// fetch then fails.
-    func testLocalDraftArrivingBeforeAFailedFetchKeepsTheClassicRoute() async {
+    /// Pending local work that arrives mid-fetch routes to `.waitingClassicEdits` when the
+    /// native switch is on, even when the fetch then fails.
+    func testLocalDraftArrivingBeforeAFailedFetchRoutesToWaitingClassicEdits() async {
         let fixture = makeFixture()
         defer {
             fixture.clean()
@@ -319,8 +319,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
                 updatedAt: Date()))
         gate.open()
         await loading.value
-        guard case .classic = open.route else {
-            return XCTFail("a failed fetch must not hide a local draft behind an error: \(open.route)")
+        guard case .waitingClassicEdits = open.route else {
+            return XCTFail("a failed fetch must route a local classic draft to .waitingClassicEdits: \(open.route)")
         }
     }
 
@@ -559,7 +559,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         XCTAssertTrue(nativeFixture.model.isNativeRouteActive)
     }
 
-    func testPendingLocalDraftStaysOnClassicRoute() async {
+    func testPendingLocalDraftRoutesToWaitingClassicWhenSwitchOnAndClassicWhenOff() async {
         let fixture = makeFixture()
         defer {
             fixture.clean()
@@ -567,9 +567,21 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         }
         PendingDraftStore(userDefaults: fixture.defaults).save(
             PendingDraft(documentID: fixture.model.documentID, title: "Local", markdown: "Unsynced", updatedAt: Date()))
-        let open = NativeEditorOpen(preference: { true })
-        await open.open(viewModel: fixture.model, isOffline: false)
-        guard case .classic = open.route else { return XCTFail("server baseline must not hide local work") }
+        let openOn = NativeEditorOpen(preference: { true })
+        defer { openOn.close() }
+        await openOn.open(viewModel: fixture.model, isOffline: true)
+        guard case .waitingClassicEdits = openOn.route else {
+            return XCTFail("waiting classic draft must open on .waitingClassicEdits with switch on")
+        }
+        XCTAssertNil(MockURLProtocol.lastRequest)
+        openOn.close()
+
+        let openOff = NativeEditorOpen(preference: { false })
+        defer { openOff.close() }
+        await openOff.open(viewModel: fixture.model, isOffline: false)
+        guard case .classic = openOff.route else {
+            return XCTFail("switch off must keep classic route for pending local draft")
+        }
         XCTAssertNil(MockURLProtocol.lastRequest)
     }
 
@@ -590,7 +602,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         guard case .loading = open.route else { return XCTFail("a closed request installed a session") }
     }
 
-    func testLocalDraftArrivingDuringRawFetchKeepsTheClassicRoute() async {
+    func testLocalDraftArrivingDuringRawFetchRoutesToWaitingClassicEdits() async {
         let fixture = makeFixture()
         defer {
             fixture.clean()
@@ -599,6 +611,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         let gate = MockURLProtocol.ResponseGate()
         stub(version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID), gate: gate)
         let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
         let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
         await waitUntil { MockURLProtocol.lastRequest?.url?.path.contains("/collaboration/ydoc/") == true }
         PendingDraftStore(userDefaults: fixture.defaults).save(
@@ -607,8 +620,9 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
                 updatedAt: Date()))
         gate.open()
         await loading.value
-        guard case .classic = open.route else {
-            return XCTFail("an in-flight baseline must not install over a local draft: \(open.route)")
+        guard case .waitingClassicEdits = open.route else {
+            return XCTFail(
+                "an in-flight baseline must route an arrived local draft to .waitingClassicEdits: \(open.route)")
         }
     }
 
