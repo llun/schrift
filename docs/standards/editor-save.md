@@ -2011,7 +2011,8 @@ markdown write endpoint**. Understand this before touching the save path:
   The editor's two **create** buttons are **ungated** — neither on `isOffline` (a failed
   POST falls back to a local document the replay sends later) nor on the parent (2026-08-06:
   the replay orders two dependent creates). With the native editor on and no saved server
-  setup they show `create.needs_online` instead of minting. Where the parent is itself local,
+  setup they create nothing: offline or under an unsent parent they show
+  `create.needs_online`, and an online failure keeps its own error. Where the parent is itself local,
   `EditorViewModel.addSubpage` and `PagesTreeViewModel.addPage` mint **directly, issuing no
   request** — the POST would address `documents/{local-uuid}/children/` and take a 404, which
   `retryableSaveFailure` correctly refuses to retry, so the transport fallback beside it

@@ -436,8 +436,8 @@ Existing Markdown drafts retain their classic owner.
 > `.insertAttachment` in the slash menu, is still withheld.) Offline **creation** was out of scope in *this* change — the "Add a subpage"
 > and Pages-drawer "New page" buttons stayed gated here — and is **superseded**: it
 > landed 2026-08-02, and those buttons now fall back to a local document rather than
-> gating on `isOffline` (with the native editor on and no saved server setup they show
-> `create.needs_online` instead). See "Documents created on this device". That rule describes the
+> gating on `isOffline` (with the native editor on and no saved server setup they create nothing:
+> offline or under an unsent parent they show `create.needs_online`, and an online failure keeps its own error). See "Documents created on this device". That rule describes the
 > editor, **not the whole app**: Home's `+` now creates locally when the network cannot take the POST, and
 > the Options sheet's local actions remain reachable offline. Share is now hidden
 > in the toolbar and Options, and Version history is disabled with an explanation.
@@ -521,8 +521,8 @@ amendment above; when this was written, editing offline was still blocked.)
   no server id has nothing for the draft pipeline to PATCH) was answered by giving such
   a document a client-minted id, a record, and a replay that POSTs it and migrates the
   draft onto the real id. Home's `+`, "Add a subpage" and the drawer's "New page" all
-  create locally when the network cannot take the POST (with the native editor on and no
-  saved server setup they show `create.needs_online` instead). The last gate — the *parent*
+  create locally when the network cannot take the POST (with the native editor on and no saved server setup they create nothing: offline or under
+  an unsent parent they show `create.needs_online`, and an online failure keeps its own error). The last gate — the *parent*
   being unsynced — went on **2026-08-06**: the replay now orders two dependent creates,
   so a sub-page can be created under a document this device has also not sent yet, to any
   depth. See "Documents created on this device" below.
@@ -1300,7 +1300,8 @@ right rather than premature (2026-08-06 — before it, such a document showed a 
 "Subpages" eyebrow with no rows and no copy). The "Add a subpage" button is now **ungated**:
 it was hidden when `isOffline` until 2026-08-02 and when the parent was local until
 2026-08-06, and today `addSubpage` mints locally in both cases (with the native editor on
-and no saved server setup it shows `create.needs_online` instead). A failure on the
+and no saved server setup it creates nothing: offline or under an unsent parent it shows
+`create.needs_online`, and an online failure keeps `editor_error_add_subpage`). A failure on the
 synced-parent path still surfaces `editor_error_add_subpage`, "Couldn't add the subpage.
 Please try again."
 Caching the subpage list is deferred (Non-goals): if
