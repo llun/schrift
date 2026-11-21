@@ -188,7 +188,11 @@ Typing turns on at open only when all of these hold: the switch is on, the serve
 Docs 6, the signed-in user has `abilities.update`, the document is not a pending
 create or delete, no live owner holds it, it projects fully (fully modeled with a
 Markdown shadow), and there is no classic draft or queued classic save. A document
-with a classic draft stays classic until that draft syncs. Every fetched Docs 6 document
+with a classic draft stays classic until that draft syncs, except an unsent local create
+(no server id yet) whose draft and queued photos can carry over safely: with the switch on
+and a cached Docs 6 org it is converted to a native replica at the start of each replay
+pass, before the create pass, and on open, so it lands on the native route. A page whose
+Markdown `MarkdownYjs` would flatten (an `.unknown` block) stays classic. Every fetched Docs 6 document
 that reaches native with an account and scope — readers (`!verified`), non-typeable
 documents (`!session.canType`) included, though never while `mayType` is false (a marker would make the writer that holds the document refuse its own saves) — seeds a
 durable replica with the standard ownership marker and opens it read-only (no journal,
@@ -323,7 +327,10 @@ pending. Offline and transient failures wait for the next pass
 (reconnect, foreground, launch); a rejection marks the record failed, answered from the inspector
 (Retry or Discard). Deleting the document or keeping the server version drops the signed-in account's records for it
 (another account's stay); a record waiting for a later pass says so on its card.
-Existing Markdown drafts retain their classic owner.
+Existing Markdown drafts retain their classic owner, except an unsent local create whose
+draft and queued photos convert to a native replica (switch on, cached Docs 6 org, safe to
+carry over); a page whose photos cannot carry over safely, or whose Markdown `MarkdownYjs`
+would flatten, stays classic and syncs through the classic replay.
 
 ### Native shell persistence, conflict resolution, local-create migration, and sign-out purge (PR15)
 

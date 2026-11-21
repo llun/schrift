@@ -606,4 +606,104 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
             relaunched.drafts.draft(for: serverID)?.markdown, "# Held",
             "and the held work is still on disk")
     }
+
+    /// When a take-back rescues an orphaned native draft from a dead checkpointed server id,
+    /// queued photos filed under that server id must move back to the local id too. Left on
+    /// the dead server id, `runAttachmentPass` in the same sync sees a non-pending-create
+    /// native record whose server-scope replica was just removed, answers `.gone` and deletes
+    /// both the record and its bytes.
+    func testAStartOverTakesAQueuedNativePhotoBackToTheLocalID() async throws {
+        let log = RequestRecorder()
+        let suite = "ReplayStartOverNativePhoto.\(UUID().uuidString)"
+        suiteNames.append(suite)
+        let defaults = UserDefaults(suiteName: suite)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
+        ServerConfigStore(userDefaults: defaults).remember(
+            ServerConfig(releaseVersion: "6.0.0"), forServerOrigin: origin)
+
+        let localID = UUID(uuidString: "77777777-7777-4777-8777-777777777777")!
+        let photoID = UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
+        let blockID = photoID.uuidString.lowercased()
+        let placeholder = pendingAttachmentPlaceholderURL(for: photoID)
+        let bytes = Data([0xFF, 0xD8, 0xFF])
+
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let creates = PendingDocumentCreateStore(userDefaults: defaults)
+        let attachments = PendingAttachmentStore(
+            userDefaults: defaults, directory: cacheDirectory.appendingPathComponent("Attachments", isDirectory: true))
+        let replicaStore = ReplicaStore(
+            directory: cacheDirectory.appendingPathComponent("ReplicaDrafts", isDirectory: true),
+            ownershipStore: ReplicaOwnershipStore(userDefaults: defaults))
+
+        creates.save(
+            PendingDocumentCreate(
+                localID: localID, title: "Notes", parentID: nil, createdAt: Date(),
+                serverOrigin: origin, ownerUserID: user, syncedServerID: serverID, postedTitle: "Notes"))
+
+        // Partial-migration window: native replica, draft and photo record live under `serverID`.
+        let serverScope = ReplicaScope(serverOrigin: origin, ownerUserID: user, org: "docs", documentID: serverID)
+        let localScope = ReplicaScope(serverOrigin: origin, ownerUserID: user, org: "docs", documentID: localID)
+        let checkpoint = MarkdownYjs.encode(
+            markdown: "![](\(placeholder))", serverOrigin: origin, pendingImages: [placeholder: blockID])
+        _ = try replicaStore.create(for: serverScope, checkpoint: checkpoint)
+        let prepared = try ReplicaSaveAdapter(store: replicaStore, scope: serverScope).prepare()
+        drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Notes", markdown: prepared.markdown, updatedAt: Date(),
+                baseline: nil, replica: prepared.request.reference))
+        attachments.saveData(bytes, for: photoID)
+        attachments.save(
+            PendingAttachment(
+                localID: photoID, documentID: serverID, createdAt: Date(), serverOrigin: origin,
+                ownerUserID: user,
+                uploadedURLString: "\(origin)/media/\(serverID.uuidString.lowercased())/attachments/old.jpg",
+                failedAt: Date(),
+                native: NativeMediaTarget(
+                    org: "docs", blockID: blockID, slot: MediaBlock.Slot(node: "image", url: ""),
+                    fileName: "photo.jpg", contentType: "image/jpeg")))
+
+        // Another account's photo on the same shared server id is not this page's to move.
+        let otherPhotoID = UUID(uuidString: "99999999-9999-4999-8999-999999999999")!
+        attachments.saveData(bytes, for: otherPhotoID)
+        attachments.save(
+            PendingAttachment(
+                localID: otherPhotoID, documentID: serverID, createdAt: Date(), serverOrigin: origin,
+                ownerUserID: UUID(uuidString: "33333333-3333-4333-8333-333333333333")!))
+
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: drafts, replicaStore: replicaStore,
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: creates, deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            attachmentStore: attachments, listCache: DocumentCacheStore(userDefaults: defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
+            serverOrigin: origin, appBuild: "1",
+            mediaCheckMaxAttempts: 1, mediaCheckRetryInterval: .milliseconds(1), backgroundTasks: .noop)
+        coordinator.nativeEditorEnabled = { true }
+        let registry = NativeSessionRegistry()
+        coordinator.nativeSessions = registry
+        coordinator.nativeCommitAttempts = 1
+        coordinator.nativeCommitInterval = .milliseconds(1)
+        addTeardownBlock { await registry.closeAll().value }
+
+        await coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            attachments.attachment(for: photoID)?.documentID, localID,
+            "the photo record moved back to the local id")
+        XCTAssertEqual(attachments.data(for: photoID), bytes, "its bytes survived the take-back")
+        XCTAssertNil(attachments.attachment(for: photoID)?.uploadedURLString, "the dead document's URL is dropped")
+        XCTAssertNil(attachments.attachment(for: photoID)?.failedAt, "and so is its failure")
+        XCTAssertEqual(
+            log.count(ofMethod: "POST", urlContaining: "attachment-upload"), 0,
+            "no upload targeted the dead server id")
+        XCTAssertNil(creates.create(for: localID)?.syncedServerID, "the checkpoint cleared")
+        XCTAssertNotNil(try replicaStore.manifest(for: localScope), "the replica moved back to the local scope")
+        XCTAssertNil(try replicaStore.manifest(for: serverScope), "the dead server scope replica is gone")
+        XCTAssertEqual(
+            attachments.attachment(for: otherPhotoID)?.documentID, serverID, "another account's photo stays put")
+        XCTAssertEqual(attachments.data(for: otherPhotoID), bytes)
+    }
 }

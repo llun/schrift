@@ -30,6 +30,127 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertNil(open.editUnavailableReason)
     }
 
+    /// A page created on this device before the switch was on is still a classic draft. Opening
+    /// it offline must convert it and land on the native route, not the classic editor.
+    func testAClassicUnsentPageWithTheSwitchOnRoutesToNativeOffline() async throws {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+        let origin = env.model.client.serverOrigin
+        env.creates.save(
+            PendingDocumentCreate(
+                localID: env.documentID, title: "Local", parentID: nil, createdAt: Date(),
+                serverOrigin: origin, ownerUserID: owner))
+        env.drafts.save(
+            PendingDraft(documentID: env.documentID, title: "Local", markdown: "# Notes", updatedAt: Date()))
+        ServerConfigStore(userDefaults: env.defaults).remember(
+            ServerConfig(releaseVersion: "6.0.0"), forServerOrigin: origin)
+        let model = env.relaunch()
+        model.saveCoordinator.nativeEditorEnabled = { true }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: model, isOffline: true, canUpdate: true)
+
+        guard case .native(let session) = open.route else { return XCTFail("expected the native route") }
+        let scope = try XCTUnwrap(session.scope)
+        XCTAssertEqual(scope.documentID, env.documentID)
+        XCTAssertEqual(model.saveCoordinator.nativeOwnership(documentID: env.documentID), .owned(scope))
+        XCTAssertNil(MockURLProtocol.lastRequest, "an offline open must not touch the network")
+    }
+
+    /// A classic editor that is editing the page may hold text its stored draft lacks, so the
+    /// open must not convert the draft under it: the page stays classic and unowned.
+    func testAClassicUnsentPageBeingEditedIsNotConvertedOnOpen() async throws {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+        let origin = env.model.client.serverOrigin
+        env.creates.save(
+            PendingDocumentCreate(
+                localID: env.documentID, title: "Local", parentID: nil, createdAt: Date(),
+                serverOrigin: origin, ownerUserID: owner))
+        env.drafts.save(
+            PendingDraft(documentID: env.documentID, title: "Local", markdown: "# Notes", updatedAt: Date()))
+        ServerConfigStore(userDefaults: env.defaults).remember(
+            ServerConfig(releaseVersion: "6.0.0"), forServerOrigin: origin)
+        let model = env.relaunch()
+        model.saveCoordinator.nativeEditorEnabled = { true }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        await model.load()
+        model.startEditing()
+        XCTAssertTrue(model.isEditing)
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: model, isOffline: true, canUpdate: true)
+
+        XCTAssertEqual(model.saveCoordinator.nativeOwnership(documentID: env.documentID), ReplicaOwnership.none)
+        XCTAssertNil(env.drafts.draft(for: env.documentID)?.replica)
+    }
+
+    /// Another screen on the same page may be a classic editor mid-edit, so the open must not
+    /// convert under it: the page stays classic and unowned.
+    func testAClassicUnsentPageOpenOnAnotherScreenIsNotConvertedOnOpen() async throws {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+        let origin = env.model.client.serverOrigin
+        env.creates.save(
+            PendingDocumentCreate(
+                localID: env.documentID, title: "Local", parentID: nil, createdAt: Date(),
+                serverOrigin: origin, ownerUserID: owner))
+        env.drafts.save(
+            PendingDraft(documentID: env.documentID, title: "Local", markdown: "# Notes", updatedAt: Date()))
+        ServerConfigStore(userDefaults: env.defaults).remember(
+            ServerConfig(releaseVersion: "6.0.0"), forServerOrigin: origin)
+        let model = env.relaunch()
+        model.saveCoordinator.nativeEditorEnabled = { true }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        model.saveCoordinator.retainOpenEditor(documentID: env.documentID)
+        model.noteEditorAppeared()
+        XCTAssertEqual(model.saveCoordinator.openEditorCount(documentID: env.documentID), 2)
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: model, isOffline: true, canUpdate: true)
+
+        XCTAssertEqual(model.saveCoordinator.nativeOwnership(documentID: env.documentID), ReplicaOwnership.none)
+        XCTAssertNil(env.drafts.draft(for: env.documentID)?.replica)
+    }
+
+    /// The open's own switch decides too: with it off the page stays classic, whatever the
+    /// coordinator's preference reads.
+    func testAClassicUnsentPageIsNotConvertedWhenTheOpensSwitchIsOff() async throws {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+        let origin = env.model.client.serverOrigin
+        env.creates.save(
+            PendingDocumentCreate(
+                localID: env.documentID, title: "Local", parentID: nil, createdAt: Date(),
+                serverOrigin: origin, ownerUserID: owner))
+        env.drafts.save(
+            PendingDraft(documentID: env.documentID, title: "Local", markdown: "# Notes", updatedAt: Date()))
+        ServerConfigStore(userDefaults: env.defaults).remember(
+            ServerConfig(releaseVersion: "6.0.0"), forServerOrigin: origin)
+        let model = env.relaunch()
+        model.saveCoordinator.nativeEditorEnabled = { true }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        let open = NativeEditorOpen(preference: { false })
+        defer { open.close() }
+        await open.open(viewModel: model, isOffline: true, canUpdate: true)
+
+        XCTAssertEqual(model.saveCoordinator.nativeOwnership(documentID: env.documentID), ReplicaOwnership.none)
+        XCTAssertNil(env.drafts.draft(for: env.documentID)?.replica)
+    }
+
     /// PR08b: the restore runs on the replica session, off the main actor. An
     /// open closed meanwhile drops (and closes) what it restored: the route
     /// never shows a session for a gone open.

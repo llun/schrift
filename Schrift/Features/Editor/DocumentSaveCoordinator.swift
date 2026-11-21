@@ -1088,6 +1088,229 @@ final class DocumentSaveCoordinator {
         return localDocument(from: record)
     }
 
+    // MARK: - Classic local-create conversion (PR07b)
+
+    /// Converts every eligible classic local create to a native replica, so a page created on
+    /// this device before the native editor was switched on opens natively instead of waiting
+    /// for its classic draft to sync. Runs at the start of each replay pass, before
+    /// `runCreatePass`.
+    ///
+    /// A page whose editor is on screen is skipped: its in-memory blocks still name the classic
+    /// draft, and converting under it would make its next flush a refused classic save. The
+    /// single form is called by the open route itself, which is about to replace that screen's
+    /// content with the replica.
+    func convertUnsentClassicCreates() {
+        guard nativeEditorEnabled(), cachedDocs6Org() != nil else { return }
+        for documentID in Array(pendingCreates.keys) where !hasOpenEditor(documentID: documentID) {
+            convertUnsentClassicCreate(documentID: documentID)
+        }
+    }
+
+    /// Converts one classic local create to a native replica, or leaves it classic when anything
+    /// about it cannot carry over safely.
+    ///
+    /// **Synchronous on the main actor, and that is the safety argument.** The classic replay and
+    /// the attachment collector are async passes, so neither can run against the page between the
+    /// steps below; a suspension point would let one rewrite the draft or collect a photo the
+    /// conversion is mid-way through re-keying.
+    ///
+    /// Crash safety without a journal, and the order is what makes it safe: the photo records are
+    /// re-keyed first (step 1), then the replica is created (step 2), then the draft is rewritten
+    /// (step 3). A death after step 1 leaves native records on a classic page — the classic
+    /// collector never touches a native record, so the bytes survive — and the next pass finishes
+    /// from them. A death after step 2 leaves a manifest with a classic draft, which the resume
+    /// path finishes from the existing replica rather than re-encoding it — a replica with journal
+    /// entries beyond its checkpoint is never overwritten.
+    func convertUnsentClassicCreate(documentID: UUID) {
+        guard nativeEditorEnabled(), let org = cachedDocs6Org() else { return }
+        guard let record = pendingCreates[documentID], record.syncedServerID == nil,
+            record.serverOrigin == client.serverOrigin,
+            let ownerUserID = record.ownerUserID, ownerUserID == signedInUser.userID,
+            !isPendingDelete(documentID: documentID),
+            !createPostsInFlight.contains(documentID),
+            !draftStore.holdsUnreadableData, !attachmentStore.holdsUnreadableData
+        else { return }
+        guard let draft = draftStore.draft(for: documentID), draft.replica == nil else { return }
+        let scope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: ownerUserID, org: org, documentID: documentID)
+        guard scope.isValid else { return }
+        guard
+            let photos = classicPhotosForConversion(
+                markdown: draft.markdown, documentID: documentID, ownerUserID: ownerUserID, org: org)
+        else { return }
+
+        let existing: ReplicaManifest?
+        do {
+            existing = try replicaStore.manifest(for: scope)
+        } catch {
+            return
+        }
+        if let existing {
+            // Resume after a death past step 2: the replica is the authority, so it is never
+            // re-encoded. Every expected photo block must already be there, or nothing is
+            // touched — the classic draft, the records and the replica all stay.
+            guard existing.formatVersion == ReplicaManifest.currentFormat,
+                replicaHoldsPhotoBlocks(photos, scope: scope)
+            else { return }
+            rekeyPhotos(photos, org: org)
+        } else {
+            let checkpoint = MarkdownYjs.encode(
+                markdown: draft.markdown, serverOrigin: client.serverOrigin,
+                pendingImages: Dictionary(uniqueKeysWithValues: photos.map { ($0.placeholderURL, $0.blockID) }))
+            // A page the native editor could only show read-only (a photo nested in a list, for
+            // one: its empty-url block has no typeable spelling) stays classic. Converting it
+            // would lock it read-only and leave its photo with nothing to commit into.
+            guard isTypeable(checkpoint: checkpoint) else { return }
+            // Step 1: re-key before the replica exists, so a death here leaves records the
+            // classic collector skips rather than a replica whose photos it would collect. A
+            // classic migration that later finds them native turns them back (see
+            // `migrateCreatedDocument`).
+            rekeyPhotos(photos, org: org)
+            do {
+                _ = try replicaStore.create(for: scope, checkpoint: checkpoint)
+            } catch {
+                // Only a partial create that left no manifest falls back to classic; preserve an
+                // intact replica if a manifest landed despite the thrown error.
+                if (try? replicaStore.manifest(for: scope)) == nil {
+                    try? replicaStore.remove(for: scope)
+                    _ = replicaStore.clearOwnership(for: scope)
+                    // The page stays classic, so its photos must too: a native record with no
+                    // replica to commit into would be dropped with its bytes.
+                    for photo in photos {
+                        updatePendingAttachment(
+                            PendingAttachment(
+                                localID: photo.record.localID, documentID: photo.record.documentID,
+                                createdAt: photo.record.createdAt, serverOrigin: photo.record.serverOrigin,
+                                ownerUserID: photo.record.ownerUserID))
+                    }
+                }
+                return
+            }
+        }
+
+        // The projection is read before the draft is rewritten, so a replica that cannot be
+        // projected leaves the draft classic — the records are already native and safe.
+        let adapter = ReplicaSaveAdapter(store: replicaStore, scope: scope)
+        guard let prepared = try? adapter.prepare() else { return }
+
+        // Step 3: the draft takes the replica reference and the replica's own projection as its
+        // shadow, so `ReplicaDraftReference.matches` holds and no placeholder reaches a save.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: draft.title, markdown: prepared.markdown,
+                updatedAt: draft.updatedAt, baseline: draft.baseline,
+                lastPushedMarkdown: draft.lastPushedMarkdown,
+                conflictServerUpdatedAt: draft.conflictServerUpdatedAt,
+                replica: prepared.request.reference))
+        // A classic save parked for this page names the classic body; left queued it blocks the
+        // native capture, `saveNow` and failure reporting until the create migrates.
+        if queued[documentID]?.replicaRequest == nil { queued[documentID] = nil }
+        syncBackupExclusion(for: documentID, scope: scope)
+        recordReplicaOpened(scope: scope)
+        evictCleanNativeReplicasIfNeeded(keepingScopes: [scope])
+    }
+
+    /// Re-keys each still-classic record onto its block, keeping the localID (the bytes are keyed
+    /// by it) and every replay field.
+    private func rekeyPhotos(_ photos: [ClassicPhotoConversion], org: String) {
+        for photo in photos where photo.record.native == nil {
+            updatePendingAttachment(
+                PendingAttachment(
+                    localID: photo.record.localID, documentID: photo.record.documentID,
+                    createdAt: photo.record.createdAt, serverOrigin: photo.record.serverOrigin,
+                    ownerUserID: photo.record.ownerUserID,
+                    native: NativeMediaTarget(
+                        org: org, blockID: photo.blockID,
+                        slot: MediaBlock.Slot(node: "image", url: ""),
+                        fileName: "photo.jpg", contentType: "image/jpeg")))
+        }
+    }
+
+    /// A queued photo a classic draft names, validated for a native conversion.
+    private struct ClassicPhotoConversion {
+        let localID: UUID
+        let blockID: String
+        let placeholderURL: String
+        let record: PendingAttachment
+    }
+
+    /// The photos a classic draft names, or nil when any of them cannot carry over safely — the
+    /// page then stays classic and syncs through the classic replay as before.
+    ///
+    /// Every placeholder must be exactly one image block's url: one that appears twice, or
+    /// anywhere else (alt text, a paragraph), cannot be mapped to one block. A record must be
+    /// this document's, this server's and this account's, unuploaded, unfailed, with its bytes
+    /// still on disk. A record already re-keyed by a resume must target the block this
+    /// conversion derives. And MarkdownYjs spells an `.unknown` block as plain paragraphs, which
+    /// loses its structure, so a page holding one is not converted.
+    private func classicPhotosForConversion(
+        markdown: String, documentID: UUID, ownerUserID: UUID, org: String
+    ) -> [ClassicPhotoConversion]? {
+        let blocks = parseEditorBlocks(markdown, serverOrigin: client.serverOrigin)
+        guard !blocks.contains(where: { $0.kind == .unknown }) else { return nil }
+        let placeholders = blocks.compactMap { block -> String? in
+            guard case .image(_, let url) = block.kind, pendingAttachmentID(fromPlaceholderURL: url) != nil
+            else { return nil }
+            return url
+        }
+        // Counted case-insensitively, because the parser accepts either case: a case-sensitive
+        // count would read `SCHRIFT-ATTACHMENT://…` as zero occurrences and refuse the page.
+        let occurrences = markdown.lowercased().components(separatedBy: pendingAttachmentURLPrefix).count - 1
+        guard occurrences == placeholders.count else { return nil }
+        var seen = Set<UUID>()
+        var photos: [ClassicPhotoConversion] = []
+        for url in placeholders {
+            guard let localID = pendingAttachmentID(fromPlaceholderURL: url), seen.insert(localID).inserted,
+                let record = pendingAttachments[localID],
+                record.documentID == documentID, record.serverOrigin == client.serverOrigin,
+                record.ownerUserID == ownerUserID, record.uploadedURLString == nil, record.failedAt == nil,
+                attachmentStore.data(for: localID) != nil
+            else { return nil }
+            let blockID = localID.uuidString.lowercased()
+            if let native = record.native {
+                guard native.org == org, native.blockID == blockID,
+                    native.slot == MediaBlock.Slot(node: "image", url: "")
+                else { return nil }
+            }
+            photos.append(
+                ClassicPhotoConversion(localID: localID, blockID: blockID, placeholderURL: url, record: record))
+        }
+        return photos
+    }
+
+    /// Whether a freshly encoded checkpoint opens typeable in the native editor.
+    private func isTypeable(checkpoint: Data) -> Bool {
+        let doc = YDoc(clientID: 0)
+        defer { doc.destroy() }
+        guard (try? doc.applyUpdate(YUpdateDecoder.decode(checkpoint), origin: .remote)) != nil else { return false }
+        return NativeBlockProjection.typability(doc, interlinkingOrigin: client.serverOrigin).canType
+    }
+
+    /// Whether the replica already holds an image block for every expected photo — the resume
+    /// path's precondition for finishing from it.
+    private func replicaHoldsPhotoBlocks(_ photos: [ClassicPhotoConversion], scope: ReplicaScope) -> Bool {
+        let restored: ReplicaRestore?
+        do {
+            restored = try replicaStore.restore(for: scope)
+        } catch {
+            return false
+        }
+        guard let restored else { return false }
+        let doc = YDoc(clientID: 0)
+        defer { doc.destroy() }
+        do {
+            try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
+            for update in restored.updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
+        } catch {
+            return false
+        }
+        guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else { return false }
+        let ids = Set(
+            NativeBlockProjection.project(doc, nativeMarks: false, inlineObjects: true).blocks
+                .filter { $0.block.node == "image" }.map(\.id))
+        return photos.allSatisfy { ids.contains($0.blockID) }
+    }
+
     /// Documents created on this device under `parentID` (nil = root), newest first — what
     /// a list merges in at read time via `mergedWithLocalDocuments`.
     ///
@@ -1787,6 +2010,27 @@ final class DocumentSaveCoordinator {
         return true
     }
 
+    /// Moves queued photos back onto the id their page now lives under (a take-back of a create
+    /// the server lost). Left on the dead server id, a native one's commit would find no replica,
+    /// answer `.gone` and delete the bytes; a classic one would upload to a document that is gone.
+    /// Only the page owner's records on this server: another account may have queued a photo on
+    /// the same shared server id, and moving it would strand it under a page it cannot see. Called
+    /// before the server-id draft is removed, so a death between the two leaves both on disk.
+    private func rekeyAttachments(from oldID: UUID, to newID: UUID, ownerUserID: UUID?) {
+        guard let ownerUserID else { return }
+        let owned = pendingAttachments.values.filter {
+            $0.documentID == oldID && $0.ownerUserID == ownerUserID && $0.serverOrigin == client.serverOrigin
+        }
+        for var attachment in owned {
+            attachment.documentID = newID
+            // Both answered the dead document: its media URL cannot be committed into the next
+            // one the re-POST makes, and its 404 says nothing about that one.
+            attachment.uploadedURLString = nil
+            attachment.failedAt = nil
+            updatePendingAttachment(attachment)
+        }
+    }
+
     private func updatePendingAttachment(_ record: PendingAttachment) {
         attachmentStore.save(record)
         pendingAttachments[record.localID] = record
@@ -1888,6 +2132,11 @@ final class DocumentSaveCoordinator {
 
     private func hasOpenEditor(documentID: UUID) -> Bool {
         (openEditors[documentID] ?? 0) > 0
+    }
+
+    /// How many editor screens have this document open (`retainOpenEditor`).
+    func openEditorCount(documentID: UUID) -> Int {
+        openEditors[documentID] ?? 0
     }
 
     /// Any pending record waiting to migrate onto this **server** id, regardless of session.
@@ -2235,6 +2484,7 @@ final class DocumentSaveCoordinator {
                                 documentID: record.localID, title: orphan.title, markdown: body,
                                 updatedAt: orphan.updatedAt, baseline: nil,
                                 replica: localRef))
+                        rekeyAttachments(from: serverID, to: record.localID, ownerUserID: record.ownerUserID)
                         draftStore.remove(documentID: serverID)
                         try? replicaStore.remove(for: serverScope)
                         syncBackupExclusion(for: record.localID, scope: localScope)
@@ -2245,6 +2495,7 @@ final class DocumentSaveCoordinator {
                         PendingDraft(
                             documentID: record.localID, title: orphan.title, markdown: orphan.markdown,
                             updatedAt: orphan.updatedAt, baseline: nil))
+                    rekeyAttachments(from: serverID, to: record.localID, ownerUserID: record.ownerUserID)
                     draftStore.remove(documentID: serverID)
                     syncBackupExclusion(for: record.localID)
                     syncBackupExclusion(for: serverID)
@@ -2738,9 +2989,26 @@ final class DocumentSaveCoordinator {
         //
         // The placeholder names the *attachment's* id, not the document's, so no markdown needs
         // rewriting here: the hold follows the content across the re-key by itself.
-        for var attachment in pendingAttachments.values.filter({ $0.documentID == localID }) {
-            attachment.documentID = serverID
-            updatePendingAttachment(attachment)
+        //
+        // A native record whose replica has no manifest is a conversion that stopped before its
+        // replica existed (an ownership marker alone may remain, which the native branch clears
+        // before falling through here): this page migrates classically and its classic draft
+        // still names the placeholder, so the record goes back to classic. Left native, its
+        // commit would find no replica, answer `.gone` and delete the photo's only copy. Judged
+        // per record, not by `nativeScopes`, which was read before that clear.
+        for attachment in pendingAttachments.values.filter({ $0.documentID == localID }) {
+            let orphanedNative = attachment.nativeScope.map { (try? replicaStore.manifest(for: $0)) == nil } ?? false
+            guard orphanedNative else {
+                var rekeyed = attachment
+                rekeyed.documentID = serverID
+                updatePendingAttachment(rekeyed)
+                continue
+            }
+            updatePendingAttachment(
+                PendingAttachment(
+                    localID: attachment.localID, documentID: serverID, createdAt: attachment.createdAt,
+                    serverOrigin: attachment.serverOrigin, ownerUserID: attachment.ownerUserID,
+                    uploadedURLString: attachment.uploadedURLString, failedAt: attachment.failedAt))
         }
 
         removePendingCreate(documentID: localID)
@@ -2943,6 +3211,12 @@ final class DocumentSaveCoordinator {
         onDocumentMigrated?(document)
     }
 
+    /// Whether a native upload record targets this document. A page whose only content is a
+    /// queued photo projects to empty Markdown, so adopting the server would discard its block.
+    private func hasNativeAttachment(scope: ReplicaScope) -> Bool {
+        pendingAttachments.values.contains { $0.nativeScope == scope }
+    }
+
     private func migrateNativeCreatedDocument(
         _ record: PendingDocumentCreate, serverID: UUID, scope: ReplicaScope,
         draft: PendingDraft?, migrated: PendingDraft?, serverTitle: String?, serverUpdatedAt: Date,
@@ -3017,6 +3291,7 @@ final class DocumentSaveCoordinator {
         let canonicalServer = syncCanonicalMarkdown(serverMarkdown)
         let willAdoptServer =
             restored.manifest.outbox.isEmpty && canonicalSource.isEmpty && !canonicalServer.isEmpty
+            && !hasNativeAttachment(scope: localScope) && !hasNativeAttachment(scope: serverScope)
 
         if willAdoptServer {
             if sourceScope != serverScope,
@@ -3566,6 +3841,9 @@ final class DocumentSaveCoordinator {
             // 404 to the second, which is indistinguishable from a co-author's delete.
             await runDeletePass()
             await syncPendingPins()
+            // Before the create pass, so a page this device has not POSTed yet is already a
+            // replica when the POST lands and `migrateCreatedDocument` re-keys it natively.
+            convertUnsentClassicCreates()
             await runCreatePass()
             // Between the two: a queued photo's upload is what *releases* the attachment hold,
             // so running it here lets the same pass upload, rewrite, and push. It also has to
@@ -4798,9 +5076,17 @@ final class DocumentSaveCoordinator {
                 // checkpointed, so the user met and deleted this document under its server id,
                 // but nothing filed under it ever learned that id.
                 discardLocalSubtree(rootedAt: checkpointed.localID)
+                // The page's own replica and queued photos are filed under the local id too; left
+                // behind, a native photo would upload to `documents/{local-id}/` and its bytes and
+                // replica would stay protected forever.
+                // A replica this account may not remove (another account's, or unreadable) keeps
+                // its draft and its queued photos, as everywhere else `discardNativeReplica`
+                // answers false.
+                let mayRemoveLocalDraft = discardNativeReplica(documentID: checkpointed.localID)
+                if mayRemoveLocalDraft { discardPendingAttachments(documentID: checkpointed.localID) }
                 states[checkpointed.localID] = .idle
                 clearFailure(checkpointed.localID)
-                draftStore.remove(documentID: checkpointed.localID)
+                if mayRemoveLocalDraft { draftStore.remove(documentID: checkpointed.localID) }
                 queued[checkpointed.localID] = nil
                 settledSaves[checkpointed.localID] = nil
                 lastConfirmedPushMarkdown[checkpointed.localID] = nil
