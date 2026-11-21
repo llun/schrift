@@ -530,33 +530,46 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
 
     // MARK: - Crash order
 
-    /// A death after the replica was created but before the records were re-keyed leaves an owned
-    /// replica, a classic draft and a classic record. With the switch off the create replay
-    /// migrates the page, and the classic collector would then delete the record's bytes — the
-    /// only copy of the photo the replica names.
-    func testAStopAfterTheReplicaWasCreatedKeepsTheClassicRecordsBytes() async throws {
+    /// A death between re-keying the records and creating the replica leaves native records on a
+    /// classic page with no replica. If the next pass migrates it classically (here: the switch
+    /// is off), the records must go back to classic so the photo uploads through the classic
+    /// replay; left native, their commit finds no replica, answers `.gone` and deletes the bytes.
+    func testANativeRecordOnAClassicallyMigratedPageUploadsAsClassic() async throws {
         let log = RequestRecorder()
         let defaults = makeDefaults()
         let photo = seedPhoto(defaults)
         let markdown = "![](\(photo.placeholder))"
         seedClassicCreate(defaults, markdown: markdown)
         cacheDocs6(defaults)
+        let blockID = photo.localID.uuidString.lowercased()
+        let store = PendingAttachmentStore(userDefaults: defaults, directory: attachmentDirectory)
+        let classic = try XCTUnwrap(store.attachment(for: photo.localID))
+        store.save(
+            PendingAttachment(
+                localID: classic.localID, documentID: classic.documentID, createdAt: classic.createdAt,
+                serverOrigin: classic.serverOrigin, ownerUserID: classic.ownerUserID,
+                native: NativeMediaTarget(
+                    org: "docs", blockID: blockID, slot: MediaBlock.Slot(node: "image", url: ""),
+                    fileName: "photo.jpg", contentType: "image/jpeg")))
         let env = makeEnvironment(sharing: defaults)
-        try seedReplica(
-            env, markdown: markdown, pendingImages: [photo.placeholder: photo.localID.uuidString.lowercased()])
         env.coordinator.nativeEditorEnabled = { false }
         stubPipeline(log: log, bodies: BodyRecorder())
 
         await env.coordinator.syncPendingDrafts()
 
-        XCTAssertNotNil(env.attachments.attachment(for: photo.localID), "the classic record is kept")
-        XCTAssertEqual(env.attachments.data(for: photo.localID), Data([0xFF, 0xD8, 0xFF]), "and its bytes")
+        XCTAssertEqual(
+            log.count(
+                ofMethod: "POST", urlContaining: "/documents/\(serverID.uuidString.lowercased())/attachment-upload/"),
+            1, "the photo uploads through the classic replay instead of being dropped")
+        if let record = env.attachments.attachment(for: photo.localID) {
+            XCTAssertNil(record.native, "a record left behind is classic")
+            XCTAssertNotNil(env.attachments.data(for: photo.localID), "and keeps its bytes")
+        }
     }
 
-    /// The records are re-keyed before the replica exists, so a death during the create leaves
-    /// native records on a classic page — the classic collector never touches those — and the next
-    /// pass finishes from them.
-    func testAStopBeforeTheReplicaWasCreatedLeavesNativeRecordsAndTheNextPassFinishes() throws {
+    /// A replica create that fails leaves the page classic, so its records go back to classic
+    /// with their bytes, and a later pass converts the page from scratch.
+    func testAFailedReplicaCreateLeavesThePageAndItsPhotosClassic() throws {
         let defaults = makeDefaults()
         let photo = seedPhoto(defaults)
         let markdown = "![](\(photo.placeholder))"
@@ -570,9 +583,7 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
         interrupted.coordinator.convertUnsentClassicCreates()
 
         XCTAssertNil(try interrupted.replicaStore.manifest(for: scope), "the create died before its manifest")
-        XCTAssertEqual(
-            interrupted.attachments.attachment(for: photo.localID)?.native?.blockID, blockID,
-            "the record was re-keyed before the replica")
+        XCTAssertNil(interrupted.attachments.attachment(for: photo.localID)?.native, "the record is classic again")
         XCTAssertNil(interrupted.drafts.draft(for: documentID)?.replica, "the draft is still classic")
         XCTAssertEqual(interrupted.attachments.data(for: photo.localID), Data([0xFF, 0xD8, 0xFF]))
 
@@ -581,6 +592,7 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
 
         XCTAssertEqual(relaunched.coordinator.nativeOwnership(documentID: documentID), .owned(scope))
         XCTAssertEqual(try imageBlockIDs(relaunched, scope), [blockID])
+        XCTAssertEqual(relaunched.attachments.attachment(for: photo.localID)?.native?.blockID, blockID)
         XCTAssertEqual(relaunched.drafts.draft(for: documentID)?.replica?.scope, scope)
     }
 

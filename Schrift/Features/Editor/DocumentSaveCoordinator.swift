@@ -1155,7 +1155,9 @@ final class DocumentSaveCoordinator {
             rekeyPhotos(photos, org: org)
         } else {
             // Step 1: re-key before the replica exists, so a death here leaves records the
-            // classic collector skips rather than a replica whose photos it would collect.
+            // classic collector skips rather than a replica whose photos it would collect. A
+            // classic migration that later finds them native turns them back (see
+            // `migrateCreatedDocument`).
             rekeyPhotos(photos, org: org)
             let checkpoint = MarkdownYjs.encode(
                 markdown: draft.markdown, serverOrigin: client.serverOrigin,
@@ -1168,6 +1170,9 @@ final class DocumentSaveCoordinator {
                 if (try? replicaStore.manifest(for: scope)) == nil {
                     try? replicaStore.remove(for: scope)
                     _ = replicaStore.clearOwnership(for: scope)
+                    // The page stays classic, so its photos must too: a native record with no
+                    // replica to commit into would be dropped with its bytes.
+                    for photo in photos { updatePendingAttachment(photo.record) }
                 }
                 return
             }
@@ -2935,9 +2940,23 @@ final class DocumentSaveCoordinator {
         //
         // The placeholder names the *attachment's* id, not the document's, so no markdown needs
         // rewriting here: the hold follows the content across the re-key by itself.
-        for var attachment in pendingAttachments.values.filter({ $0.documentID == localID }) {
-            attachment.documentID = serverID
-            updatePendingAttachment(attachment)
+        //
+        // A native record here is a conversion that stopped before its replica existed: this
+        // page migrates classically and its classic draft still names the placeholder, so the
+        // record goes back to classic. Left native, its commit would find no replica, answer
+        // `.gone` and delete the photo's only copy.
+        for attachment in pendingAttachments.values.filter({ $0.documentID == localID }) {
+            guard attachment.native != nil, nativeScopes.isEmpty else {
+                var rekeyed = attachment
+                rekeyed.documentID = serverID
+                updatePendingAttachment(rekeyed)
+                continue
+            }
+            updatePendingAttachment(
+                PendingAttachment(
+                    localID: attachment.localID, documentID: serverID, createdAt: attachment.createdAt,
+                    serverOrigin: attachment.serverOrigin, ownerUserID: attachment.ownerUserID,
+                    uploadedURLString: attachment.uploadedURLString, failedAt: attachment.failedAt))
         }
 
         removePendingCreate(documentID: localID)
@@ -3142,8 +3161,8 @@ final class DocumentSaveCoordinator {
 
     /// Whether a native upload record targets this document. A page whose only content is a
     /// queued photo projects to empty Markdown, so adopting the server would discard its block.
-    private func hasNativeAttachment(documentID: UUID) -> Bool {
-        pendingAttachments.values.contains { $0.native != nil && $0.documentID == documentID }
+    private func hasNativeAttachment(scope: ReplicaScope) -> Bool {
+        pendingAttachments.values.contains { $0.nativeScope == scope }
     }
 
     private func migrateNativeCreatedDocument(
@@ -3220,7 +3239,7 @@ final class DocumentSaveCoordinator {
         let canonicalServer = syncCanonicalMarkdown(serverMarkdown)
         let willAdoptServer =
             restored.manifest.outbox.isEmpty && canonicalSource.isEmpty && !canonicalServer.isEmpty
-            && !hasNativeAttachment(documentID: localID) && !hasNativeAttachment(documentID: serverID)
+            && !hasNativeAttachment(scope: localScope) && !hasNativeAttachment(scope: serverScope)
 
         if willAdoptServer {
             if sourceScope != serverScope,
@@ -4250,11 +4269,7 @@ final class DocumentSaveCoordinator {
             // document was deleted would never be cleaned up. Deferred while an editor is open:
             // that screen may be about to flush a body that still names the photo.
             if !referencesPendingAttachment(record) {
-                // A classic record on a native-owned page is kept: its bytes may be the only copy
-                // of a photo the replica already names.
-                if !hasOpenEditor(documentID: record.documentID),
-                    nativeOwnership(documentID: record.documentID) == .none
-                {
+                if !hasOpenEditor(documentID: record.documentID) {
                     removePendingAttachment(localID: record.localID)
                 }
                 continue
