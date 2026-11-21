@@ -36,7 +36,11 @@ permissions:
 jobs:
   build:
     name: Build
-    runs-on: macos-latest
+    # xcode-27: GitHub's Xcode 27 image (macOS 27, arm64). App Store Connect
+    # requires the iOS 27 SDK for uploads from April 2027 (ITMS-90725), and
+    # macos-latest only carries Xcode 26. Keep pr-checks.yml and testflight.yml
+    # on the same label so PRs test what ships. See docs/ci.md.
+    runs-on: xcode-27
     # The build alone takes 12-20 minutes on a hosted runner; the cap turns a
     # hang into a failure.
     timeout-minutes: 45
@@ -116,7 +120,11 @@ jobs:
   test:
     name: Test (${{ matrix.shard }})
     needs: build
-    runs-on: macos-latest
+    # xcode-27: GitHub's Xcode 27 image (macOS 27, arm64). App Store Connect
+    # requires the iOS 27 SDK for uploads from April 2027 (ITMS-90725), and
+    # macos-latest only carries Xcode 26. Keep pr-checks.yml and testflight.yml
+    # on the same label so PRs test what ships. See docs/ci.md.
+    runs-on: xcode-27
     # The slowest shard takes about 13 minutes; the cap turns a hang into a failure.
     timeout-minutes: 45
     strategy:

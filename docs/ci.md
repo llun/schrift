@@ -16,7 +16,11 @@ by construction). See the Safety section in [`AGENTS.md`](../AGENTS.md).
 
 ## What runs on every PR and every push to `main`
 
-`pr-checks.yml` builds once and tests in parallel on `macos-latest`. It runs on every PR targeting
+`pr-checks.yml` builds once and tests in parallel on the `xcode-27` runner image (GitHub's
+Xcode 27 image on macOS 27, arm64; `testflight.yml` uses the same label).
+`macos-latest` only carries Xcode 26, and App Store Connect requires the iOS 27
+SDK for uploads from April 2027 (ITMS-90725). When the next major Xcode is
+required, move both workflows to its `xcode-NN` label together. It runs on every PR targeting
 `main` **and on every push to `main`**: PRs are squash-merged with no "branch
 up to date" requirement, so when `main` has moved since the PR's last CI run,
 the squash commit's tree was never built (a `pull_request` run builds the
@@ -137,7 +141,7 @@ hang in one shard no longer eats the others' time.
 
 ### Where the time goes
 
-Measured on hosted `macos-latest` runners: the build takes 12-20 minutes (it compiles the
+Measured on hosted `macos-latest` runners (before the `xcode-27` move): the build takes 12-20 minutes (it compiles the
 production sources for the app and for both UI test hosts); the ~5,100 unit tests take about
 7-9 minutes; the UI tests take about 34 minutes in a row — `NativeEditorUITests` about 21
 (several relaunch or scroll a large document), `ChecklistFilterTests` 5, `ThemeFlowTests` 4,
