@@ -506,9 +506,9 @@ final class DocumentSaveCoordinator {
         // `draftStore.allDrafts()`, which is not origin-scoped either. Mirroring only the
         // matching ones left a foreign record's draft with no hold at all: the pass GET
         // 404ed and marked it `.failed` while leaving the record pointing at nothing.
-        // Dormant has to mean *no requests and no failure stamp*. Origin decides what is **listed** (below) and, with the owning user,
-        // what the replay may **POST** (`isReplayable`) — never whether the content is
-        // protected.
+        // Dormant has to mean *no requests and no failure stamp*. Origin decides what is
+        // **listed** (below) and, with the owning user, what the replay may **POST**
+        // (`isReplayable`) — never whether the content is protected.
         for create in createStore.allCreates() {
             pendingCreates[create.localID] = create
             // `states` is in-memory, so without this every local document reads `.idle`
