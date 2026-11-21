@@ -656,6 +656,8 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
             PendingAttachment(
                 localID: photoID, documentID: serverID, createdAt: Date(), serverOrigin: origin,
                 ownerUserID: user,
+                uploadedURLString: "\(origin)/media/\(serverID.uuidString.lowercased())/attachments/old.jpg",
+                failedAt: Date(),
                 native: NativeMediaTarget(
                     org: "docs", blockID: blockID, slot: MediaBlock.Slot(node: "image", url: ""),
                     fileName: "photo.jpg", contentType: "image/jpeg")))
@@ -692,6 +694,8 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
             attachments.attachment(for: photoID)?.documentID, localID,
             "the photo record moved back to the local id")
         XCTAssertEqual(attachments.data(for: photoID), bytes, "its bytes survived the take-back")
+        XCTAssertNil(attachments.attachment(for: photoID)?.uploadedURLString, "the dead document's URL is dropped")
+        XCTAssertNil(attachments.attachment(for: photoID)?.failedAt, "and so is its failure")
         XCTAssertEqual(
             log.count(ofMethod: "POST", urlContaining: "attachment-upload"), 0,
             "no upload targeted the dead server id")

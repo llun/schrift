@@ -2023,6 +2023,10 @@ final class DocumentSaveCoordinator {
         }
         for var attachment in owned {
             attachment.documentID = newID
+            // Both answered the dead document: its media URL cannot be committed into the next
+            // one the re-POST makes, and its 404 says nothing about that one.
+            attachment.uploadedURLString = nil
+            attachment.failedAt = nil
             updatePendingAttachment(attachment)
         }
     }
