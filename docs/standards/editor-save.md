@@ -126,8 +126,8 @@
   without the JSON format and a stale pairing all produce — so it never un-nests the
   screen, and `serverCopyKeepingLeafNesting` keeps the nested spelling of the same
   content in the cache and the baseline too (`reconcileClean`, `cacheServerCopy`, and
-  `installFetched` against the cached copy — which is what "Keep the server version" and
-  a legacy draft's discard install through); without that, one failed tree read rewrote
+  `installFetched` against the cached copy — which is what "Keep the server version"
+  installs through); without that, one failed tree read rewrote
   the cached nesting flat and the next (offline) open showed it flat. Because the two spellings differ, `canonicalMarkdown` is
   **leaf-nesting insensitive**: it runs both sides through `flattenedLikeServerExport`,
   the model of exactly what the export does (verified against
@@ -903,8 +903,8 @@ markdown write endpoint**. Understand this before touching the save path:
   (`pendingLocalDocuments(parentID:currentUserID:)`) and what may be **sent**
   (`isReplayable`). Scoping the holds by origin instead left a foreign record's
   draft unguarded, because `runSyncPass` walks *every* draft: signing in elsewhere
-  404ed and **deleted** it, so "dormant" destroyed the content it claimed to
-  preserve. Dormant means no requests *and* no deletion.
+  404ed and marked it `.failed`, leaving a dormant local document looking broken instead
+  of preserved. Dormant means no requests *and* no failure stamp.
   Listing and sending share one test on purpose: origin identifies the server, not
   the account, and records survive sign-out — so *showing* user B another user's
   unsynced document is the worse half of the same disclosure, since B's edits
@@ -944,16 +944,17 @@ markdown write endpoint**. Understand this before touching the save path:
   quarantine is recovery protection, not a reason to break existing drafts.
   **The create store's `try?` decode is all-or-nothing, so an undecodable blob means the
   records are *unknown*, not absent** — which would disarm every hold and let the
-  next sync pass delete every offline-created document's only copy.
-  `holdsUnreadableData` detects it and suppresses `runSyncPass`'s 404/403
-  refusal and `.discardServerWins` conflict stamp so unknown local creates stay
-  untouched. Two details make that
+  next sync pass stamp `.failed` or a conflict onto offline-created classic documents
+  (nothing is deleted either way). `holdsUnreadableData` detects it and suppresses
+  `runSyncPass`'s 404/403 refusal and `.discardServerWins` conflict stamp for classic
+  drafts so unknown local creates stay untouched (a native draft with `replica != nil` is
+  marked `.failed` before that guard). Two details make that
   real rather than nominal — the unreadable bytes are **quarantined** to
   `…pendingCreates.unreadable` before the live key is reused (every
   read-modify-write here reads through a `loadAll` that answers empty for a corrupt
   blob and would `persist` over it), and the flag is **sticky** while a quarantine
-  exists, because a clean live key next launch would re-arm the delete and take the
-  drafts anyway. Every field added to the record must stay Optional-on-decode for
+  exists, because a clean live key next launch would re-arm those branches against the
+  protected classic drafts. Every field added to the record must stay Optional-on-decode for
   the same reason.
   **The replay (`runCreatePass`) runs inside `syncPendingDrafts`'s coalesced loop,
   before `runSyncPass`, and has no triggers of its own** — sharing the funnel is
@@ -1032,7 +1033,7 @@ markdown write endpoint**. Understand this before touching the save path:
   not on `onDisappear`**: that fires on mere invisibility (a tab switch), and releasing
   there let the replay re-key a document whose screen was about to return, after which the
   editor held a dead id — a 404 teardown, and post-return keystrokes enqueued against an id
-  no hold covers, then swept. The cost is that any editor left pushed holds its document
+  no hold covers, then marked `.failed` on the next sweep. The cost is that any editor left pushed holds its document
   until the user pops back. Why it matters: migration re-keys everything, and
   `EditorViewModel.documentID` is a `let` captured by four sibling view models and
   by pushed `NavigationPath` values, so a live screen cannot follow the id and

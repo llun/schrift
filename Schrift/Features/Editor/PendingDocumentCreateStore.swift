@@ -236,11 +236,12 @@ final class PendingDocumentCreateStore {
     /// which is a different thing from "there are none".
     ///
     /// The distinction is load-bearing rather than pedantic: the holds key off these
-    /// records, and `runSyncPass` marks a draft failed on 404/403 (and stamps a conflict on
-    /// `.discardServerWins`). Reading a corrupt blob as "no local documents exist" would
-    /// disarm every hold and let the next sync pass stamp `.failed` or a conflict onto
-    /// offline-created documents whose records are merely unreadable. The coordinator asks
-    /// this at init and suppresses both branches while create records are unknown.
+    /// records, and `runSyncPass` marks a classic draft failed on 404/403 (and stamps a
+    /// conflict on `.discardServerWins`). Reading a corrupt blob as "no local documents
+    /// exist" would disarm every hold and let the next sync pass stamp `.failed` or a
+    /// conflict onto offline-created classic documents whose records are merely unreadable
+    /// (nothing is deleted either way). The coordinator asks this at init and suppresses
+    /// both branches for classic drafts while create records are unknown.
     ///
     /// Every other draft-mutating path falls into one of two classes, neither of which can
     /// fire under corruption. Some require a *successful* server interaction with that
@@ -253,16 +254,18 @@ final class PendingDocumentCreateStore {
     /// the *local* id: a draft under a checkpointed record's **server** id gets a 200
     /// `formattedContent` perfectly well, which is why both the 404/403 refusal and
     /// `.discardServerWins` branches in `runSyncPass` carry an explicit `createStoreUnreadable`
-    /// guard rather than resting on this argument.) Under corruption a local document's draft
-    /// stays untouched rather than being marked failed or conflicted.
+    /// guard for classic drafts rather than resting on this argument.) Under corruption a
+    /// classic local document's draft stays untouched rather than being marked failed or
+    /// conflicted (a native local create with `replica != nil` is marked `.failed` before
+    /// that guard, though nothing is deleted either way).
     /// **Sticky across launches, deliberately.** Quarantining preserves the record *bytes*,
     /// but on its own it leaves the live key clean, so the next launch would re-arm those
-    /// `runSyncPass` branches against drafts belonging to the unknown records. A surviving
-    /// quarantine therefore keeps answering true.
+    /// `runSyncPass` branches against classic drafts belonging to the unknown records. A
+    /// surviving quarantine therefore keeps answering true.
     ///
-    /// The cost is that 404/403 refusals and legacy conflicts stop stamping on this device
-    /// until the quarantine is cleared, which nothing does yet. That is the right side to err
-    /// on — leaving drafts untouched is recoverable — and clearing it belongs with the
+    /// The cost is that classic 404/403 refusals and legacy conflicts stop stamping on this
+    /// device until the quarantine is cleared, which nothing does yet. That is the right side
+    /// to err on — leaving drafts untouched is recoverable — and clearing it belongs with the
     /// recovery affordance the docs already record as owed.
     var holdsUnreadableData: Bool {
         userDefaults.data(forKey: Self.quarantineKey) != nil || liveDataIsUnreadable
@@ -282,8 +285,9 @@ final class PendingDocumentCreateStore {
     /// Without this the fail-safe above buys exactly one process: `save` reads through
     /// `loadAll`, which answers `[:]` for a corrupt blob, and `persist` then **overwrites**
     /// it — so the first document created after a corrupt read wipes the unknown records,
-    /// and the *next* launch sees a healthy store and deletes precisely the drafts the
-    /// fail-safe was protecting. Quarantining makes the recovery non-destructive: the bytes
+    /// and the *next* launch sees a healthy store and stamps `.failed` or a conflict onto
+    /// precisely the classic drafts the fail-safe was protecting (nothing is deleted either
+    /// way). Quarantining makes the recovery non-destructive: the bytes
     /// survive under a separate key for inspection, and the live key starts clean.
     private func quarantineUnreadableDataIfNeeded() {
         guard liveDataIsUnreadable, let data = userDefaults.data(forKey: Self.createsKey) else { return }

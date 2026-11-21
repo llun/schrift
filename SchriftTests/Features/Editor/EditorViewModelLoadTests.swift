@@ -235,9 +235,8 @@ final class EditorViewModelLoadTests: EditorViewModelTestCase {
         await waitUntil { self.savesInFlight(log) > savesBeforeReconnect }
         await waitUntil { viewModel.saveState == .saved }
         await waitUntil { draftStore.draft(for: documentID) == nil }
-        // A draft is also removed when the replay's GET 404s and when rule 3 discards it,
-        // so the disappearance above does not by itself distinguish "pushed" from
-        // "dropped". This does.
+        // A draft can also be removed by an explicit discard or deletion, so the
+        // disappearance above does not by itself prove the edit was pushed. This does.
         XCTAssertEqual(
             coordinator.lastConfirmedPush(documentID: documentID)?.contains("Edited offline"), true,
             "the offline edit is what reached the server, not a discard")

@@ -448,7 +448,8 @@ final class EditorViewModelRevalidationTests: EditorViewModelTestCase {
     /// `flushPendingChanges` needs `isDirty`, `saveNow` needs `.failed`, the retry
     /// caption needs `.failed`, and `recoverDrafts` already ran. The edit would sit
     /// there labelled "Edited just now" until a co-author's write pushed the server
-    /// past the clock tolerance — and then `reconcileDraft` would silently delete it.
+    /// past the clock tolerance — and then `reconcileDraft` would flag a stale conflict
+    /// instead of pushing it.
     /// The document is back, so the draft goes back into the pipeline.
     func testRecoveredDraftIsHandedBackToTheSavePipeline() async {
         let log = RequestRecorder()

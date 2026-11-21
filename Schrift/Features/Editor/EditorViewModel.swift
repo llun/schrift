@@ -1157,7 +1157,7 @@ final class EditorViewModel {
             // postdates it. `.draft` means the draft is gone but nothing reset the
             // source — a save cleared it (the marker is per-fetch, so a fetch
             // issued *after* that save reads a fresh count and arrives here),
-            // `recoverDrafts` discarded it, or the document was deleted. Either way
+            // `resolveConflictKeepingServer` discarded it, or the document was deleted. Either way
             // nothing local is left to protect, so the screen holds an ordinary
             // clean copy. Leaving the source pinned would strand it forever: every
             // later revalidation *and* every pull-to-refresh would no-op in silence.
@@ -1617,7 +1617,7 @@ final class EditorViewModel {
     /// `leafNesting` is the overlay's verdict on that body: a flat read the block tree could not
     /// vouch for (`.unknown`) keeps a cached copy that nests leaves when it is the same content
     /// (`serverCopyKeepingLeafNesting`), exactly as revalidation's `reconcileClean` and
-    /// `cacheServerCopy` do — otherwise "Keep the server version" (or a legacy draft's discard)
+    /// `cacheServerCopy` do — otherwise "Keep the server version"
     /// after a failed tree read overwrote the nested cached copy with the flat export.
     private func installFetched(_ formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
         let now = Date()

@@ -2014,9 +2014,8 @@ to stop anything addressing it. What origin decides is what may be **listed**
 (`pendingLocalDocuments`) and, with the owning user, what may be **sent**
 (`isReplayable`). The first cut scoped the holds themselves by origin — and
 because `runSyncPass` walks *every* draft, a foreign record's draft had no hold
-at all: the pass GET 404ed and deleted it, so signing in elsewhere destroyed the
-content while leaving the record pointing at nothing. Dormant has to mean no
-requests *and* no deletion.
+at all: the pass GET 404ed and marked it `.failed`, leaving a dormant local document looking
+broken instead of preserved. Dormant has to mean no requests *and* no failure stamp.
 
 The owning-user half exists because origin identifies the **server**, not the
 **account**, and records survive sign-out by design: without it, user B signing
@@ -2030,21 +2029,21 @@ which can await `/users/me/` — the coordinator is built before that returns.
 
 **An undecodable store means the records are unknown, not absent.** The blob
 decodes in one `try?`, so a schema slip would otherwise disarm every hold and let
-the next sync pass delete every offline-created document's only copy.
-`holdsUnreadableData` detects that case and suppresses the pass's delete branch
-entirely — cleaning up nothing is recoverable; that is not.
+the next sync pass mark offline-created classic documents `.failed` or stamp conflicts
+onto them (nothing is deleted either way). `holdsUnreadableData` detects that case and
+suppresses `runSyncPass`'s 404/403 refusal and `.discardServerWins` conflict stamp for
+classic drafts (native drafts with `replica != nil` are marked `.failed` before that
+guard) — leaving drafts untouched is recoverable.
 
 Two things make that suppression real rather than nominal. The unreadable bytes
 are **quarantined** to `dev.llun.Schrift.pendingCreates.unreadable` before the
 live key is reused, because every read-modify-write here (`save`, `remove`) reads
 through a `loadAll` that answers empty for a corrupt blob and would otherwise
 `persist` straight over it. And the flag is **sticky**: it stays true while a
-quarantine exists, since a clean live key on the next launch would re-arm the 404
-branch and delete the drafts those unknown records owned — which is the loss the
-whole mechanism exists to prevent. The cost is that drafts for genuinely-deleted
-server documents stop being cleaned up on that device until the quarantine is
-cleared; a stale draft is inert where a deleted one is gone, and clearing it
-belongs with the recovery affordance below. Nothing reads the quarantined *bytes*
+quarantine exists, since a clean live key on the next launch would re-arm those
+branches against the classic drafts those unknown records owned. The cost is that
+classic 404/403 refusals and legacy conflicts stop stamping on that device until the
+quarantine is cleared; clearing it belongs with the recovery affordance below. Nothing reads the quarantined *bytes*
 or clears the key — its mere existence is what keeps the suppression on.
 
 **Four of these landed with the create UI** and are recorded here as done rather than
@@ -2399,7 +2398,7 @@ sub-pages with it — the same recovery already owed for the parent alone.
    appears there is the server's answer to give, not ours to assume.
 5. **Remove the record last**, because it is what keeps the holds in force.
    Dropping it first and dying would leave a draft under a dead local id that the
-   very next sync pass GETs, 404s, and deletes.
+   very next sync pass GETs, 404s, and marks `.failed`.
 6. **Enqueue the content** under the server id. Undiverged, it is now an ordinary
    document with an ordinary queued edit and rule 2 sees a server no newer than the
    baseline just stamped. Diverged, the baseline deliberately proves nothing, so the
@@ -2421,7 +2420,7 @@ is an ordinary document opened from Home whose id a checkpointed record is about
 migrate *onto*. Releasing on disappearance let the replay re-key a document whose screen was
 about to return: the editor then held a dead id, took a 404 teardown, and enqueued
 post-return keystrokes against an id no hold covers, which the next launch's sweep
-removed. The accepted cost of the fix is broader than the iPad case named below — any
+marked `.failed`. The accepted cost of the fix is broader than the iPad case named below — any
 editor left pushed in a tab's stack holds its document until the user pops back, which
 kicks the funnel. Bounded by user action, not by connectivity.
 
@@ -2673,11 +2672,11 @@ background pass with no screen open.
 **A third suppression protects the server-id half.** `isPendingCreate` is keyed on the
 *local* id, so it does not cover the draft the migration writes under `serverID` before
 removing the local one — and in that window that draft is the **only copy**. The sweep's
-404/403 delete therefore also skips any id a checkpointed record is waiting to migrate
-onto (`checkpointedRecord(forServerID:)`). Only the delete: the push must keep running,
-since it is what clears `finishMigration`'s both-drafts guard. Without it a `.forbidden`
-resume — or any pass where the record is not replayable this session — reaches the
-delete and the later migration builds an *empty* document.
+404/403 refusal and `.discardServerWins` branches therefore also skip any id a checkpointed
+record is waiting to migrate onto (`anyCheckpointedRecord(forServerID:)`). Only those
+branches, never the push: the push is what clears `finishMigration`'s both-drafts guard.
+Without it a `.forbidden` resume — or any pass where the record is not replayable this
+session — marks that draft `.failed` or stamps a conflict instead of keeping it untouched.
 
 **But it takes the body back to the local id *first*.** A death inside the migration
 can leave the only copy under `serverID` — the draft is written there before the local
@@ -2820,9 +2819,10 @@ copy of a document. So quarantining the bytes is most of what this store needs.
 **One consequence is not mild, though.** With every tombstone unknown, the create pass's
 resume guard is disarmed too — so a checkpointed record whose DELETE landed in a pass that
 died before its cleanup would read the 404 as "gone", clear its checkpoint, and re-POST the
-document under a new id, which no later launch can undo. So the coordinator does mirror the
-flag (`deleteStoreUnreadable`), for exactly one purpose: withholding the resume entirely
-while the tombstones are unknown.
+document under a new id, which no later launch can undo. So the coordinator mirrors the
+flag (`deleteStoreUnreadable`) to gate the resume start-over, and also to suppress
+`runSyncPass`'s 404/403 failure stamp and `.discardServerWins` conflict stamp while the
+tombstones are unknown.
 
 ### Queue time
 
@@ -3282,7 +3282,7 @@ revalidate (awaited tail; classify at completion; latest-wins) ◀────�
       │  transient fail (network/5xx/429/401) ─▶ keep display (offline reading)
       │  definitive fail (404/403) ─▶ purge entry, "no longer available"
       │  stale draft (beyond tolerance, no session edits)
-      │                        ─▶ install server copy, drop draft
+      │                        ─▶ keep draft on screen, record a conflict, cache the server copy
       │  dirty on screen       ─▶ update cache silently, no banner
       │  clean & unchanged     ─▶ bump syncedAt ("Synced just now")
       │  clean & body changed  ─▶ install it (editing? stash + banner instead)

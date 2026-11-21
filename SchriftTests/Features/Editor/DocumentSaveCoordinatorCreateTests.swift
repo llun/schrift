@@ -190,9 +190,8 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// and "may anything address it", and conflating them cost the content: the holds
     /// were origin-scoped while `runSyncPass` walks *every* draft, so signing in to
     /// another server left a foreign record's draft with no hold at all — the pass GET
-    /// 404ed and deleted it. The record survived pointing at nothing, and a later replay
-    /// would have POSTed an empty document under the original title. Dormant has to mean
-    /// no requests *and* no deletion.
+    /// 404ed and marked it `.failed`, leaving a dormant local document looking broken
+    /// instead of preserved. Dormant has to mean no requests *and* no failure stamp.
     func testARecordFromAnotherOriginIsStillProtectedFromTheSyncPass() async {
         let log = RequestRecorder()
         let (first, draftStore, createStore) = makeCoordinator()
@@ -592,7 +591,8 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// The fail-safe only buys one process unless the unreadable bytes are moved aside:
     /// `save` reads through `loadAll`, which answers empty for a corrupt blob, so the next
     /// write would overwrite it — and the *following* launch would see a healthy store and
-    /// delete exactly the drafts the fail-safe was protecting.
+    /// stamp `.failed` or a conflict onto exactly the classic drafts the fail-safe was
+    /// protecting (nothing is deleted either way).
     func testAnUnreadableBlobIsQuarantinedRatherThanOverwritten() {
         let suiteName = "CoordinatorCreateTests.quarantine.\(UUID().uuidString)"
         suiteNames.append(suiteName)

@@ -393,14 +393,15 @@ final class DocumentSaveCoordinator {
     private var createPostsInFlight: Set<UUID> = []
     /// True when the create store held data that would not decode. The records are then
     /// unknown, so *any* draft might belong to a local document — and `runSyncPass`'s
-    /// 404 branch deletes drafts. Suppresses that branch entirely rather than deleting on
-    /// an assumption: a schema slip must degrade to "nothing is cleaned up", never to
-    /// "every offline-created document is destroyed".
+    /// 404/403 refusal and `.discardServerWins` branches mark classic drafts `.failed` or
+    /// conflicted (nothing is deleted). Suppresses both branches for classic drafts while
+    /// create records are unknown: a schema slip must degrade to leaving classic drafts
+    /// untouched, never to stamping `.failed` or conflicts across offline-created documents.
     ///
     /// Read once, which is sound: nothing can make the blob undecodable mid-process
     /// (`persist` only ever writes encoder output), and the store's own flag is **sticky**
-    /// — it stays true while a quarantine exists — so a repair does not silently re-arm the
-    /// delete on the next launch either. Suppression outlives the session by design; see
+    /// — it stays true while a quarantine exists — so a repair does not silently re-arm those
+    /// branches on the next launch either. Suppression outlives the session by design; see
     /// `holdsUnreadableData`.
     private let createStoreUnreadable: Bool
     /// True when the **delete** store held data that would not decode, so the tombstones are
@@ -408,12 +409,14 @@ final class DocumentSaveCoordinator {
     ///
     /// Far milder than `createStoreUnreadable` — unknown tombstones mean queued deletions stop
     /// replaying and rows stop being struck through, which costs nothing and is recoverable by
-    /// deleting again. But one consequence is *not* mild, and it is why this flag exists at
-    /// all: with every tombstone unknown, `runCreatePass`'s resume guard is disarmed, so a
-    /// checkpointed record whose DELETE landed in a pass that died before its cleanup ran
-    /// resumes, reads the 404 as "gone", clears its checkpoint, and the next pass **re-POSTs
-    /// the document the user deleted**. That one is not recoverable — it comes back under a
-    /// new id. So a resume is withheld entirely while the tombstones are unknown.
+    /// deleting again. Two consequences are *not* mild (see
+    /// `PendingDocumentDeleteStore.holdsUnreadableData`): with every tombstone unknown,
+    /// `runCreatePass`'s resume guard is disarmed, so a checkpointed record whose DELETE landed
+    /// in a pass that died before its cleanup ran resumes, reads the 404 as "gone", clears its
+    /// checkpoint, and the next pass **re-POSTs the document the user deleted** (which comes
+    /// back under a new id); and `runSyncPass`'s 404/403 and `.discardServerWins` branches
+    /// would mark a tombstoned classic draft `.failed` or conflicted while its deletion is
+    /// unknown. So both paths gate on this flag.
     ///
     /// Read once, which is sound for the same reasons `createStoreUnreadable` is: nothing can
     /// make the blob undecodable mid-process, and the store's own flag is sticky.
@@ -502,9 +505,8 @@ final class DocumentSaveCoordinator {
         // regardless of *which* server minted it — and `runSyncPass` walks
         // `draftStore.allDrafts()`, which is not origin-scoped either. Mirroring only the
         // matching ones left a foreign record's draft with no hold at all: the pass GET
-        // 404ed and **deleted it**, so signing in elsewhere destroyed the content while
-        // leaving the record pointing at nothing. Dormant has to mean *no requests and no
-        // deletion*. Origin decides what is **listed** (below) and, with the owning user,
+        // 404ed and marked it `.failed` while leaving the record pointing at nothing.
+        // Dormant has to mean *no requests and no failure stamp*. Origin decides what is **listed** (below) and, with the owning user,
         // what the replay may **POST** (`isReplayable`) — never whether the content is
         // protected.
         for create in createStore.allCreates() {
@@ -2613,7 +2615,7 @@ final class DocumentSaveCoordinator {
         // An editor can have opened during the await, and migrating under a live screen is
         // exactly what `openEditors` exists to prevent: the screen's `documentID` is a `let`,
         // so it would keep enqueueing under an id the holds no longer cover — and the next
-        // sync pass would 404 and delete that draft. The checkpoint is already persisted, so
+        // sync pass would 404 and mark that draft failed. The checkpoint is already persisted, so
         // bailing out on *this* guard is free: the next pass resumes at migration.
         guard !hasOpenEditor(documentID: record.localID) else { return }
         // The user deleted the document while the POST was in flight. `discardPendingWork`
@@ -2676,7 +2678,7 @@ final class DocumentSaveCoordinator {
     ///
     /// Order is the safety property. The record is removed **last**, because it is what keeps
     /// the holds in force: dropping it first and dying would leave a draft under a dead local
-    /// id that the very next sync pass GETs, 404s, and deletes.
+    /// id that the very next sync pass GETs, 404s, and marks failed.
     private func migrateCreatedDocument(
         _ record: PendingDocumentCreate, serverID: UUID, serverTitle: String?, serverUpdatedAt: Date,
         serverMarkdown: String, document: Document?
@@ -4955,8 +4957,8 @@ final class DocumentSaveCoordinator {
             // checkpointed-but-unmigrated, so Home shows the server document — empty, since
             // the body is enqueued only at migration — and deleting that stray as a duplicate
             // took the live editor's only copy with it. The screen kept rendering a body that
-            // no longer existed on disk, and the next launch's sweep removed what its flush
-            // rewrote.
+            // no longer existed on disk, and the next launch's sweep marked failed what its
+            // flush rewrote.
             //
             // Clear only the checkpoint instead. The record starts over, so the document the
             // user actually has open re-POSTs as a fresh create carrying its body — which is

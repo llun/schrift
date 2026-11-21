@@ -468,8 +468,8 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
         // stops the record stranding. That was wrong in the direction that costs content: a
         // bare 404 is not proof the document is gone, and discharging drops the held
         // keystrokes *and* the checkpoint protecting this draft, after which `runSyncPass` —
-        // next in the same pass, on the same 404 — deletes it. Stranding is recoverable;
-        // deleting the only copy is not.
+        // next in the same pass, on the same 404 — marks it failed under a dead id. Stranding
+        // is recoverable; dropping the conflict hold is not.
         XCTAssertNotNil(
             relaunched.coordinator.conflict(for: serverID),
             "kept — the 404 is not evidence, and the body it holds is the only copy")
@@ -515,7 +515,7 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
     /// user's own work under the server id whose save failed transiently. The take-back
     /// declines by design (a local draft is present, so that body is not ours to move), and
     /// before the start-over was gated, clearing `syncedServerID` disarmed the only thing
-    /// stopping `runSyncPass` — next in the same pass, on the same 404 — from deleting it.
+    /// stopping `runSyncPass` — next in the same pass, on the same 404 — from marking it failed.
     func testASpuriousNotFoundKeepsADraftTheTakeBackDeclinesToMove() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
