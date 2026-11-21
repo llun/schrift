@@ -86,10 +86,10 @@ final class EditorViewModelRevalidationTests: EditorViewModelTestCase {
         XCTAssertNil(viewModel.errorKey)
     }
 
-    func testStaleDraftLosesToNewerServerCopy() async {
-        // Server updated_at beyond draft.updatedAt + 120s tolerance → server
-        // wins, draft removed (preserves today's server-wins rule).
-        let (viewModel, _, draftStore, contentCache) = makeEnvironment()
+    func testStaleDraftAgainstANewerServerCopyIsKeptAndAsks() async {
+        // Server updated_at beyond draft.updatedAt + 120s tolerance: the draft is still the
+        // user's waiting work, so it stays on screen and a conflict asks them.
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
         draftStore.save(
             PendingDraft(
                 documentID: documentID, title: "Old draft", markdown: "# Stale",
@@ -101,10 +101,11 @@ final class EditorViewModelRevalidationTests: EditorViewModelTestCase {
 
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.rawMarkdown, "# Server")
-        XCTAssertNil(draftStore.draft(for: documentID), "stale draft removed")
-        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, "# Server")
-        XCTAssertEqual(viewModel.displaySource, .clean)
+        XCTAssertEqual(viewModel.rawMarkdown, "# Stale")
+        XCTAssertNotNil(draftStore.draft(for: documentID), "the waiting draft is kept")
+        XCTAssertNotNil(coordinator.conflict(for: documentID), "and the user is asked")
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, "# Server", "the server copy is cached")
+        XCTAssertEqual(viewModel.displaySource, .draft)
     }
 
     func testDraftWithinToleranceIsKeptOnScreen() async {
@@ -347,11 +348,10 @@ final class EditorViewModelRevalidationTests: EditorViewModelTestCase {
         XCTAssertTrue(viewModel.hasUnsavedLocalContent)
     }
 
-    /// A draft stranded by an *earlier* session still loses to a meaningfully
-    /// newer server copy — that rule is unchanged, and `saveState` is `.idle`
-    /// because no save was attempted this session.
-    func testStrandedDraftStillLosesToANewerServerCopyOnRefresh() async {
-        let (viewModel, _, draftStore, _) = makeEnvironment()
+    /// A draft stranded by an *earlier* session is not dropped for a meaningfully newer
+    /// server copy either: it stays on screen and the user is asked.
+    func testStrandedDraftAgainstANewerServerCopyIsKeptAndAsks() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
         draftStore.save(
             PendingDraft(
                 documentID: documentID, title: "Old draft", markdown: "# Stale",
@@ -359,9 +359,10 @@ final class EditorViewModelRevalidationTests: EditorViewModelTestCase {
         stubLoad(content: "# Server")
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.rawMarkdown, "# Server", "server wins beyond the clock tolerance")
-        XCTAssertEqual(viewModel.displaySource, .clean)
-        XCTAssertNil(draftStore.draft(for: documentID), "stale draft discarded")
+        XCTAssertEqual(viewModel.rawMarkdown, "# Stale", "the waiting draft stays on screen")
+        XCTAssertEqual(viewModel.displaySource, .draft)
+        XCTAssertNotNil(draftStore.draft(for: documentID), "the waiting draft is kept")
+        XCTAssertNotNil(coordinator.conflict(for: documentID), "and the user is asked")
     }
 
     /// `becomeUnavailable` tears the screen down but deliberately keeps the draft
@@ -447,7 +448,8 @@ final class EditorViewModelRevalidationTests: EditorViewModelTestCase {
     /// `flushPendingChanges` needs `isDirty`, `saveNow` needs `.failed`, the retry
     /// caption needs `.failed`, and `recoverDrafts` already ran. The edit would sit
     /// there labelled "Edited just now" until a co-author's write pushed the server
-    /// past the clock tolerance — and then `reconcileDraft` would silently delete it.
+    /// past the clock tolerance — and then `reconcileDraft` would flag a stale conflict
+    /// instead of pushing it.
     /// The document is back, so the draft goes back into the pipeline.
     func testRecoveredDraftIsHandedBackToTheSavePipeline() async {
         let log = RequestRecorder()

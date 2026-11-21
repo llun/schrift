@@ -541,8 +541,8 @@ final class EditorViewModel {
     /// editor's fetch gates open, `GET documents/{dead-local-id}/…` 404s, and
     /// `becomeUnavailable` reports "no longer available" for a document that just synced and
     /// is sitting in Home. Anything typed after the return is flushed into an `enqueue` for
-    /// that dead id, which no hold covers — it PATCHes, 404s, lands `.failed`, and the next
-    /// launch's sweep removes the draft. Those keystrokes are gone.
+    /// that dead id, which no hold covers — it PATCHes, 404s, lands `.failed`, and the draft
+    /// is stranded under that dead id instead of the migrated document.
     ///
     /// So the hold is owned by a token released in `deinit`, which is the closest thing to
     /// "the screen is actually gone": the view model is `@State`-owned, so it is deallocated
@@ -676,8 +676,8 @@ final class EditorViewModel {
             serverBaseline = saveCoordinator.storedDraft(documentID: documentID)?.baseline
             displaySource = .pendingSave
         } else if let draft = saveCoordinator.storedDraft(documentID: documentID), draft.replica == nil {
-            // New: shown before any fetch (fixes drafts being unreachable
-            // offline). The server-wins staleness rule runs at revalidation.
+            // Shown before any fetch, so a draft is reachable offline. Revalidation decides
+            // whether it pushes or asks (a conflict); it never discards it.
             install(markdown: draft.markdown, title: draft.title, syncedAt: nil)
             serverBaseline = draft.baseline
             displaySource = .draft
@@ -1157,7 +1157,7 @@ final class EditorViewModel {
             // postdates it. `.draft` means the draft is gone but nothing reset the
             // source — a save cleared it (the marker is per-fetch, so a fetch
             // issued *after* that save reads a fresh count and arrives here),
-            // `recoverDrafts` discarded it, or the document was deleted. Either way
+            // `resolveConflictKeepingServer` discarded it, or the document was deleted. Either way
             // nothing local is left to protect, so the screen holds an ordinary
             // clean copy. Leaving the source pinned would strand it forever: every
             // later revalidation *and* every pull-to-refresh would no-op in silence.
@@ -1180,16 +1180,14 @@ final class EditorViewModel {
         displaySource = saveCoordinator.storedDraft(documentID: documentID) != nil ? .draft : .clean
     }
 
-    /// An unsaved draft owns the screen. It only loses to a server copy written
-    /// meaningfully later than the draft itself — never to the user's own
-    /// refresh, because the draft is work that hasn't reached the server yet.
+    /// An unsaved draft owns the screen: it is never overwritten or discarded
+    /// automatically by a revalidation or refresh. When the server has moved on,
+    /// the draft stays on screen and a conflict asks the user to choose.
     private func reconcileDraft(
         _ formatted: FormattedDocumentContent, draft: PendingDraft, leafNesting: LeafNestingOverlay
     ) {
         // The on-screen content is the draft, so it descends from the draft's own
-        // recorded baseline. The server-wins install below routes through
-        // `installFetched`, which overrides this with the server state it actually
-        // put on screen.
+        // recorded baseline.
         serverBaseline = draft.baseline
         // Nothing is on screen: `becomeUnavailable` tore it down, and its own
         // write-ahead flush is what wrote this draft. The draft is the user's only
@@ -1204,11 +1202,8 @@ final class EditorViewModel {
         // A save that failed or is queued for sync *this session* leaves a draft the
         // user is looking at — the "Couldn't save" retry (`.failed`) or "syncs when
         // online" caption (`.pendingSync`) is on screen, and the draft is their only
-        // copy of that edit. The clock-tolerance rule below is for drafts stranded by
-        // an *earlier* session (`recoverDrafts`' job); applying it to either of these
-        // silently deletes visible content — the exact mirror of the `.pendingSync`
-        // preservation guard in `syncPendingDrafts`, and the reason a pull-to-refresh
-        // must not discard a queued offline edit. The comparison mixes clocks —
+        // copy of that edit. Don't re-enqueue it behind that affordance; only detect
+        // conflicts and adopt a remote rename. The comparison mixes clocks —
         // `draft.updatedAt` is the device's, `formatted.updatedAt` the server's *last
         // write* — so a device running slow shrinks the window from the draft's side,
         // and even the user's own partially-landed save (content PATCH applied, title
@@ -1322,30 +1317,12 @@ final class EditorViewModel {
             saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
             cacheServerCopy(formatted, leafNesting: leafNesting)
         case .discardServerWins:
-            // **Never discard a draft the user is being asked about.** `runSyncPass` refuses to
-            // touch a draft under a recorded conflict; this path had no such guard, and the
-            // save *state* does not survive a relaunch even though the conflict now does — so a
-            // legacy draft whose conflict was rehydrated came back as `.idle`, skipped the
-            // `.failed`/`.pendingSync` branch above, fell to rule 3, and had the very work the
-            // pill was asking about **deleted from under the question**. Keep it and re-record:
-            // the conflict is exactly what `runSyncPass` records for this state.
-            if saveCoordinator.conflict(for: documentID) != nil {
-                saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
-                cacheServerCopy(formatted, leafNesting: leafNesting)
-                return
-            }
-            // Legacy (baseline-less) stranded draft the server has moved past — server
-            // wins, and the draft goes. `discardStoredDraft` re-checks identity; install
-            // only on success. Installing over a surviving draft would leave unsaved work
-            // on disk that isn't on screen — the state every rule here exists to prevent.
-            saveCoordinator.discardStoredDraft(draft)
-            guard saveCoordinator.storedDraft(documentID: documentID) == nil else {
-                cacheServerCopy(formatted, leafNesting: leafNesting)
-                return
-            }
-            // The local work is gone, so no conflict record may outlive it (the lifecycle rule).
-            saveCoordinator.clearResolvedConflict(documentID: documentID)
-            installFetched(formatted, leafNesting: leafNesting)
+            // A legacy (baseline-less) draft the server has moved past is still the user's
+            // waiting work: it is never discarded automatically. Ask, exactly as `runSyncPass`
+            // does for this state — keep the draft on screen, record the conflict, and let the
+            // user choose Keep mine / Keep the server version.
+            saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
+            cacheServerCopy(formatted, leafNesting: leafNesting)
         }
     }
 
@@ -1640,7 +1617,7 @@ final class EditorViewModel {
     /// `leafNesting` is the overlay's verdict on that body: a flat read the block tree could not
     /// vouch for (`.unknown`) keeps a cached copy that nests leaves when it is the same content
     /// (`serverCopyKeepingLeafNesting`), exactly as revalidation's `reconcileClean` and
-    /// `cacheServerCopy` do — otherwise "Keep the server version" (or a legacy draft's discard)
+    /// `cacheServerCopy` do — otherwise "Keep the server version"
     /// after a failed tree read overwrote the nested cached copy with the flat export.
     private func installFetched(_ formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
         let now = Date()
@@ -1699,10 +1676,9 @@ final class EditorViewModel {
         // comes back under that id (a remote reintroduction) cannot reclaim a row another
         // block inherited. Resetting it now would rebind a surviving `UITextView` to a
         // different surviving block. Fresh ids never collide with any entry.
-        // The swap can still land mid-edit (`reconcileDraft`'s server-wins install), and the
-        // focused block may be one that changed or went away, so any caret state is cleared
-        // exactly as before: one funnel every content swap routes through makes a dangling
-        // caret unrepresentable.
+        // Every content swap (initial load, clean revalidation, explicit "Keep the server
+        // version") routes through here, and the focused block may be one that changed or went
+        // away, so clearing caret state here makes a dangling caret unrepresentable.
         focusedBlockID = nil
         cursorRequest = nil
         selection = nil
@@ -1786,12 +1762,11 @@ final class EditorViewModel {
 
     private func noteDocumentDeleted(_ documentID: UUID) {
         // **This screen's own document.** The revive is the one completion that runs with an
-        // editor open (deferring it would let the sync pass reap the draft instead), so this
-        // screen can be left live on an id the server no longer has — where a keystroke would
-        // write a fresh draft under it, PATCH into a 404, and have that draft reaped by the
-        // *next launch's* pass, when the in-memory `.failed` state that protected it is gone.
-        // Ending the session here is what stops those edits being written somewhere that can
-        // only lose them; the body as of the undo is already safe in the revived document.
+        // editor open (deferring it would leave the draft stranded and failing under the dead
+        // id), so this screen can be left live on an id the server no longer has — where a
+        // keystroke would write a fresh draft under it and PATCH into a 404. Ending the
+        // session here stops new edits being written under a dead id that can never sync; the
+        // body as of the undo is already safe in the revived document.
         guard documentID != self.documentID else {
             handleDeletionLanded()
             return

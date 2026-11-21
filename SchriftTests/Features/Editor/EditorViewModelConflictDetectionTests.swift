@@ -311,8 +311,8 @@ final class EditorViewModelConflictDetectionTests: EditorViewModelTestCase {
     /// **The relaunch case, end to end in the editor.** The conflict now persists but the save
     /// *state* does not — so a legacy (baseline-less) draft comes back as `.idle`, skips the
     /// `.failed`/`.pendingSync` branch, and falls to rule 3, which for a server past the
-    /// tolerance window answers `.discardServerWins`. Without the guard, `reconcileDraft` hands
-    /// it to `discardStoredDraft` and **deletes the very work the pill is asking about**.
+    /// tolerance window answers `.discardServerWins`. `reconcileDraft` must keep the draft and
+    /// the conflict rather than delete the very work the pill is asking about.
     func testAfterARelaunchAStaleLegacyDraftUnderAConflictIsNotDeleted() async {
         let log = RequestRecorder()
         let suiteName = "EditorViewModelTests.\(UUID().uuidString)"

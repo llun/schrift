@@ -759,13 +759,13 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
 
     /// The migration writes the body under `serverID` before removing the local draft, so a
     /// death in that window leaves it as the **only copy** — and `isPendingCreate` is keyed on
-    /// the *local* id, so `runSyncPass`'s 404/403 sweep does not see it as protected. The
+    /// the *local* id, so `runSyncPass`'s 404/403 catch does not see it as protected. The
     /// `.notFound` start-over rescues it by moving it back; a `.forbidden` resume has no such
     /// branch and would land here, as would any pass where the record simply is not replayable
     /// this session (a foreign origin, another account, a failing `/users/me/`, an open
-    /// editor — not a build block, which cannot coexist with a checkpoint). Deleting it makes
-    /// the later migration build an empty document.
-    func testTheSweepNeverDeletesTheOnlyCopyUnderACheckpointedServerID() async {
+    /// editor — not a build block, which cannot coexist with a checkpoint). Skipping keeps it
+    /// from being stamped `.failed` as a missing server document.
+    func testSyncPassNeverMarksCheckpointedServerIDDraftFailed() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(
@@ -787,7 +787,10 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
 
         XCTAssertEqual(
             relaunched.drafts.draft(for: serverID)?.markdown, "# The only copy",
-            "the sweep must not delete the body of a checkpointed record")
+            "the pass must keep the body of a checkpointed record untouched")
+        XCTAssertEqual(
+            relaunched.coordinator.state(for: serverID), .idle,
+            "and must skip without marking a checkpointed record's draft failed")
     }
 
     /// A rename made **on this device, under the server id** must survive the migration.
@@ -821,11 +824,11 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             "the server's rename is kept — the local side only ever held the mint title")
     }
 
-    /// The `.discardServerWins` deleting line's own server-id guard. Rule 3 needs a nil
-    /// baseline, which no production writer produces under a server id — but the guard states
-    /// the invariant at the deleting line rather than resting on that, exactly as its twin in
-    /// the 404/403 catch does.
-    func testTheLaunchDiscardNeverDeletesACheckpointedServerIDDraft() async {
+    /// The `.discardServerWins` branch's own server-id guard. Rule 3 needs a nil baseline,
+    /// which no production writer produces under a server id — but the guard states the
+    /// invariant directly so a checkpointed record's draft is never stamped with a conflict,
+    /// matching its twin in the 404/403 catch.
+    func testSyncPassNeverRecordsConflictOnCheckpointedServerIDDraft() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(
@@ -862,7 +865,11 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
 
         XCTAssertEqual(
             relaunched.drafts.draft(for: serverID)?.markdown, "# The only copy",
-            "the launch discard must not delete a checkpointed record's only copy")
+            "the pass must keep a checkpointed record's only copy untouched")
+        XCTAssertNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "and must skip without stamping a conflict onto a checkpointed record")
+        XCTAssertEqual(relaunched.coordinator.state(for: serverID), .idle)
     }
 
     /// **Both sides renamed.** A rename made *before* the POST is already the server's name,

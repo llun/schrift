@@ -69,11 +69,11 @@ final class EditorViewModelSubpagesTests: EditorViewModelTestCase {
         XCTAssertFalse(viewModel.isDirty)
     }
 
-    /// The revive is the one completion that runs with an editor open — deferring it would let
-    /// the sync pass reap the draft instead — so this screen can be left live on an id the
-    /// server no longer has. A keystroke there would write a fresh draft under the dead id and
-    /// have it reaped by the *next launch's* pass, when the in-memory `.failed` that protected
-    /// it is gone. Ending the session is what stops those edits going somewhere that loses them.
+    /// The revive is the one completion that runs with an editor open — deferring it would
+    /// leave the draft stranded and failing under the dead id — so this screen can be left
+    /// live on an id the server no longer has. A keystroke there would write a fresh draft
+    /// under that dead id and PATCH into a 404. Ending the session stops new edits being
+    /// written somewhere that can never sync.
     func testALandedDeletionOfThisDocumentEndsTheSession() async {
         let env = makeEnvironment()
         stubLoadAndSavePipeline(content: "# Server", log: RequestRecorder())
