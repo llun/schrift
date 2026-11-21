@@ -834,11 +834,9 @@ final class ColumnTextContainer: UIScrollView {
         let anchor = olds.firstIndex { $0?.intersects(before) == true }
         if layout == .stacked, let index = anchor, let old = olds[index], old.width == bounds.width {
             let shift = rects[index].minY - old.minY
-            if abs(shift) > 0.5 {
-                let lowest = -adjustedContentInset.top
-                let highest = max(lowest, size.height - bounds.height + adjustedContentInset.bottom)
-                contentOffset.y = min(max(contentOffset.y + shift, lowest), highest)
-            }
+            // No upper clamp: a column's own height is still an estimate here,
+            // so the content can end above a caret TextKit already placed.
+            if abs(shift) > 0.5 { contentOffset.y = max(contentOffset.y + shift, -adjustedContentInset.top) }
         }
         let visible = CGRect(x: 0, y: contentOffset.y, width: bounds.width, height: bounds.height)
         placing = true
