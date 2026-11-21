@@ -363,8 +363,11 @@ struct EditorView: View {
             if case .native(let session) = nativeOpen.route {
                 session.input?.refreshInlinePicker()
             }
-            if case .waitingClassicEdits = nativeOpen.route {
+            switch nativeOpen.route {
+            case .loading, .waitingClassicEdits:
                 nativeOpen.handleConnectivityChange(viewModel: viewModel, isOffline: offline)
+            case .classic, .native, .preservedUnavailable, .unavailable:
+                break
             }
             guard !offline else { return }
             nativeOpen.refreshInBackground(viewModel: viewModel, isOffline: showsOffline)

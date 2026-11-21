@@ -1142,7 +1142,8 @@ final class NativeEditorOpen {
     /// `canUpdate` is the document's `abilities.update`; missing metadata
     /// fails closed to the read-only view.
     func open(
-        viewModel: EditorViewModel, isOffline: Bool, canUpdate: Bool = false, canMention: Bool = false
+        viewModel: EditorViewModel, isOffline: Bool, canUpdate: Bool = false, canMention: Bool = false,
+        allowCachedClassicFallback: Bool = true
     ) async {
         // A repeated call while visible must not swap a focused editor. Close
         // establishes the next safe open or reopen boundary.
@@ -1170,10 +1171,17 @@ final class NativeEditorOpen {
         pendingOpen?.finish()
         generation += 1
         let request = generation
+        let initialAvailabilityOffline = viewModel.availability.isOffline
         if let closing {
             await closing.value
             guard generation == request, !Task.isCancelled else { return }
         }
+        // Re-read connectivity after awaiting `closing` so a reconnect while `.loading`
+        // updates `lastIsOffline`, starts waiting-classic drain, and feeds later reopens.
+        if lastIsOffline == isOffline, viewModel.availability.isOffline != initialAvailabilityOffline {
+            lastIsOffline = viewModel.availability.isOffline
+        }
+        let isOffline = lastIsOffline
         // The account this open acts for, rechecked after every await with the
         // generation: a sign-out or account switch while a fetch is pending must
         // never seed, show or integrate into another account's replica.
@@ -1275,7 +1283,9 @@ final class NativeEditorOpen {
             // Offline or unreachable with nothing on this device is the one
             // pending-work gate the native surface answers itself: there is no
             // cached copy to read, so it says so and offers Retry.
-            if offlineNeverOpened(viewModel, isOffline: isOffline) {
+            if offlineNeverOpened(
+                viewModel, isOffline: isOffline, allowCachedClassicFallback: allowCachedClassicFallback)
+            {
                 showUnavailable(.offlineNeverOpened, viewModel: viewModel)
             } else {
                 viewModel.setOpenEditorWritable(true)
@@ -1356,7 +1366,9 @@ final class NativeEditorOpen {
         let next = await iterator.next()
         guard !Task.isCancelled, generation == request else { return }
         guard let result = next else {
-            settleWithoutAnswer(request: request, viewModel: viewModel, account: account, isOffline: isOffline)
+            settleWithoutAnswer(
+                request: request, viewModel: viewModel, account: account, isOffline: isOffline,
+                allowCachedClassicFallback: allowCachedClassicFallback)
             return
         }
         switch result {
@@ -1365,7 +1377,9 @@ final class NativeEditorOpen {
             // leaves the route to the newer open; it never selects classic.
             guard isCurrent(request: request, viewModel: viewModel, account: account) else { return }
             guard !availabilityMoved(viewModel, isOffline: isOffline) else {
-                settleWithoutAnswer(request: request, viewModel: viewModel, account: account, isOffline: isOffline)
+                settleWithoutAnswer(
+                    request: request, viewModel: viewModel, account: account, isOffline: isOffline,
+                    allowCachedClassicFallback: allowCachedClassicFallback)
                 return
             }
             // Pending local work arrived while the fetch was in flight.
@@ -1394,7 +1408,9 @@ final class NativeEditorOpen {
             // arrived after availability moved is settled from the device.
             guard isCurrent(request: request, viewModel: viewModel, account: account) else { return }
             guard !availabilityMoved(viewModel, isOffline: isOffline) else {
-                settleWithoutAnswer(request: request, viewModel: viewModel, account: account, isOffline: isOffline)
+                settleWithoutAnswer(
+                    request: request, viewModel: viewModel, account: account, isOffline: isOffline,
+                    allowCachedClassicFallback: allowCachedClassicFallback)
                 return
             }
             showUnavailable(reason, viewModel: viewModel)
@@ -1565,6 +1581,14 @@ final class NativeEditorOpen {
         }
         viewModel.advanceNativeBaselineAfterConflict(serverUpdatedAt: conflict.serverUpdatedAt)
         coordinator.resolveConflictKeepingLocal(documentID: documentID)
+        // A classic draft parked behind a queued photo stays held after clearing the conflict
+        // until the shared pass uploads and rewrites the placeholder.
+        if case .waitingClassicEdits = route,
+            !lastIsOffline, !viewModel.availability.showsOfflineStatus,
+            !viewModel.isWaitingClassicFailed, viewModel.visibleNativeSyncConflict == nil
+        {
+            startWaitingClassicDrain(viewModel: viewModel, request: generation)
+        }
     }
 
     /// Native "Keep the server version" conflict resolution: fetches the authoritative server state
@@ -1658,7 +1682,8 @@ final class NativeEditorOpen {
                 await open(viewModel: viewModel, isOffline: isOffline, canUpdate: canUpdate, canMention: canMention)
                 return
             }
-            if let resolvedState, let account = viewModel.signedInUser.userID {
+            if let resolvedState {
+                let account = viewModel.signedInUser.userID
                 viewModel.applyResolvedServerMetadataForNative(
                     formatted: formatted, leafNesting: leafNesting, installClassicFallback: false)
                 isOpen = true
@@ -2042,13 +2067,18 @@ final class NativeEditorOpen {
     /// on, so decide again from what is on the device rather than leave the spinner up:
     /// nothing cached → "Go online"; a cached classic copy or pending work → classic;
     /// otherwise the retryable error.
-    private func settleWithoutAnswer(request: Int, viewModel: EditorViewModel, account: UUID?, isOffline: Bool) {
+    private func settleWithoutAnswer(
+        request: Int, viewModel: EditorViewModel, account: UUID?, isOffline: Bool,
+        allowCachedClassicFallback: Bool = true
+    ) {
         guard isCurrent(request: request, viewModel: viewModel, account: account), case .loading = route else {
             return
         }
         if hasWaitingClassicEdits(viewModel) {
             showWaitingClassicEdits(viewModel: viewModel, isOffline: isOffline, request: request)
-        } else if offlineNeverOpened(viewModel, isOffline: isOffline) {
+        } else if offlineNeverOpened(
+            viewModel, isOffline: isOffline, allowCachedClassicFallback: allowCachedClassicFallback)
+        {
             showUnavailable(.offlineNeverOpened, viewModel: viewModel)
         } else if !canOpen(viewModel, isOffline: isOffline) {
             viewModel.setOpenEditorWritable(true)
@@ -2131,7 +2161,9 @@ final class NativeEditorOpen {
             return
         }
         close()
-        await open(viewModel: viewModel, isOffline: isOffline, canUpdate: canUpdate, canMention: canMention)
+        await open(
+            viewModel: viewModel, isOffline: isOffline, canUpdate: canUpdate, canMention: canMention,
+            allowCachedClassicFallback: false)
     }
 
     private func startWaitingClassicDrain(viewModel: EditorViewModel, request: Int) {
@@ -2204,18 +2236,20 @@ final class NativeEditorOpen {
     private func canOpenIgnoringConnectivity(_ viewModel: EditorViewModel) -> Bool {
         enabled && !viewModel.isLocalDocument
             && !viewModel.isDocumentPendingDelete
-            && !viewModel.saveCoordinator.hasCheckpointedCreate(forServerID: viewModel.documentID)
+            && !viewModel.saveCoordinator.hasOwnedCheckpointedCreate(forServerID: viewModel.documentID)
             && !viewModel.isEditing && !viewModel.hasUnsavedLocalContent
             && viewModel.saveCoordinator.storedDraft(documentID: viewModel.documentID) == nil
             && viewModel.saveCoordinator.pendingSave(documentID: viewModel.documentID) == nil
     }
 
-    /// Offline or unreachable, with no replica and no cached copy: the one
-    /// pending-work gate the native surface answers itself.
-    private func offlineNeverOpened(_ viewModel: EditorViewModel, isOffline: Bool) -> Bool {
+    /// Offline or unreachable, with no replica and no cached copy (or post-Discard, where a
+    /// cached classic copy must not reopen the classic editor while the native switch is on).
+    private func offlineNeverOpened(
+        _ viewModel: EditorViewModel, isOffline: Bool, allowCachedClassicFallback: Bool = true
+    ) -> Bool {
         canOpenIgnoringConnectivity(viewModel)
             && (isOffline || viewModel.availability.showsOfflineStatus)
-            && viewModel.contentCache.content(for: viewModel.documentID) == nil
+            && (!allowCachedClassicFallback || viewModel.contentCache.content(for: viewModel.documentID) == nil)
     }
 
     /// The native surface owns the route with no document to show.

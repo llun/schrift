@@ -1146,68 +1146,69 @@ struct WaitingClassicEditsNotice: View {
     var body: some View {
         switch state {
         case .waitingOffline:
-            HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
-                MaterialSymbol(.sync, size: 15, relativeTo: .footnote)
-                Text(loc[.native_editor_waiting_classic_offline])
-                    .font(DocsFont.footnote)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .foregroundStyle(theme.colors.textSecondary)
-            .padding(.horizontal, DocsSpacing.spaceSM)
-            .padding(.vertical, DocsSpacing.spaceXS)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(theme.colors.gray050, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("nativeEditor.waitingClassicNotice")
-        case .syncing:
-            HStack(alignment: .center, spacing: DocsSpacing.spaceXS) {
-                ProgressView()
-                    .controlSize(.small)
-                Text(loc[.native_editor_waiting_classic_syncing])
-                    .font(DocsFont.footnote)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .foregroundStyle(theme.colors.textSecondary)
-            .padding(.horizontal, DocsSpacing.spaceSM)
-            .padding(.vertical, DocsSpacing.spaceXS)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(theme.colors.gray050, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("nativeEditor.waitingClassicNotice")
-        case .failed:
-            VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            noticeCard(accessibilityChildren: .combine) {
                 HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
-                    MaterialSymbol(.error, size: 15, relativeTo: .footnote)
-                        .foregroundStyle(theme.colors.danger)
-                    Text(loc[.native_editor_waiting_classic_failed])
+                    MaterialSymbol(.sync, size: 15, relativeTo: .footnote)
+                    Text(loc[.native_editor_waiting_classic_offline])
                         .font(DocsFont.footnote)
-                        .foregroundStyle(theme.colors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: DocsSpacing.spaceXS) {
-                        failedActionButtons
+                .foregroundStyle(theme.colors.textSecondary)
+            }
+        case .syncing:
+            noticeCard(accessibilityChildren: .combine) {
+                HStack(alignment: .center, spacing: DocsSpacing.spaceXS) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(loc[.native_editor_waiting_classic_syncing])
+                        .font(DocsFont.footnote)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(theme.colors.textSecondary)
+            }
+        case .failed:
+            noticeCard(accessibilityChildren: .contain) {
+                VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+                    HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
+                        MaterialSymbol(.error, size: 15, relativeTo: .footnote)
+                            .foregroundStyle(theme.colors.danger)
+                        Text(loc[.native_editor_waiting_classic_failed])
+                            .font(DocsFont.footnote)
+                            .foregroundStyle(theme.colors.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
-                        failedActionButtons
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: DocsSpacing.spaceXS) {
+                            failedActionButtons
+                        }
+                        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+                            failedActionButtons
+                        }
                     }
                 }
             }
-            .padding(.horizontal, DocsSpacing.spaceSM)
-            .padding(.vertical, DocsSpacing.spaceXS)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(theme.colors.gray050, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("nativeEditor.waitingClassicNotice")
         case .hidden:
             EmptyView()
         }
     }
 
+    private func noticeCard<Content: View>(
+        accessibilityChildren: AccessibilityChildBehavior,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .padding(.horizontal, DocsSpacing.spaceSM)
+            .padding(.vertical, DocsSpacing.spaceXS)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.colors.gray050, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
+            .accessibilityElement(children: accessibilityChildren)
+            .accessibilityIdentifier("nativeEditor.waitingClassicNotice")
+    }
+
     @ViewBuilder
     private var failedActionButtons: some View {
         DocsButton(
-            title: loc[.common_retry], variant: .secondary, color: .brand, size: .small, action: onRetry
+            title: loc[.common_retry], variant: .primary, color: .brand, size: .small, action: onRetry
         )
         .accessibilityIdentifier("nativeEditor.waitingClassic.retry")
         DocsButton(

@@ -840,7 +840,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
     func testOpeningCheckpointedServerIDDoesNotSeedClearOrOwnReplica() async throws {
         // 1. Path A: serverID has no ownership yet, create is checkpointed -> must not seed or own.
         do {
-            let env = makeEnvironment()
+            let env = makeEnvironment(serverOrigin: "https://docs.example.org")
             defer { env.clean() }
             let server = ServerStub(owner: owner, state: seedState())
             server.install()
@@ -861,6 +861,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                     createStore: PendingDocumentCreateStore(userDefaults: env.defaults),
                     deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
                     listCache: env.model.listCache,
+                    serverOrigin: env.model.client.serverOrigin,
                     backgroundTasks: .noop),
                 signedInUser: env.model.signedInUser,
                 contentCache: env.model.contentCache,

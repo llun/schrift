@@ -173,7 +173,10 @@ final class DocumentSaveCoordinator {
     /// Callers that need to know when the current (and any coalesced) sync pass has
     /// finished (`retryClassicDraft` / waiting-edits drain), without changing
     /// `syncPendingDrafts()`'s immediate coalesced return for existing triggers.
-    @ObservationIgnored private var syncPassWaiters: [CheckedContinuation<Void, Never>] = []
+    @ObservationIgnored private var syncPassWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    /// Coordinator-owned task running `syncPendingDrafts()` for callers that trigger the
+    /// shared pass without owning its cancellation (`syncPendingDraftsAndAwaitCompletion`).
+    @ObservationIgnored private var sharedSyncPassTask: Task<Void, Never>?
     /// Bumped on every `draftStore` mutation so SwiftUI views and `NativeEditorOpen`
     /// observe UserDefaults-backed draft changes live.
     private(set) var draftsVersion = 0
@@ -2212,6 +2215,25 @@ final class DocumentSaveCoordinator {
         checkpointedRecord(forServerID: documentID) != nil
     }
 
+    /// A checkpointed record owned by the currently signed-in account on `client.serverOrigin`.
+    /// Unlike `checkpointedRecord(forServerID:)` (which fails closed when `signedInUser.userID`
+    /// is nil to block writes), display, retry and discard require a known matching owner so
+    /// another account's waiting edits are never shown, copied, retried or discarded.
+    private func ownedCheckpointedRecord(forServerID documentID: UUID) -> PendingDocumentCreate? {
+        guard let currentUserID = signedInUser.userID else { return nil }
+        return pendingCreates.values.first {
+            $0.syncedServerID == documentID
+                && $0.serverOrigin == client.serverOrigin
+                && $0.ownerUserID == currentUserID
+        }
+    }
+
+    /// Whether `documentID` has a checkpointed local create owned by the currently signed-in
+    /// account on `client.serverOrigin`.
+    func hasOwnedCheckpointedCreate(forServerID documentID: UUID) -> Bool {
+        ownedCheckpointedRecord(forServerID: documentID) != nil
+    }
+
     // MARK: - Create replay
 
     /// POST the documents this device created, then hand their content to the ordinary draft
@@ -3851,7 +3873,7 @@ final class DocumentSaveCoordinator {
         isSyncingDrafts = true
         defer {
             isSyncingDrafts = false
-            let waiters = syncPassWaiters
+            let waiters = Array(syncPassWaiters.values)
             syncPassWaiters.removeAll()
             for waiter in waiters { waiter.resume() }
         }
@@ -4620,8 +4642,9 @@ final class DocumentSaveCoordinator {
                 // via Retry or Discard.
                 markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
             } catch {
-                // Leave the draft for a later sync (e.g. offline right now).
-                if let error = error as? DocsAPIError, retryableSaveFailure(error) {
+                // Leave the draft for a later sync (e.g. offline, expired session, missing route,
+                // or cancellation).
+                if isDeferredReplayFailure(error) {
                     if draft.replica != nil {
                         states[draft.documentID] = .pendingSync
                     }
@@ -4642,6 +4665,16 @@ final class DocumentSaveCoordinator {
                 }
             }
         }
+    }
+
+    /// Errors during a background sync pass that leave the draft waiting for a later pass rather
+    /// than marking it `.failed`: transient transport/5xx/rate-limit failures, `.sessionExpired`
+    /// (the shared client already raised re-login), `.routeNotFound` (a server-route failure, not
+    /// a refusal of this document), and `CancellationError`.
+    private func isDeferredReplayFailure(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        guard let docsError = error as? DocsAPIError else { return false }
+        return retryableSaveFailure(docsError) || docsError == .sessionExpired || docsError == .routeNotFound
     }
 
     /// Record a conflict the editor's own revalidation (`reconcileDraft`, or `apply`'s dirty
@@ -4963,7 +4996,7 @@ final class DocumentSaveCoordinator {
             return WaitingClassicContent(
                 title: draft.title, markdown: draft.markdown, attachmentOwnerID: documentID)
         }
-        if let checkpointed = checkpointedRecord(forServerID: documentID) {
+        if let checkpointed = ownedCheckpointedRecord(forServerID: documentID) {
             if let pending = pendingSave(documentID: checkpointed.localID) {
                 return WaitingClassicContent(
                     title: pending.title, markdown: pending.markdown, attachmentOwnerID: checkpointed.localID)
@@ -5000,7 +5033,7 @@ final class DocumentSaveCoordinator {
         _ = pendingCreatesVersion
         _ = pendingAttachmentsVersion
         if case .failed = state(for: documentID) { return true }
-        let checkpointed = checkpointedRecord(forServerID: documentID)
+        let checkpointed = ownedCheckpointedRecord(forServerID: documentID)
         if let checkpointed, case .failed = state(for: checkpointed.localID) { return true }
         let owner = signedInUser.userID
         return pendingAttachments.values.contains { record in
@@ -5010,17 +5043,30 @@ final class DocumentSaveCoordinator {
         }
     }
 
-    /// Runs `syncPendingDrafts()` and awaits the completion of the active pass (including a
-    /// coalesced pass if one was already running).
+    /// Starts or coalesces the app-wide sync pass in a coordinator-owned task and awaits its
+    /// completion. Cancelling the caller stops waiting without cancelling the shared pass or
+    /// other documents' in-flight requests.
     func syncPendingDraftsAndAwaitCompletion() async {
         if isSyncingDrafts {
             needsAnotherSyncPass = true
-            await withCheckedContinuation { continuation in
-                syncPassWaiters.append(continuation)
+        } else if sharedSyncPassTask == nil {
+            sharedSyncPassTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.sharedSyncPassTask = nil }
+                await self.syncPendingDrafts()
             }
-            return
         }
-        await syncPendingDrafts()
+        guard !Task.isCancelled else { return }
+        let waiterID = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                syncPassWaiters[waiterID] = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.syncPassWaiters.removeValue(forKey: waiterID)?.resume()
+            }
+        }
     }
 
     /// Manual retry for waiting classic edits: clears terminal `.failed` state (including
@@ -5030,7 +5076,7 @@ final class DocumentSaveCoordinator {
     func retryClassicDraft(documentID: UUID) async {
         guard inFlight[documentID] == nil else { return }
         guard hasWaitingClassicWork(documentID: documentID) else { return }
-        let checkpointed = checkpointedRecord(forServerID: documentID)
+        let checkpointed = ownedCheckpointedRecord(forServerID: documentID)
         clearFailure(documentID)
         states[documentID] = .saving
         if let checkpointed, case .failed = state(for: checkpointed.localID) {
@@ -5053,13 +5099,19 @@ final class DocumentSaveCoordinator {
 
     /// Discards unsynced classic edits for a server document (draft, queued save, classic
     /// pending attachments, failure state, conflict, and any non-open checkpointed create)
-    /// without deleting the server document itself. Refuses if native owns the document or a
-    /// save is currently in flight.
+    /// without deleting the server document itself. Refuses if native owns the document, a
+    /// save is currently in flight, or an unowned checkpointed create targets this server id.
     @discardableResult
     func discardClassicDraft(documentID: UUID) -> Bool {
         guard nativeOwnership(documentID: documentID) == .none else { return false }
         guard inFlight[documentID] == nil else { return false }
-        if let checkpointed = checkpointedRecord(forServerID: documentID) {
+        let ownedCheckpointed = ownedCheckpointedRecord(forServerID: documentID)
+        let hasUnownedCheckpointed = pendingCreates.values.contains { record in
+            record.syncedServerID == documentID && record.localID != ownedCheckpointed?.localID
+        }
+        guard !hasUnownedCheckpointed else { return false }
+        guard hasWaitingClassicWork(documentID: documentID) else { return false }
+        if let checkpointed = ownedCheckpointed {
             if hasOpenEditor(documentID: checkpointed.localID) {
                 var restarted = checkpointed
                 restarted.syncedServerID = nil
