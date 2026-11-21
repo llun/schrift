@@ -16,11 +16,15 @@ by construction). See the Safety section in [`AGENTS.md`](../AGENTS.md).
 
 ## What runs on every PR and every push to `main`
 
-`pr-checks.yml` builds once and tests in parallel on the `xcode-27` runner image (GitHub's
-Xcode 27 image on macOS 27, arm64; `testflight.yml` uses the same label).
-`macos-latest` only carries Xcode 26, and App Store Connect requires the iOS 27
-SDK for uploads from April 2027 (ITMS-90725). When the next major Xcode is
-required, move both workflows to its `xcode-NN` label together. It runs on every PR targeting
+Both `pr-checks.yml` and `testflight.yml` run on the `xcode-27` runner image
+(GitHub's Xcode 27 image on macOS 27, arm64; `setup-xcode` picks its latest
+stable Xcode). `macos-latest` only carries Xcode 26, and App Store Connect
+requires the iOS 27 SDK for uploads from April 2027 (ITMS-90725). When the next
+major Xcode is required, move both workflows to its `xcode-NN` label together.
+The image has only iOS 27 simulators, so CI tests on iOS 27; behaviour on the
+iOS 26 deployment floor is checked locally or on devices.
+
+`pr-checks.yml` builds once and tests in parallel. It runs on every PR targeting
 `main` **and on every push to `main`**: PRs are squash-merged with no "branch
 up to date" requirement, so when `main` has moved since the PR's last CI run,
 the squash commit's tree was never built (a `pull_request` run builds the

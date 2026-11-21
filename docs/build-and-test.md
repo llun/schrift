@@ -49,8 +49,8 @@
   `devicectl` have no fold command. Code that uses 27.1-only API (reserved
   regions, hinge, vertical bar) goes behind
   `#if canImport(SwiftUI, _version: 8.0.85)` (the 27.1 SDK's SwiftUI) **and**
-  `#available(iOS 27.1, *)`, because CI builds with an older Xcode and the
-  deployment floor is 26 — see `Schrift/App/FoldLayout.swift`, and
+  `#available(iOS 27.1, *)`, because older Xcodes (before 27.1) compile it out and
+  the deployment floor is 26 (CI builds with Xcode 27, so it compiles this code) — see `Schrift/App/FoldLayout.swift`, and
   [`docs/architecture.md`](architecture.md) for the layout rules. Query the
   crease with `.includeInactive`: flat unfolded, the Duo reports it inactive and
   the default query returns nothing. Don't size the split view's sidebar to the
