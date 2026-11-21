@@ -76,8 +76,8 @@ enum DraftSyncDecision: Equatable {
     /// The server changed under the draft — surface it and ask the user; never
     /// silently pick a winner.
     case conflict
-    /// A legacy, baseline-less draft the server has already moved past — the server
-    /// wins and the draft is dropped (today's tolerance-rule behavior).
+    /// A legacy, baseline-less draft the server has already moved past — callers keep the
+    /// draft and record a conflict rather than dropping waiting edits automatically.
     case discardServerWins
 }
 
@@ -193,8 +193,9 @@ func syncCanonicalMarkdown(_ markdown: String) -> String {
 ///    otherwise the server genuinely moved on → `.conflict`. A baseline-carrying
 ///    draft is **never** silently discarded.
 /// 3. No baseline (a legacy draft written before the field existed): fall back to
-///    today's device-vs-server clock tolerance — within the window replay, beyond
-///    it the server wins and the draft is dropped.
+///    the device-vs-server clock tolerance — within the window replay, beyond it
+///    return `.discardServerWins`, which callers record as a conflict rather than
+///    deleting the waiting draft.
 /// 4. Every `.push` then resolves **which title** it carries (`draftTitleOutcome`):
 ///    title and body are independent fields, so a one-sided rename is merged, not
 ///    dialogued — but two different renames escalate the push to a `.conflict`. A

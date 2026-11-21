@@ -140,8 +140,9 @@ struct DocumentActions {
             // deletion announces; without this, deleting a locally-created document from its
             // own editor would leave `isDocumentDiscarded` false and the autosave running, and
             // a dirty screen's flush on disappear would then write a *fresh* draft under the
-            // id whose record was just dropped — resurrecting it until a later pass reaps the
-            // 404. The premise has to hold on every branch, or it holds on none.
+            // id whose record was just dropped — leaving a stray draft under a dead id that
+            // can only 404 and mark failed. The premise has to hold on every branch, or it
+            // holds on none.
             coordinator.completeImmediateDelete(documentID: documentID)
             // A **checkpointed** record is also known under its server id: that is the id the
             // lists show once the POST has landed, the id any other open editor was reached

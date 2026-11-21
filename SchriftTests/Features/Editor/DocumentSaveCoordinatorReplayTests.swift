@@ -395,8 +395,8 @@ final class DocumentSaveCoordinatorReplayTests: DocumentSaveCoordinatorReplayTes
     /// The deferral is only a guarantee if it is re-checked *after* the await. An editor
     /// opening during the POST used to be migrated out from under: the screen's id is a
     /// `let`, so it kept enqueueing under an id the holds no longer covered, the save 404ed
-    /// to `.failed`, and the next launch's sync pass deleted that draft — the user's only
-    /// copy.
+    /// to `.failed`, and subsequent sync passes kept hitting 404 and marking that orphaned
+    /// draft failed under a dead id.
     func testAnEditorOpeningDuringThePostDefersTheMigration() async {
         let log = RequestRecorder()
         let env = makeEnvironment()

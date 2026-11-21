@@ -109,8 +109,8 @@ final class PendingDocumentDeleteStore {
     /// which is a different thing from "there are none".
     ///
     /// Most of the consequence is milder here than for the create store. There, unknown records
-    /// disarm the holds and let the next sync pass delete the only copy of every
-    /// offline-created document. Here, most of what unknown tombstones cost is that queued
+    /// disarm the holds and let the next sync pass stamp `.failed` or a conflict onto
+    /// offline-created documents. Here, most of what unknown tombstones cost is that queued
     /// deletions stop replaying and their rows stop being struck through — recoverable by
     /// deleting again.
     ///
@@ -119,10 +119,11 @@ final class PendingDocumentDeleteStore {
     /// `isPendingDelete` answers false for every tombstoned document — so (a) the create
     /// pass's resume start-over reads a 404 caused by the app's own DELETE as "the document is
     /// gone", clears the checkpoint, and **re-POSTs a document the user deleted** under a new
-    /// id, which no later launch can undo; and (b) `runSyncPass`'s 404 reap reads the same 404
-    /// as a co-author's delete and removes the draft — the undo's only payload. Do not delete
-    /// those two guards on the strength of "this store's corruption is harmless"; it is
-    /// harmless only where those guards already stand.
+    /// id, which no later launch can undo; and (b) `runSyncPass`'s 404/403 and
+    /// `.discardServerWins` branches would mark the draft failed or stamp a conflict onto a
+    /// tombstoned document while its deletion is unknown. Do not delete those guards on the
+    /// strength of "this store's corruption is harmless"; it is harmless only where those
+    /// guards already stand.
     ///
     /// **Sticky across launches**, like the create store's: quarantining leaves the live key
     /// clean, so an un-sticky answer would report a healthy store next launch while the

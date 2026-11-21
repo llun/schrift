@@ -71,8 +71,10 @@ final class EditorViewModelLoadTests: EditorViewModelTestCase {
         XCTAssertTrue(blocksContentEqual(viewModel.blocks, [EditorBlock(kind: .paragraph, text: "Draft content")]))
     }
 
-    func testLoadIgnoresStoredDraftOlderThanServer() async {
-        let (viewModel, _, draftStore, _) = makeEnvironment()
+    /// Waiting edits are never dropped automatically: a legacy draft older than the server
+    /// copy stays on screen and the user is asked (a recorded conflict).
+    func testLoadKeepsAStoredDraftOlderThanServerAndAsks() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
         stubLoad(content: "Server content")
         draftStore.save(
             PendingDraft(
@@ -81,7 +83,9 @@ final class EditorViewModelLoadTests: EditorViewModelTestCase {
 
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.rawMarkdown, "Server content")
+        XCTAssertEqual(viewModel.rawMarkdown, "Stale draft")
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+        XCTAssertNotNil(coordinator.conflict(for: documentID))
     }
 
     // MARK: - Instant local phase + revalidation
@@ -231,9 +235,8 @@ final class EditorViewModelLoadTests: EditorViewModelTestCase {
         await waitUntil { self.savesInFlight(log) > savesBeforeReconnect }
         await waitUntil { viewModel.saveState == .saved }
         await waitUntil { draftStore.draft(for: documentID) == nil }
-        // A draft is also removed when the replay's GET 404s and when rule 3 discards it,
-        // so the disappearance above does not by itself distinguish "pushed" from
-        // "dropped". This does.
+        // A draft can also be removed by an explicit discard or deletion, so the
+        // disappearance above does not by itself prove the edit was pushed. This does.
         XCTAssertEqual(
             coordinator.lastConfirmedPush(documentID: documentID)?.contains("Edited offline"), true,
             "the offline edit is what reached the server, not a discard")
