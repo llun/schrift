@@ -824,6 +824,16 @@ final class ColumnTextContainer: UIScrollView {
         }
         let size = CGSize(width: bounds.width, height: rects.map(\.maxY).max() ?? 0)
         if contentSize != size { contentSize = size }
+        // A column above the screen that changed height (TextKit correcting its
+        // estimate as it lays out) moves the columns below it: keep the top
+        // column on screen where it was, or the caret just revealed slides away.
+        let before = CGRect(x: 0, y: contentOffset.y, width: bounds.width, height: bounds.height)
+        if let index = frames.indices.first(where: {
+            regions[ObjectIdentifier(frames[$0].textView)]?.intersects(before) == true
+        }), let old = regions[ObjectIdentifier(frames[index].textView)] {
+            let shift = rects[index].minY - old.minY
+            if abs(shift) > 0.5 { contentOffset.y += shift }
+        }
         let visible = CGRect(x: 0, y: contentOffset.y, width: bounds.width, height: bounds.height)
         placing = true
         defer { placing = false }
