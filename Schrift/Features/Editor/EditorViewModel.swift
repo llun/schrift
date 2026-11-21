@@ -207,6 +207,8 @@ final class EditorViewModel {
     /// Non-nil once a screen has registered. Its `deinit` is what releases the coordinator's
     /// hold — see `noteEditorAppeared`.
     private var openEditorRegistration: OpenEditorRegistration?
+    /// Whether this screen counts itself in the coordinator's open editors.
+    var isRegisteredOpenEditor: Bool { openEditorRegistration != nil }
     /// Identifies this screen's rewrite-observer registration, so its deferred teardown removes
     /// only its own.
     private var attachmentObserverToken: UUID?

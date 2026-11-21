@@ -2092,6 +2092,11 @@ final class DocumentSaveCoordinator {
         (openEditors[documentID] ?? 0) > 0
     }
 
+    /// How many editor screens have this document open (`retainOpenEditor`).
+    func openEditorCount(documentID: UUID) -> Int {
+        openEditors[documentID] ?? 0
+    }
+
     /// Any pending record waiting to migrate onto this **server** id, regardless of session.
     /// Used by device-wide protection guards (sweep/delete/move/alias) that must hold across
     /// sign-out or transient identity gaps.
@@ -2941,12 +2946,15 @@ final class DocumentSaveCoordinator {
         // The placeholder names the *attachment's* id, not the document's, so no markdown needs
         // rewriting here: the hold follows the content across the re-key by itself.
         //
-        // A native record here is a conversion that stopped before its replica existed: this
-        // page migrates classically and its classic draft still names the placeholder, so the
-        // record goes back to classic. Left native, its commit would find no replica, answer
-        // `.gone` and delete the photo's only copy.
+        // A native record whose replica has no manifest is a conversion that stopped before its
+        // replica existed (an ownership marker alone may remain, which the native branch clears
+        // before falling through here): this page migrates classically and its classic draft
+        // still names the placeholder, so the record goes back to classic. Left native, its
+        // commit would find no replica, answer `.gone` and delete the photo's only copy. Judged
+        // per record, not by `nativeScopes`, which was read before that clear.
         for attachment in pendingAttachments.values.filter({ $0.documentID == localID }) {
-            guard attachment.native != nil, nativeScopes.isEmpty else {
+            let orphanedNative = attachment.nativeScope.map { (try? replicaStore.manifest(for: $0)) == nil } ?? false
+            guard orphanedNative else {
                 var rekeyed = attachment
                 rekeyed.documentID = serverID
                 updatePendingAttachment(rekeyed)

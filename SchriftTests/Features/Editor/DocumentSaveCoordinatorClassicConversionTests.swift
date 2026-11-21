@@ -535,6 +535,17 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
     /// is off), the records must go back to classic so the photo uploads through the classic
     /// replay; left native, their commit finds no replica, answers `.gone` and deletes the bytes.
     func testANativeRecordOnAClassicallyMigratedPageUploadsAsClassic() async throws {
+        try await assertNativeRecordUploadsAsClassic(withOwnershipMarker: false)
+    }
+
+    /// The same death inside `replicaStore.create`, after the ownership marker and before the
+    /// manifest: the native branch clears the marker and falls through to the classic path, which
+    /// must still judge the record by its missing manifest.
+    func testANativeRecordUnderAMarkerWithoutAManifestUploadsAsClassic() async throws {
+        try await assertNativeRecordUploadsAsClassic(withOwnershipMarker: true)
+    }
+
+    private func assertNativeRecordUploadsAsClassic(withOwnershipMarker: Bool) async throws {
         let log = RequestRecorder()
         let defaults = makeDefaults()
         let photo = seedPhoto(defaults)
@@ -552,6 +563,10 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
                     org: "docs", blockID: blockID, slot: MediaBlock.Slot(node: "image", url: ""),
                     fileName: "photo.jpg", contentType: "image/jpeg")))
         let env = makeEnvironment(sharing: defaults)
+        if withOwnershipMarker {
+            XCTAssertEqual(env.replicaStore.ownershipStore?.mark(scope), true)
+            XCTAssertNil(try env.replicaStore.manifest(for: scope))
+        }
         env.coordinator.nativeEditorEnabled = { false }
         stubPipeline(log: log, bodies: BodyRecorder())
 

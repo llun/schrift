@@ -1171,7 +1171,11 @@ final class NativeEditorOpen {
         // the native route below rather than the classic editor. Never under a classic editor
         // holding text the draft does not have yet (`isDirty`): converting the stored draft would
         // drop it. Not `hasUnsavedLocalContent`, which every unsent page answers true for.
-        if !viewModel.isEditing, !viewModel.isDirty {
+        // Nor while another screen has the page open: it may be a classic editor mid-edit.
+        let otherScreens =
+            coordinator.openEditorCount(documentID: viewModel.documentID)
+            - (viewModel.isRegisteredOpenEditor ? 1 : 0)
+        if !viewModel.isEditing, !viewModel.isDirty, otherScreens <= 0 {
             coordinator.convertUnsentClassicCreate(documentID: viewModel.documentID)
         }
         switch coordinator.nativeOwnership(documentID: viewModel.documentID) {
