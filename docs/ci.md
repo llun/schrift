@@ -17,8 +17,10 @@ by construction). See the Safety section in [`AGENTS.md`](../AGENTS.md).
 ## What runs on every PR and every push to `main`
 
 Both `pr-checks.yml` and `testflight.yml` run on the `xcode-27` runner image
-(GitHub's Xcode 27 image on macOS 27, arm64; `setup-xcode` picks its latest
-stable Xcode). `macos-latest` only carries Xcode 26, and App Store Connect
+([GitHub's Xcode 27 image](https://github.blog/changelog/2026-09-10-xcode-27-runner-image-now-runs-on-macos-27/)
+on macOS 27, arm64; `setup-xcode` picks its latest stable Xcode; installed
+software is listed in the
+[image readme](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md)). `macos-latest` only carries Xcode 26, and App Store Connect
 requires the iOS 27 SDK for uploads from April 2027 (ITMS-90725). When the next
 major Xcode is required, move both workflows to its `xcode-NN` label together.
 The image has only iOS 27 simulators, so CI tests on iOS 27; behaviour on the

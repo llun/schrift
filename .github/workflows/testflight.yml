@@ -45,6 +45,8 @@ jobs:
     # requires the iOS 27 SDK for uploads from April 2027 (ITMS-90725), and
     # macos-latest only carries Xcode 26. Keep pr-checks.yml and testflight.yml
     # on the same label so PRs test what ships. See docs/ci.md.
+    # Image: https://github.blog/changelog/2026-09-10-xcode-27-runner-image-now-runs-on-macos-27/
+    # Installed Xcode/SDKs/simulators: https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md
     runs-on: xcode-27
     # Generous because the upload waits for Apple to finish processing the build
     # (so it can attach release notes + distribute to testers) before returning.
