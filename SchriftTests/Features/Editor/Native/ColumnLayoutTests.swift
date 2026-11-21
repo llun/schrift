@@ -278,12 +278,14 @@ final class ColumnLayoutTests: NativeEditingTestCase {
         for (session, frame) in zip(model.columns, container.frames) {
             XCTAssertLessThan(realised(frame.textView, session), 60, "a screen of the column, not 1,000 blocks")
         }
+        // Per-step budgets are CPU time on this thread (`ThreadCPUClock`): a wall-clock step
+        // also counts the CI machine pausing the simulator.
         var steps: [Duration] = []
         for step in 1...100 {
-            start = clock.now
+            let stepStart = ThreadCPUClock.now
             container.contentOffset.y = CGFloat(step) * 120
             container.layoutIfNeeded()
-            steps.append(clock.now - start)
+            steps.append(ThreadCPUClock.now - stepStart)
         }
         // Into the second column, far down: it types there.
         container.contentOffset.y = container.contentSize.height - 2_000
@@ -294,10 +296,10 @@ final class ColumnLayoutTests: NativeEditingTestCase {
         setSelection(second, NSRange(location: try location(second, target, 0), length: 0))
         var keys: [Duration] = []
         for _ in 0..<50 {
-            start = clock.now
+            let keyStart = ThreadCPUClock.now
             second.textView.insertText("x")
             container.layoutIfNeeded()
-            keys.append(clock.now - start)
+            keys.append(ThreadCPUClock.now - keyStart)
         }
         await second.settle()
         await harness.settle()

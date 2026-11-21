@@ -97,10 +97,12 @@ final class TableScaleTests: NativeEditingTestCase {
         XCTAssertLessThan(editor.cellViews.count, 150, "only the screen's cells are realised")
         XCTAssertNotNil(editor.cellViews[TableGrid.CellRef(row: 0, index: 0)])
         var steps: [Duration] = []
+        // CPU time on this thread (`ThreadCPUClock`): a wall-clock step also counts the CI
+        // machine pausing the simulator.
         for step in 1...200 {
-            start = clock.now
+            let stepStart = ThreadCPUClock.now
             editor.scrollView.contentOffset.y = CGFloat(step) * 40
-            steps.append(clock.now - start)
+            steps.append(ThreadCPUClock.now - stepStart)
         }
         // A jump to the middle realises the middle and recycles the top.
         start = clock.now
