@@ -1,0 +1,49 @@
+Schrift/Features/Documents/DocumentActions.swift
+  s_4fb28ab57323fe::t_1aa5d882994db7 143-145
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_4fb28ab57323fe::t_12da429a7e310f 928,1574-1575,2416-2422,2439-2440,2444,2512-2514,2521-2522,2525,3926-3927,3936-3940,3942,3947-3948,4135-4136,4199-4200,4464,4530,4536,4542-4548
+Schrift/Features/Editor/DraftSyncDecision.swift
+  s_4fb28ab57323fe::t_bb8c015e16bec9 79-80,196-198
+Schrift/Features/Editor/EditorViewModel.swift
+  s_4fb28ab57323fe::t_38b8465f033cd2 544-545,1183-1185,1190,1205-1206,1679-1681,1765-1769
+Schrift/Features/Editor/PendingDocumentCreateStore.swift
+  s_4fb28ab57323fe::t_5d4389e177f0ef 239-243,245-257,259-261,263-266
+Schrift/Features/Editor/PendingDocumentDeleteStore.swift
+  s_4fb28ab57323fe::t_d85d9956a375b3 112-113,122-126
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAttachmentHoldTests.swift
+  s_4fb28ab57323fe::t_a1114a032e95e9 258-259
+SchriftTests/Features/Editor/DocumentSaveCoordinatorConflictTests.swift
+  s_4fb28ab57323fe::t_4fda8dcc2715d2 169,175-186
+SchriftTests/Features/Editor/DocumentSaveCoordinatorCreateTests.swift
+  s_4fb28ab57323fe::t_7a84e3c1970ebf 372,375-376,503-508,556-557
+SchriftTests/Features/Editor/DocumentSaveCoordinatorDeleteTests.swift
+  s_4fb28ab57323fe::t_669b48bc57ba1c 90,264,316-317,355-357,743-746,986-989,1007-1045,1139-1142,1162
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayMigrationTests.swift
+  s_4fb28ab57323fe::t_827f676751079b 762,766-768,790,827-831,868
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayStartOverTests.swift
+  s_4fb28ab57323fe::t_c48df558f5dc2f 203-205,231-233,398,592
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_4fb28ab57323fe::t_9ab93e5531194c 362-382,454-455,459
+SchriftTests/Features/Editor/EditorViewModelSubpagesTests.swift
+  s_4fb28ab57323fe::t_8e85881cdfdf5b 72-76
+docs/offline-and-sync.md
+  s_4fb28ab57323fe::t_292f0038130caf 938-942,989-1002,1911-1912,1972,2217,2245-2246,2263,2265,2688,2693,2695-2696,2727-2728,2741-2742,2956-2958,2994-2996,3004-3007
+docs/standards/editor-save.md
+  s_4fb28ab57323fe::t_7b95bd8fd14b27 1000,1054,1056,1059,1172-1173,1182,1224-1226,1243-1244,1729,1732-1733,2129-2131,2186-2187,2216-2220
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c8063b2e6d77f54941a41b1d39cbfa62e9eaa203",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
