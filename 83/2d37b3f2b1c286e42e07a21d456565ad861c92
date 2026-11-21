@@ -1,0 +1,19 @@
+Schrift/Features/Editor/Native/ColumnEditorViewController.swift
+  s_fbe22d348faaba::t_a09878397b5295 827-836
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "832d37b3f2b1c286e42e07a21d456565ad861c92",
+  "prompts": {},
+  "sessions": {
+    "s_fbe22d348faaba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a47cee5-580c-4e02-955e-fc3c1c33268a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
