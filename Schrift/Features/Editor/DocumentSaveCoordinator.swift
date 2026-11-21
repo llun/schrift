@@ -1114,11 +1114,13 @@ final class DocumentSaveCoordinator {
     /// steps below; a suspension point would let one rewrite the draft or collect a photo the
     /// conversion is mid-way through re-keying.
     ///
-    /// Crash safety without a journal: the replica is created first (step 2), then the photo
-    /// records are re-keyed (step 3), then the draft is rewritten (step 4). A death after step 2
-    /// leaves a manifest with a classic draft, which the resume path finishes from the existing
-    /// replica rather than re-encoding it — a replica with journal entries beyond its checkpoint
-    /// is never overwritten.
+    /// Crash safety without a journal, and the order is what makes it safe: the photo records are
+    /// re-keyed first (step 1), then the replica is created (step 2), then the draft is rewritten
+    /// (step 3). A death after step 1 leaves native records on a classic page — the classic
+    /// collector never touches a native record, so the bytes survive — and the next pass finishes
+    /// from them. A death after step 2 leaves a manifest with a classic draft, which the resume
+    /// path finishes from the existing replica rather than re-encoding it — a replica with journal
+    /// entries beyond its checkpoint is never overwritten.
     func convertUnsentClassicCreate(documentID: UUID) {
         guard nativeEditorEnabled(), let org = cachedDocs6Org() else { return }
         guard let record = pendingCreates[documentID], record.syncedServerID == nil,
@@ -1146,11 +1148,15 @@ final class DocumentSaveCoordinator {
         if let existing {
             // Resume after a death past step 2: the replica is the authority, so it is never
             // re-encoded. Every expected photo block must already be there, or nothing is
-            // touched — the classic draft and the replica both stay.
+            // touched — the classic draft, the records and the replica all stay.
             guard existing.formatVersion == ReplicaManifest.currentFormat,
                 replicaHoldsPhotoBlocks(photos, scope: scope)
             else { return }
+            rekeyPhotos(photos, org: org)
         } else {
+            // Step 1: re-key before the replica exists, so a death here leaves records the
+            // classic collector skips rather than a replica whose photos it would collect.
+            rekeyPhotos(photos, org: org)
             let checkpoint = MarkdownYjs.encode(
                 markdown: draft.markdown, serverOrigin: client.serverOrigin,
                 pendingImages: Dictionary(uniqueKeysWithValues: photos.map { ($0.placeholderURL, $0.blockID) }))
@@ -1167,26 +1173,12 @@ final class DocumentSaveCoordinator {
             }
         }
 
-        // The projection is read before any record is re-keyed, so a replica that cannot be
-        // projected leaves the page wholly classic rather than half-converted.
+        // The projection is read before the draft is rewritten, so a replica that cannot be
+        // projected leaves the draft classic — the records are already native and safe.
         let adapter = ReplicaSaveAdapter(store: replicaStore, scope: scope)
         guard let prepared = try? adapter.prepare() else { return }
 
-        // Step 3: re-key each classic record onto its block, keeping the localID (the bytes are
-        // keyed by it) and every replay field.
-        for photo in photos where photo.record.native == nil {
-            updatePendingAttachment(
-                PendingAttachment(
-                    localID: photo.record.localID, documentID: photo.record.documentID,
-                    createdAt: photo.record.createdAt, serverOrigin: photo.record.serverOrigin,
-                    ownerUserID: photo.record.ownerUserID,
-                    native: NativeMediaTarget(
-                        org: org, blockID: photo.blockID,
-                        slot: MediaBlock.Slot(node: "image", url: ""),
-                        fileName: "photo.jpg", contentType: "image/jpeg")))
-        }
-
-        // Step 4: the draft takes the replica reference and the replica's own projection as its
+        // Step 3: the draft takes the replica reference and the replica's own projection as its
         // shadow, so `ReplicaDraftReference.matches` holds and no placeholder reaches a save.
         draftStore.save(
             PendingDraft(
@@ -1198,6 +1190,22 @@ final class DocumentSaveCoordinator {
         syncBackupExclusion(for: documentID, scope: scope)
         recordReplicaOpened(scope: scope)
         evictCleanNativeReplicasIfNeeded(keepingScopes: [scope])
+    }
+
+    /// Re-keys each still-classic record onto its block, keeping the localID (the bytes are keyed
+    /// by it) and every replay field.
+    private func rekeyPhotos(_ photos: [ClassicPhotoConversion], org: String) {
+        for photo in photos where photo.record.native == nil {
+            updatePendingAttachment(
+                PendingAttachment(
+                    localID: photo.record.localID, documentID: photo.record.documentID,
+                    createdAt: photo.record.createdAt, serverOrigin: photo.record.serverOrigin,
+                    ownerUserID: photo.record.ownerUserID,
+                    native: NativeMediaTarget(
+                        org: org, blockID: photo.blockID,
+                        slot: MediaBlock.Slot(node: "image", url: ""),
+                        fileName: "photo.jpg", contentType: "image/jpeg")))
+        }
     }
 
     /// A queued photo a classic draft names, validated for a native conversion.
@@ -1227,7 +1235,9 @@ final class DocumentSaveCoordinator {
             else { return nil }
             return url
         }
-        let occurrences = markdown.components(separatedBy: pendingAttachmentURLPrefix).count - 1
+        // Counted case-insensitively, because the parser accepts either case: a case-sensitive
+        // count would read `SCHRIFT-ATTACHMENT://…` as zero occurrences and refuse the page.
+        let occurrences = markdown.lowercased().components(separatedBy: pendingAttachmentURLPrefix).count - 1
         guard occurrences == placeholders.count else { return nil }
         var seen = Set<UUID>()
         var photos: [ClassicPhotoConversion] = []
@@ -3130,6 +3140,12 @@ final class DocumentSaveCoordinator {
         onDocumentMigrated?(document)
     }
 
+    /// Whether a native upload record targets this document. A page whose only content is a
+    /// queued photo projects to empty Markdown, so adopting the server would discard its block.
+    private func hasNativeAttachment(documentID: UUID) -> Bool {
+        pendingAttachments.values.contains { $0.native != nil && $0.documentID == documentID }
+    }
+
     private func migrateNativeCreatedDocument(
         _ record: PendingDocumentCreate, serverID: UUID, scope: ReplicaScope,
         draft: PendingDraft?, migrated: PendingDraft?, serverTitle: String?, serverUpdatedAt: Date,
@@ -3204,6 +3220,7 @@ final class DocumentSaveCoordinator {
         let canonicalServer = syncCanonicalMarkdown(serverMarkdown)
         let willAdoptServer =
             restored.manifest.outbox.isEmpty && canonicalSource.isEmpty && !canonicalServer.isEmpty
+            && !hasNativeAttachment(documentID: localID) && !hasNativeAttachment(documentID: serverID)
 
         if willAdoptServer {
             if sourceScope != serverScope,
@@ -4233,7 +4250,11 @@ final class DocumentSaveCoordinator {
             // document was deleted would never be cleaned up. Deferred while an editor is open:
             // that screen may be about to flush a body that still names the photo.
             if !referencesPendingAttachment(record) {
-                if !hasOpenEditor(documentID: record.documentID) {
+                // A classic record on a native-owned page is kept: its bytes may be the only copy
+                // of a photo the replica already names.
+                if !hasOpenEditor(documentID: record.documentID),
+                    nativeOwnership(documentID: record.documentID) == .none
+                {
                     removePendingAttachment(localID: record.localID)
                 }
                 continue
