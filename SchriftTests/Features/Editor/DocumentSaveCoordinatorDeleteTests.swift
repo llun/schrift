@@ -36,6 +36,7 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         let drafts: PendingDraftStore
         let creates: PendingDocumentCreateStore
         let deletes: PendingDocumentDeleteStore
+        let attachments: PendingAttachmentStore
         let lists: DocumentCacheStore
         let children: DocumentChildrenCacheStore
         let defaults: UserDefaults
@@ -57,6 +58,8 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         let drafts = PendingDraftStore(userDefaults: defaults)
         let creates = PendingDocumentCreateStore(userDefaults: defaults)
         let deletes = PendingDocumentDeleteStore(userDefaults: defaults)
+        let attachments = PendingAttachmentStore(
+            userDefaults: defaults, directory: cacheDirectory.appendingPathComponent("Attachments"))
         let lists = DocumentCacheStore(userDefaults: defaults)
         let children = DocumentChildrenCacheStore(userDefaults: defaults)
         return Environment(
@@ -66,10 +69,11 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
                     directory: cacheDirectory.appendingPathComponent("ReplicaDrafts"),
                     ownershipStore: ReplicaOwnershipStore(userDefaults: defaults)),
                 contentCache: DocumentContentCacheStore(directory: cacheDirectory),
-                createStore: creates, deleteStore: deletes, listCache: lists, childrenCache: children,
+                createStore: creates, deleteStore: deletes, attachmentStore: attachments,
+                listCache: lists, childrenCache: children,
                 serverOrigin: serverOrigin ?? origin, appBuild: "1", backgroundTasks: .noop),
-            drafts: drafts, creates: creates, deletes: deletes, lists: lists, children: children,
-            defaults: defaults)
+            drafts: drafts, creates: creates, deletes: deletes, attachments: attachments,
+            lists: lists, children: children, defaults: defaults)
     }
 
     /// The state the suppressions exist for: a deletion that is queued and **still unsent**,
@@ -620,6 +624,50 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertNil(env.creates.create(for: child.id), "and its sub-page with it")
         XCTAssertNil(env.drafts.draft(for: child.id), "including that sub-page's body")
         XCTAssertFalse(env.coordinator.isPendingDelete(documentID: serverID))
+    }
+
+    /// Deleting a checkpointed converted page by its server id must also discard the local
+    /// replica and queued native photos filed under the local id; left behind, the replica and
+    /// photo bytes stay protected forever and a native photo can try to upload against the local id.
+    func testCompletingACheckpointedTombstoneDiscardsItsLocalReplicaAndPhotos() async throws {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        SignedInUserStore(userDefaults: env.defaults).remember(user)
+        let local = env.coordinator.createLocalDocument(title: "Converted", parentID: nil, ownerUserID: user)
+        let localScope = ReplicaScope(serverOrigin: origin, ownerUserID: user, org: "docs", documentID: local.id)
+        let manifest = try env.coordinator.replicaStore.create(for: localScope, checkpoint: Data([0, 0]))
+        env.drafts.save(
+            PendingDraft(
+                documentID: local.id, title: "Converted", markdown: "", updatedAt: Date(),
+                replica: ReplicaDraftReference(manifest: manifest, markdown: "")))
+        let photoID = UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
+        env.attachments.saveData(Data([0xFF, 0xD8, 0xFF]), for: photoID)
+        env.attachments.save(
+            PendingAttachment(
+                localID: photoID, documentID: local.id, createdAt: Date(), serverOrigin: origin,
+                ownerUserID: user,
+                native: NativeMediaTarget(
+                    org: "docs", blockID: photoID.uuidString.lowercased(),
+                    slot: MediaBlock.Slot(node: "image", url: ""),
+                    fileName: "photo.jpg", contentType: "image/jpeg")))
+        var checkpointed = try XCTUnwrap(env.coordinator.pendingCreateForTesting(localID: local.id))
+        checkpointed.syncedServerID = serverID
+        checkpointed.postedTitle = "Converted"
+        env.coordinator.savePendingCreateForTesting(checkpointed)
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        relaunched.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log)
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(
+            try relaunched.coordinator.replicaStore.manifest(for: localScope),
+            "the local replica manifest is gone")
+        XCTAssertNil(relaunched.attachments.attachment(for: photoID), "the queued photo record is gone")
+        XCTAssertNil(relaunched.attachments.data(for: photoID), "and its bytes are gone")
+        XCTAssertNil(relaunched.creates.create(for: local.id))
+        XCTAssertFalse(relaunched.coordinator.isPendingDelete(documentID: serverID))
     }
 
     /// The undo is one request wide and can lose — but it must never lose the user's *work*.

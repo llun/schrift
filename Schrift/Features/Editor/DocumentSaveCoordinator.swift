@@ -1176,7 +1176,13 @@ final class DocumentSaveCoordinator {
                     _ = replicaStore.clearOwnership(for: scope)
                     // The page stays classic, so its photos must too: a native record with no
                     // replica to commit into would be dropped with its bytes.
-                    for photo in photos { updatePendingAttachment(photo.record) }
+                    for photo in photos {
+                        updatePendingAttachment(
+                            PendingAttachment(
+                                localID: photo.record.localID, documentID: photo.record.documentID,
+                                createdAt: photo.record.createdAt, serverOrigin: photo.record.serverOrigin,
+                                ownerUserID: photo.record.ownerUserID))
+                    }
                 }
                 return
             }
@@ -1196,6 +1202,9 @@ final class DocumentSaveCoordinator {
                 lastPushedMarkdown: draft.lastPushedMarkdown,
                 conflictServerUpdatedAt: draft.conflictServerUpdatedAt,
                 replica: prepared.request.reference))
+        // A classic save parked for this page names the classic body; left queued it blocks the
+        // native capture, `saveNow` and failure reporting until the create migrates.
+        if queued[documentID]?.replicaRequest == nil { queued[documentID] = nil }
         syncBackupExclusion(for: documentID, scope: scope)
         recordReplicaOpened(scope: scope)
         evictCleanNativeReplicasIfNeeded(keepingScopes: [scope])
@@ -2001,6 +2010,16 @@ final class DocumentSaveCoordinator {
         return true
     }
 
+    /// Moves queued photos back onto the id their page now lives under (a take-back of a create
+    /// the server lost). Left on the dead server id, a native one's commit would find no replica,
+    /// answer `.gone` and delete the bytes; a classic one would upload to a document that is gone.
+    private func rekeyAttachments(from oldID: UUID, to newID: UUID) {
+        for var attachment in pendingAttachments.values.filter({ $0.documentID == oldID }) {
+            attachment.documentID = newID
+            updatePendingAttachment(attachment)
+        }
+    }
+
     private func updatePendingAttachment(_ record: PendingAttachment) {
         attachmentStore.save(record)
         pendingAttachments[record.localID] = record
@@ -2456,6 +2475,7 @@ final class DocumentSaveCoordinator {
                                 replica: localRef))
                         draftStore.remove(documentID: serverID)
                         try? replicaStore.remove(for: serverScope)
+                        rekeyAttachments(from: serverID, to: record.localID)
                         syncBackupExclusion(for: record.localID, scope: localScope)
                         syncBackupExclusion(for: serverID)
                     }
@@ -2465,6 +2485,7 @@ final class DocumentSaveCoordinator {
                             documentID: record.localID, title: orphan.title, markdown: orphan.markdown,
                             updatedAt: orphan.updatedAt, baseline: nil))
                     draftStore.remove(documentID: serverID)
+                    rekeyAttachments(from: serverID, to: record.localID)
                     syncBackupExclusion(for: record.localID)
                     syncBackupExclusion(for: serverID)
                 }
@@ -5044,6 +5065,11 @@ final class DocumentSaveCoordinator {
                 // checkpointed, so the user met and deleted this document under its server id,
                 // but nothing filed under it ever learned that id.
                 discardLocalSubtree(rootedAt: checkpointed.localID)
+                // The page's own replica and queued photos are filed under the local id too; left
+                // behind, a native photo would upload to `documents/{local-id}/` and its bytes and
+                // replica would stay protected forever.
+                _ = discardNativeReplica(documentID: checkpointed.localID)
+                discardPendingAttachments(documentID: checkpointed.localID)
                 states[checkpointed.localID] = .idle
                 clearFailure(checkpointed.localID)
                 draftStore.remove(documentID: checkpointed.localID)

@@ -230,6 +230,27 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
         XCTAssertEqual(env.attachments.data(for: photo.localID), Data([0xFF, 0xD8, 0xFF]), "bytes stay put")
     }
 
+    /// A classic save parked in `queued[documentID]` while the local create was held must be
+    /// cleared once conversion rewrites the draft as native; left queued, it blocks native
+    /// captures, `saveNow`, and failure reporting until the create migrates.
+    func testConvertingClearsAParkedClassicSave() throws {
+        let defaults = makeDefaults()
+        seedClassicCreate(defaults, markdown: "# Notes")
+        cacheDocs6(defaults)
+        let env = makeEnvironment(sharing: defaults)
+        env.coordinator.enqueue(documentID: documentID, title: "Local", markdown: "# Notes")
+        XCTAssertNotNil(env.coordinator.pendingSave(documentID: documentID), "precondition: classic save is parked")
+
+        env.coordinator.convertUnsentClassicCreates()
+
+        XCTAssertNil(
+            env.coordinator.pendingSave(documentID: documentID),
+            "the parked classic save is cleared once the draft is native")
+        let draft = try XCTUnwrap(env.drafts.draft(for: documentID))
+        XCTAssertEqual(draft.replica?.scope, scope)
+        XCTAssertEqual(draft.markdown, try projectedMarkdown(env, scope))
+    }
+
     // MARK: - Skips
 
     func testSkipsWhenTheSwitchIsOff() {
@@ -391,8 +412,6 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
         assertStaysClassic(env, markdown: markdown, photoLocalID: photo.localID)
     }
 
-    /// `MarkdownYjs` spells an `.unknown` block as plain paragraphs, which loses its structure —
-    /// a table would come back as prose. Such a page stays classic.
     /// A photo nested in a list encodes to an empty-url child image the native editor can only
     /// show read-only, so the page stays classic rather than becoming an uneditable replica.
     func testSkipsAPageWithANestedPhoto() {
@@ -409,6 +428,8 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
         XCTAssertNil(env.attachments.attachment(for: photo.localID)?.native, "the record stays classic")
     }
 
+    /// `MarkdownYjs` spells an `.unknown` block as plain paragraphs, which loses its structure —
+    /// a table would come back as prose. Such a page stays classic.
     func testSkipsAPageWithAnUnknownBlock() {
         let defaults = makeDefaults()
         let markdown = "| a | b |\n| - | - |"
@@ -506,7 +527,7 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
         let env = makeEnvironment(sharing: defaults)
         let blockID = photo.localID.uuidString.lowercased()
         try seedReplica(env, markdown: markdown, pendingImages: [photo.placeholder: blockID])
-        // Step 3 already ran: the record is native, the draft is still classic.
+        // Steps 1 and 2 already ran: the record is native and the replica exists, the draft is still classic.
         let store = PendingAttachmentStore(userDefaults: defaults, directory: attachmentDirectory)
         store.save(
             PendingAttachment(
@@ -625,6 +646,40 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
         XCTAssertEqual(try imageBlockIDs(relaunched, scope), [blockID])
         XCTAssertEqual(relaunched.attachments.attachment(for: photo.localID)?.native?.blockID, blockID)
         XCTAssertEqual(relaunched.drafts.draft(for: documentID)?.replica?.scope, scope)
+    }
+
+    /// When an earlier run died after step 1 (leaving the photo record already native with no
+    /// replica) and a retry's `replicaStore.create` throws before its manifest, the rollback must
+    /// still write the record back as classic rather than preserving the native snapshot it read
+    /// on entry.
+    func testAFailedReplicaCreateRollsBackAPreviouslyNativePhotoRecordToClassic() throws {
+        let defaults = makeDefaults()
+        let photo = seedPhoto(defaults)
+        let markdown = "![](\(photo.placeholder))"
+        seedClassicCreate(defaults, markdown: markdown)
+        cacheDocs6(defaults)
+        let blockID = photo.localID.uuidString.lowercased()
+        let store = PendingAttachmentStore(userDefaults: defaults, directory: attachmentDirectory)
+        let classic = try XCTUnwrap(store.attachment(for: photo.localID))
+        store.save(
+            PendingAttachment(
+                localID: classic.localID, documentID: classic.documentID, createdAt: classic.createdAt,
+                serverOrigin: classic.serverOrigin, ownerUserID: classic.ownerUserID,
+                native: NativeMediaTarget(
+                    org: "docs", blockID: blockID, slot: MediaBlock.Slot(node: "image", url: ""),
+                    fileName: "photo.jpg", contentType: "image/jpeg")))
+        let interrupted = makeEnvironment(sharing: defaults) { operation, boundary in
+            if operation == .create, boundary == .payloadWritten { throw ReplicaStoreError.corrupt }
+        }
+
+        interrupted.coordinator.convertUnsentClassicCreates()
+
+        XCTAssertNil(try interrupted.replicaStore.manifest(for: scope), "the create died before its manifest")
+        XCTAssertNil(
+            interrupted.attachments.attachment(for: photo.localID)?.native,
+            "the previously-native record is rolled back to classic")
+        XCTAssertNil(interrupted.drafts.draft(for: documentID)?.replica, "the draft is still classic")
+        XCTAssertEqual(interrupted.attachments.data(for: photo.localID), Data([0xFF, 0xD8, 0xFF]))
     }
 
     // MARK: - Server adoption
