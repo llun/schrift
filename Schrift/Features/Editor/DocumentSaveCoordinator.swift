@@ -711,6 +711,10 @@ final class DocumentSaveCoordinator {
         cachedServerConfig()?.usesCollaborationYDocServer == true
     }
 
+    /// True when a local create would have no collaboration org to seed a native replica from,
+    /// so the caller must ask the user to go online rather than mint a classic draft.
+    var localCreateNeedsServerSetup: Bool { nativeEditorEnabled() && cachedDocs6Org() == nil }
+
     private func cachedDocs6Org() -> String? {
         guard let config = cachedServerConfig(), config.usesCollaborationYDocServer else { return nil }
         return config.collaborationOrg
@@ -1253,11 +1257,12 @@ final class DocumentSaveCoordinator {
     ///
     /// That is narrower than "has local children", and it has to be. A sub-page created offline
     /// under an ordinary **server** document is an ordinary record too — `addSubpage` mints one
-    /// whenever the POST fails retryably — but deleting that server document takes *neither*
-    /// cascade branch in `discardPendingWork`, so the sub-page survives and the replay's probe
-    /// eventually re-roots it into Home. Announcing a deletion there would put a false sentence
-    /// in a destructive confirmation. So this resolves the id the way the cascade does, and
-    /// answers false wherever the cascade would not run.
+    /// whenever the POST fails retryably (with the native editor on, only if a server setup is
+    /// saved) — but deleting that server document takes *neither* cascade branch in
+    /// `discardPendingWork`, so the sub-page survives and the replay's probe eventually re-roots
+    /// it into Home. Announcing a deletion there would put a false sentence in a destructive
+    /// confirmation. So this resolves the id the way the cascade does, and answers false wherever
+    /// the cascade would not run.
     ///
     /// Both ids, because the two are used at different moments in a record's life: a sub-page
     /// names its parent's `localID`, but once that parent is checkpointed

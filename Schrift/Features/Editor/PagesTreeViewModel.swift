@@ -388,6 +388,10 @@ final class PagesTreeViewModel {
                 createErrorKey = .pages_error_create
                 return nil
             }
+            if coordinator.localCreateNeedsServerSetup {
+                createErrorKey = .create_needs_online
+                return nil
+            }
             child = coordinator.createLocalDocument(
                 title: "Untitled subpage", parentID: parent, ownerUserID: ownerUserID)
             expanded.insert(parent)
@@ -407,6 +411,11 @@ final class PagesTreeViewModel {
             guard let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
                 let coordinator = saveCoordinator, let ownerUserID = signedInUser.userID
             else {
+                createErrorKey = .pages_error_create
+                return nil
+            }
+            // Online, so "go online" would be the wrong advice: keep the create's own failure.
+            if coordinator.localCreateNeedsServerSetup {
                 createErrorKey = .pages_error_create
                 return nil
             }

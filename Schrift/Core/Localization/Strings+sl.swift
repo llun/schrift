@@ -47,6 +47,7 @@ enum Strings_sl {
         .common_clear_search: "Počisti iskanje",
         .common_you: "(vi)",
         .common_loading: "Nalaganje",
+        .create_needs_online: "Pojdite na splet, da ustvarite stran.",
         .search_results_one: "%d rezultat",
         .search_results_other: "%d rezultatov",
         .search_results_two: "%d rezultata",

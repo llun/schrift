@@ -29,13 +29,8 @@ struct HomeSplitView: View {
                 // push-a-path version would create the document on the server
                 // and then appear to do nothing, because this idiom never
                 // renders that stack. (iPad had no create action at all before.)
-                onNewDocument: {
-                    Task {
-                        if let document = await viewModel.createDocument() {
-                            selectedRoute = DocumentEditorRoute(createdDocument: document)
-                        }
-                    }
-                }
+                onNewDocument: createDocument,
+                onRetryCreate: createDocument
             )
             .environment(\.docsCanvasRole, DocsCanvasRole.sidebar)
             // Moving off a document may leave a rename or edit the list has not seen; the list
@@ -91,6 +86,15 @@ struct HomeSplitView: View {
         // and around the floating sidebar. Left alone it is the system
         // background, which matched only White's light page colour.
         .background(theme.colors.surfacePage.ignoresSafeArea())
+    }
+
+    /// Creates a document and selects it — the split view's idiom for opening one.
+    private func createDocument() {
+        Task {
+            if let document = await viewModel.createDocument() {
+                selectedRoute = DocumentEditorRoute(createdDocument: document)
+            }
+        }
     }
 }
 

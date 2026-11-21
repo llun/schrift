@@ -65,6 +65,9 @@ class EditorViewModelTestCase: XCTestCase {
             createStore: PendingDocumentCreateStore(userDefaults: UserDefaults(suiteName: suiteName)!),
             deleteStore: PendingDocumentDeleteStore(userDefaults: UserDefaults(suiteName: suiteName)!),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        // Pinned off: the default reads `UserDefaults.standard`, so a simulator with the native
+        // editor on would refuse every local mint these tests expect.
+        coordinator.nativeEditorEnabled = { false }
         let viewModel = EditorViewModel(
             client: client,
             documentID: documentID,
@@ -111,7 +114,10 @@ class EditorViewModelTestCase: XCTestCase {
             client: client, draftStore: draftStore, contentCache: contentCache,
             createStore: createStore,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
             serverOrigin: "https://docs.example.com", backgroundTasks: .noop)
+        // Pinned off for the same reason as `makeEnvironment`.
+        coordinator.nativeEditorEnabled = { false }
         let document = coordinator.createLocalDocument(
             title: "Untitled document", parentID: nil,
             ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)

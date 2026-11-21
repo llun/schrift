@@ -22,7 +22,9 @@ Notable behavior that post-dates the original v1 scope and is reflected below:
   any network attempt, parks at `.pendingSync` ("Saved on this device · syncs
   when online"), and replays on reconnect/foreground/launch. Offline *creation*
   has landed too — Home's `+`, "Add a subpage" and the drawer's "New page" mint a
-  client-minted-id record when the network cannot take the POST, and a replay POSTs it
+  client-minted-id record when the network cannot take the POST (with the native editor on and no saved server setup they create nothing: Home's `+` and "Add a subpage"
+  offline, or any create under an unsent parent, show `create.needs_online`, and a failed POST keeps
+  its own error), and a replay POSTs it
   and migrates the draft onto the server's id. Its storage and safety holds
   (`PendingDocumentCreateStore`, the gates that keep any *save* from naming a
   client-minted id, and the replay that POSTs such a document and migrates it onto

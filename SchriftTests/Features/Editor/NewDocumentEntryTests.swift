@@ -33,6 +33,9 @@ final class NewDocumentEntryTests: XCTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        // Pinned off: the default reads `UserDefaults.standard`, so a simulator with the native
+        // editor on would refuse every local mint these tests expect.
+        coordinator.nativeEditorEnabled = { false }
         SignedInUserStore(userDefaults: defaults).remember(ownerID)
     }
 

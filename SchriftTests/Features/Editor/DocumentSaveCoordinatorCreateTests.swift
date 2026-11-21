@@ -50,6 +50,25 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         return (coordinator, draftStore, createStore)
     }
 
+    /// A coordinator whose `ServerConfigStore` shares this test's isolated suite, so a cached
+    /// config from another run cannot decide `localCreateNeedsServerSetup`.
+    private func makeCoordinatorWithConfigStore() -> (DocumentSaveCoordinator, UserDefaults) {
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let suiteName = "CoordinatorCreateTests.config.\(UUID().uuidString)"
+        suiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let coordinator = DocumentSaveCoordinator(
+            client: client,
+            draftStore: PendingDraftStore(userDefaults: defaults),
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            serverOrigin: origin,
+            backgroundTasks: .noop
+        )
+        return (coordinator, defaults)
+    }
+
     private func savesInFlight(_ log: RequestRecorder) -> Int {
         log.count(ofMethod: "PATCH", urlContaining: "/content/")
     }
@@ -88,6 +107,46 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         XCTAssertEqual(coordinator.state(for: document.id), .pendingSync)
+    }
+
+    /// With the native editor on and no cached server config there is no collaboration org to
+    /// seed a replica from, so the callers must ask the user to go online instead of minting a
+    /// classic draft.
+    func testLocalCreateNeedsServerSetupWhenTheSwitchIsOnAndNoConfigIsCached() {
+        let (coordinator, _) = makeCoordinatorWithConfigStore()
+        coordinator.nativeEditorEnabled = { true }
+
+        XCTAssertTrue(coordinator.localCreateNeedsServerSetup)
+    }
+
+    func testLocalCreateNeedsNoServerSetupWhenADocs6ConfigIsCached() {
+        let (coordinator, defaults) = makeCoordinatorWithConfigStore()
+        coordinator.nativeEditorEnabled = { true }
+        ServerConfigStore(userDefaults: defaults).remember(
+            ServerConfig(releaseVersion: "6.0.0"), forServerOrigin: origin)
+
+        XCTAssertFalse(coordinator.localCreateNeedsServerSetup)
+    }
+
+    func testLocalCreateNeedsNoServerSetupWhenTheSwitchIsOff() {
+        let (coordinator, _) = makeCoordinatorWithConfigStore()
+        coordinator.nativeEditorEnabled = { false }
+
+        XCTAssertFalse(coordinator.localCreateNeedsServerSetup)
+    }
+
+    /// The mint itself is not gated: `reviveAsLocalDocument` calls it to carry content over
+    /// from a dead id, and refusing there would drop the user's work. The `create.needs_online`
+    /// refusal lives in the affordances, not here.
+    func testCreateLocalDocumentStillMintsWithTheNativeEditorOnAndNoCachedConfig() {
+        let (coordinator, _) = makeCoordinatorWithConfigStore()
+        coordinator.nativeEditorEnabled = { true }
+
+        let document = coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+
+        XCTAssertTrue(coordinator.isPendingCreate(documentID: document.id))
+        XCTAssertEqual(coordinator.pendingCreatesVersion, 1)
     }
 
     /// Once the replay has POSTed it, the server owns the document — the fetched list is

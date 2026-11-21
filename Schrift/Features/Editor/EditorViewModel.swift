@@ -2030,6 +2030,10 @@ final class EditorViewModel {
                 showError(.editor_error_add_subpage)
                 return nil
             }
+            if saveCoordinator.localCreateNeedsServerSetup {
+                showError(.create_needs_online)
+                return nil
+            }
             return saveCoordinator.createLocalDocument(
                 title: "Untitled subpage", parentID: documentID, ownerUserID: ownerUserID)
         }
@@ -2038,6 +2042,10 @@ final class EditorViewModel {
         if availability.isOffline {
             guard let ownerUserID = signedInUser.userID else {
                 showError(.editor_error_add_subpage)
+                return nil
+            }
+            if saveCoordinator.localCreateNeedsServerSetup {
+                showError(.create_needs_online)
                 return nil
             }
             return saveCoordinator.createLocalDocument(
@@ -2060,6 +2068,12 @@ final class EditorViewModel {
             if let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
                 let ownerUserID = signedInUser.userID
             {
+                // Online, so "go online" would be the wrong advice: keep the create's own
+                // failure rather than minting a classic draft.
+                if saveCoordinator.localCreateNeedsServerSetup {
+                    showError(.editor_error_add_subpage)
+                    return nil
+                }
                 // **Nothing is appended.** `mergedSubpages` merges the scoped
                 // `pendingLocalDocuments` on every read, so the row is on screen either way —
                 // but a synthetic pushed into `subpages` is one nothing can ever take back

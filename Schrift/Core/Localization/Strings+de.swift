@@ -45,6 +45,7 @@ enum Strings_de {
         .common_clear_search: "Suche löschen",
         .common_you: "(du)",
         .common_loading: "Wird geladen",
+        .create_needs_online: "Gehe online, um eine Seite zu erstellen.",
         .search_results_one: "%d Ergebnis",
         .search_results_other: "%d Ergebnisse",
 

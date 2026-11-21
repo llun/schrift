@@ -65,6 +65,42 @@ final class HomeViewModelCreateTests: HomeViewModelTestCase {
         XCTAssertNil(viewModel.errorKey)
     }
 
+    /// With the native editor on and no cached server config there is no collaboration org to
+    /// seed a replica from, so an offline create asks the user to go online and mints nothing —
+    /// a classic draft would be the old editor's page.
+    func testOfflineCreateWithTheNativeEditorOnAndNoCachedConfigAsksToGoOnline() async {
+        preferences.set(true, forKey: "schrift.workOffline")
+        let signedIn = makeSignedInUser()
+        let viewModel = makeViewModel(signedInUser: signedIn)
+        viewModel.saveCoordinator.nativeEditorEnabled = { true }
+        await viewModel.load()
+
+        let document = await viewModel.createDocument()
+
+        XCTAssertNil(document)
+        XCTAssertEqual(viewModel.errorKey, .create_needs_online)
+        XCTAssertEqual(viewModel.saveCoordinator.pendingCreatesVersion, 0, "nothing minted")
+        XCTAssertTrue(viewModel.recentDocuments.isEmpty)
+    }
+
+    /// The same offline create with a cached Docs 6 config still mints a native local page.
+    func testOfflineCreateWithTheNativeEditorOnAndACachedDocs6ConfigMintsANativePage() async {
+        preferences.set(true, forKey: "schrift.workOffline")
+        let signedIn = makeSignedInUser()
+        let viewModel = makeViewModel(signedInUser: signedIn)
+        viewModel.saveCoordinator.nativeEditorEnabled = { true }
+        viewModel.saveCoordinator.serverConfigStore.remember(
+            ServerConfig(releaseVersion: "6.0.0"), forServerOrigin: "https://docs.example.org")
+        await viewModel.load()
+
+        let document = await viewModel.createDocument()
+
+        XCTAssertNotNil(document)
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertTrue(viewModel.saveCoordinator.isPendingCreate(documentID: document!.id))
+        XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Untitled document"])
+    }
+
     func testFailedCreateDocumentSurfacesTheServersOwnReason() async {
         let diagnostics = APIDiagnosticsLog()
         let viewModel = makeViewModel(diagnostics: diagnostics)
@@ -101,6 +137,24 @@ final class HomeViewModelCreateTests: HomeViewModelTestCase {
         XCTAssertNil(viewModel.errorKey, "kept on the device, not reported as a failure")
         XCTAssertTrue(viewModel.saveCoordinator.isPendingCreate(documentID: document!.id))
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Untitled document"])
+    }
+
+    /// Online, so "go online" would be the wrong advice: with no saved server setup the
+    /// retryable fallback keeps the create's own failure instead of minting.
+    func testCreateDocumentOnATransportErrorKeepsTheErrorWhenTheNativeEditorHasNoCachedConfig() async {
+        let signedIn = makeSignedInUser()
+        let viewModel = makeViewModel(signedInUser: signedIn)
+        viewModel.saveCoordinator.nativeEditorEnabled = { true }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        let document = await viewModel.createDocument()
+
+        XCTAssertNil(document)
+        XCTAssertEqual(viewModel.errorKey, .home_error_create)
+        XCTAssertEqual(viewModel.saveCoordinator.pendingCreatesVersion, 0, "nothing minted")
+        XCTAssertTrue(viewModel.recentDocuments.isEmpty)
     }
 
     /// The other half: a server that answered and *declined*. Minting a local document there

@@ -862,6 +862,10 @@ markdown write endpoint**. Understand this before touching the save path:
   `createLocalDocument(title:parentID:ownerUserID:)` mints the record **plus a
   seed draft** (so the editor's existing draft precedence renders it unchanged)
   and sets `.pendingSync` — nothing is syncing, but the work is on the device.
+  **With the native editor on and no cached Docs 6 config there is no org to seed
+  a replica from**, so the create affordances mint nothing (offline or under an
+  unsent parent they show `create.needs_online`; a failed POST keeps its own error); `reviveAsLocalDocument` is exempt because it
+  must never drop the content it carries.
   `discardPendingWork` drops the record with the draft, or a replay would resurrect
   what the user threw away. **But "a local delete is purely local" holds only while
   the record is un-checkpointed** — once `syncedServerID` is set the POST has landed
@@ -2006,7 +2010,9 @@ markdown write endpoint**. Understand this before touching the save path:
   client-minted id for a 404 and an impossible retry.
   The editor's two **create** buttons are **ungated** — neither on `isOffline` (a failed
   POST falls back to a local document the replay sends later) nor on the parent (2026-08-06:
-  the replay orders two dependent creates). Where the parent is itself local,
+  the replay orders two dependent creates). With the native editor on and no saved server
+  setup they create nothing: "Add a subpage" offline, or either button under
+  an unsent parent, shows `create.needs_online`, and a failed POST keeps its own error. Where the parent is itself local,
   `EditorViewModel.addSubpage` and `PagesTreeViewModel.addPage` mint **directly, issuing no
   request** — the POST would address `documents/{local-uuid}/children/` and take a 404, which
   `retryableSaveFailure` correctly refuses to retry, so the transport fallback beside it
@@ -2019,7 +2025,9 @@ markdown write endpoint**. Understand this before touching the save path:
   not read it as an inventory.** Several POSTing affordances elsewhere are
   deliberately ungated: Home's **`+`** now creates *locally* under Work Offline or on a
   retryable failure, and errors with `home_error_create` only on a rejection the server
-  actually made (or when no account id is known). The three create buttons (Home `+`,
+  actually made (or when no account id is known). With the native editor on and no saved
+  server setup it shows `create.needs_online` offline and keeps `home_error_create` on an
+  online failure. The three create buttons (Home `+`,
   Add subpage, Pages "New page") are disabled while their create is in flight
   (`isCreatingDocument` / `isAddingSubpage` / `isAddingPage`; a second call returns nil
   without a request, or repeated taps on a hanging POST mint duplicates), and Home and

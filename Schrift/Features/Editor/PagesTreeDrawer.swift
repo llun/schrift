@@ -317,7 +317,8 @@ struct PagesTreeDrawer: View {
     private var newPageButton: some View {
         // Ungated. Neither being offline nor the root being unsynced stops this: `addPage`
         // mints locally in both cases, and the replay POSTs a parent before the page that
-        // names it.
+        // names it. With the native editor on and no saved server setup it mints nothing:
+        // under an unsent root it shows `create.needs_online`, and a failed POST keeps its error.
         VStack(spacing: 0) {
             Divider().overlay(theme.colors.borderDefault)
             Button {

@@ -8,6 +8,13 @@ private let identityStub = MockURLProtocol.Stub(
     body: Data(#"{"id":"11111111-1111-4111-8111-111111111111"}"#.utf8), error: nil)
 private let docs6ConfigStub = MockURLProtocol.Stub(
     statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+/// A Docs 6 config that also names its yhub org, so the remembered config can be checked for
+/// the collaboration org the native editor's offline create needs.
+private let docs6ConfigWithOrgStub = MockURLProtocol.Stub(
+    statusCode: 200, headers: [:],
+    body: Data(
+        #"{"RELEASE_VERSION":"6.0.0","COLLABORATION_WS_URL":"https://docs.llun.dev/ws/v1/acme"}"#.utf8),
+    error: nil)
 private let legacyConfigStub = MockURLProtocol.Stub(
     statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"5.4.1"}"#.utf8), error: nil)
 
@@ -31,6 +38,7 @@ final class ConnectViewModelTests: XCTestCase {
 
     private func makeViewModel(
         serverCapabilities: ServerCapabilityStore? = nil,
+        serverConfigStore: ServerConfigStore? = nil,
         stub: @escaping @Sendable (URLRequest) -> MockURLProtocol.Stub
     ) -> ConnectViewModel {
         MockURLProtocol.stubHandler = stub
@@ -40,6 +48,7 @@ final class ConnectViewModelTests: XCTestCase {
             sessionStore: sessionStore,
             recentServers: recentServers,
             serverCapabilities: serverCapabilities ?? ServerCapabilityStore(userDefaults: userDefaults),
+            serverConfigStore: serverConfigStore ?? ServerConfigStore(userDefaults: userDefaults),
             apiClientFactory: { serverURL in
                 DocsAPIClient(
                     baseURL: serverURL.appendingPathComponent("api/v1.0/"),
@@ -178,6 +187,23 @@ final class ConnectViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorKey)
         XCTAssertEqual(capabilities.capability(forServerOrigin: "https://docs.llun.dev"), .docs6)
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/api/v1.0/config/"), 1)
+    }
+
+    /// The whole config is kept, not just the capability: the native editor's offline create
+    /// needs the collaboration org, and RootView's hook only fills it later.
+    func testADocs6SignInRemembersTheFullConfigForTheOrigin() async throws {
+        let configs = ServerConfigStore(userDefaults: userDefaults)
+        let viewModel = makeViewModel(serverConfigStore: configs) { request in
+            request.url?.absoluteString.hasSuffix("/config/") == true ? docs6ConfigWithOrgStub : identityStub
+        }
+        viewModel.serverURLInput = "docs.llun.dev"
+        viewModel.startSignIn()
+
+        await viewModel.handleLoginComplete()
+
+        let config = configs.config(forServerOrigin: "https://docs.llun.dev")
+        XCTAssertEqual(config?.releaseVersion, "6.0.0")
+        XCTAssertEqual(config?.collaborationOrg, "acme")
     }
 
     func testALegacyServerRefusesSignInWithTheUnsupportedErrorAndRecordsLegacy() async throws {

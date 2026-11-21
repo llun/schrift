@@ -119,7 +119,8 @@ struct MainTabView: View {
                     serverHost: serverHost,
                     onSelect: { push(DocumentEditorRoute(document: $0), path: $docsPath) },
                     onSearchTap: { docsPath.append(HomeRoute.search) },
-                    onNewDocument: createDocument
+                    onNewDocument: createDocument,
+                    onRetryCreate: createDocument
                 )
                 .navigationDestination(for: DocumentEditorRoute.self) { route in
                     editorScreen(for: route, path: $docsPath)

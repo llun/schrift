@@ -45,6 +45,7 @@ enum Strings_nl {
         .common_clear_search: "Zoekopdracht wissen",
         .common_you: "(jij)",
         .common_loading: "Laden",
+        .create_needs_online: "Ga online om een pagina te maken.",
         .search_results_one: "%d resultaat",
         .search_results_other: "%d resultaten",
 

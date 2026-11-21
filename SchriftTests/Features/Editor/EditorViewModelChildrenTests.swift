@@ -54,6 +54,9 @@ final class EditorViewModelChildrenTests: XCTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: childrenCache, backgroundTasks: .noop)
+        // Pinned off: the default reads `UserDefaults.standard`, so a simulator with the native
+        // editor on would refuse every local mint these tests expect.
+        coordinator.nativeEditorEnabled = { false }
         let signedIn = SignedInUserStore(userDefaults: defaults)
         if let signedInUserID { signedIn.remember(signedInUserID) }
         return EditorViewModel(
@@ -722,5 +725,31 @@ final class EditorViewModelChildrenTests: XCTestCase {
         guard let child else { return XCTFail("the offline add should mint a child locally") }
         XCTAssertEqual(log.methods.count, 0)
         XCTAssertTrue(viewModel.saveCoordinator.isPendingCreate(documentID: child.id))
+    }
+
+    /// With the native editor on and no cached server config there is no collaboration org to
+    /// seed a replica from, so the offline add asks the user to go online instead of minting.
+    func testAddSubpageWhileThePathIsDownAsksToGoOnlineWhenTheNativeEditorHasNoCachedConfig() async {
+        let log = RequestRecorder()
+        let suite = "EditorViewModelChildrenTests.path.\(UUID().uuidString)"
+        suiteNames.append(suite)
+        let path = FakeNetworkPath(userDefaults: UserDefaults(suiteName: suite)!)
+        let viewModel = makeViewModel(
+            signedInUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111"),
+            availability: path.availability)
+        viewModel.saveCoordinator.nativeEditorEnabled = { true }
+        path.setSatisfied(false)
+        await waitUntil { path.availability.isOffline }
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        let child = await viewModel.addSubpage()
+
+        XCTAssertNil(child)
+        XCTAssertEqual(viewModel.errorKey, .create_needs_online)
+        XCTAssertEqual(log.methods.count, 0)
+        XCTAssertEqual(viewModel.saveCoordinator.pendingCreatesVersion, 0, "nothing minted")
     }
 }

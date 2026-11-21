@@ -252,6 +252,25 @@ final class EditorViewModelLocalDocumentTests: EditorViewModelTestCase {
         XCTAssertTrue(env.coordinator.isPendingCreate(documentID: child!.id))
     }
 
+    /// Online, so "go online" would be the wrong advice: with no saved server setup the
+    /// retryable fallback keeps the create's own failure instead of minting.
+    func testAddSubpageOnATransportErrorKeepsTheErrorWhenTheNativeEditorHasNoCachedConfig() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let env = makeEnvironment()
+        env.coordinator.nativeEditorEnabled = { true }
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser())
+
+        let child = await viewModel.addSubpage()
+
+        XCTAssertNil(child)
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_subpage)
+        XCTAssertEqual(env.coordinator.pendingCreatesVersion, 0, "nothing minted")
+    }
+
     /// A rejection on the merits still errors: minting there would promise a replay the
     /// server will decline again.
     func testAddSubpageStillReportsARejectionOnTheMerits() async {
@@ -291,6 +310,25 @@ final class EditorViewModelLocalDocumentTests: EditorViewModelTestCase {
             env.coordinator.pendingCreateForTesting(localID: child!.id)?.parentID, env.document.id,
             "and it is filed under the parent, which is what the replay reorders on")
         XCTAssertEqual(env.viewModel.mergedSubpages?.map(\.id), [child!.id], "and it shows immediately")
+    }
+
+    /// With the native editor on and no cached server config there is no collaboration org to
+    /// seed a replica from, so "Add a subpage" asks the user to go online instead of minting a
+    /// classic draft.
+    func testAddSubpageAsksToGoOnlineWhenTheNativeEditorHasNoCachedConfig() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeLocalEnvironment()
+        env.coordinator.nativeEditorEnabled = { true }
+
+        let child = await env.viewModel.addSubpage()
+
+        XCTAssertNil(child)
+        XCTAssertEqual(env.viewModel.errorKey, .create_needs_online)
+        XCTAssertTrue(
+            env.createStore.allCreates().allSatisfy { $0.parentID != env.document.id },
+            "nothing minted under the parent")
     }
 
     /// Nothing may be filed inside a document that has just been deleted. The screen stays

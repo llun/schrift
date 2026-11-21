@@ -63,6 +63,9 @@ final class PagesTreeViewModelTests: XCTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: cache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        // Pinned off: the default reads `UserDefaults.standard`, so a simulator with the native
+        // editor on would refuse every local mint these tests expect.
+        coordinator.nativeEditorEnabled = { false }
         let signedIn = SignedInUserStore(userDefaults: defaults)
         if let signedInUserID { signedIn.remember(signedInUserID) }
         let root = coordinator.createLocalDocument(
@@ -404,6 +407,48 @@ final class PagesTreeViewModelTests: XCTestCase {
         XCTAssertEqual(
             env.coordinator.pendingCreateForTesting(localID: created!.id)?.parentID, env.root.id)
         XCTAssertEqual(env.viewModel.rows.map(\.document.id), [created!.id], "and it shows in the tree")
+    }
+
+    /// With the native editor on and no cached server config there is no collaboration org to
+    /// seed a replica from, so the drawer asks the user to go online instead of minting a
+    /// classic draft.
+    func testAddingAPageUnderALocalRootAsksToGoOnlineWhenTheNativeEditorHasNoCachedConfig() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeLocalRootViewModel()
+        env.coordinator.nativeEditorEnabled = { true }
+
+        let created = await env.viewModel.addPage(under: env.root.id)
+
+        XCTAssertNil(created)
+        XCTAssertEqual(env.viewModel.createErrorKey, .create_needs_online)
+        XCTAssertTrue(env.viewModel.rows.isEmpty, "nothing minted")
+    }
+
+    /// Online, so "go online" would be the wrong advice: with no saved server setup the
+    /// retryable fallback keeps the create's own failure instead of minting.
+    func testAddingAPageOnATransportErrorKeepsTheErrorWhenTheNativeEditorHasNoCachedConfig() async {
+        let env = makeLocalRootViewModel()
+        env.coordinator.nativeEditorEnabled = { true }
+        let syncedParent = UUID()
+        let ownerUserID = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(ownerUserID)
+        let viewModel = PagesTreeViewModel(
+            rootID: syncedParent, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+        let before = env.coordinator.pendingCreatesVersion
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        let created = await viewModel.addPage(under: syncedParent)
+
+        XCTAssertNil(created)
+        XCTAssertEqual(viewModel.createErrorKey, .pages_error_create)
+        XCTAssertEqual(env.coordinator.pendingCreatesVersion, before, "nothing minted")
     }
 
     /// The gap this closes: the row is merged in at **read** time, so it survives the view
@@ -759,6 +804,8 @@ final class PagesTreeViewModelTests: XCTestCase {
                 directory: contentCacheDirectory.appendingPathComponent("attachments")),
             listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: cache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        // Pinned off for the same reason as `makeLocalRootViewModel`.
+        coordinator.nativeEditorEnabled = { false }
         let signedIn = SignedInUserStore(userDefaults: defaults)
         signedIn.remember(UUID())
         let viewModel = PagesTreeViewModel(
