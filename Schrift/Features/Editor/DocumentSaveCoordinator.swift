@@ -5080,9 +5080,10 @@ final class DocumentSaveCoordinator {
                 // behind, a native photo would upload to `documents/{local-id}/` and its bytes and
                 // replica would stay protected forever.
                 // A replica this account may not remove (another account's, or unreadable) keeps
-                // its draft, as everywhere else `discardNativeReplica` answers false.
+                // its draft and its queued photos, as everywhere else `discardNativeReplica`
+                // answers false.
                 let mayRemoveLocalDraft = discardNativeReplica(documentID: checkpointed.localID)
-                discardPendingAttachments(documentID: checkpointed.localID)
+                if mayRemoveLocalDraft { discardPendingAttachments(documentID: checkpointed.localID) }
                 states[checkpointed.localID] = .idle
                 clearFailure(checkpointed.localID)
                 if mayRemoveLocalDraft { draftStore.remove(documentID: checkpointed.localID) }

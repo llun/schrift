@@ -46,7 +46,10 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
     /// coordinator that falls back to `UserDefaults.standard` writes real records into the
     /// shared domain, and a later pass then issues a genuine `/users/me/` that escapes
     /// `MockURLProtocol` and stalls the run for a minute.
-    private func makeEnvironment(sharing defaults: UserDefaults? = nil, serverOrigin: String? = nil) -> Environment {
+    private func makeEnvironment(
+        sharing defaults: UserDefaults? = nil, serverOrigin: String? = nil,
+        replicaInterrupt: (@Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil
+    ) -> Environment {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let defaults =
             defaults
@@ -67,7 +70,7 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
                 client: client, draftStore: drafts,
                 replicaStore: ReplicaStore(
                     directory: cacheDirectory.appendingPathComponent("ReplicaDrafts"),
-                    ownershipStore: ReplicaOwnershipStore(userDefaults: defaults)),
+                    ownershipStore: ReplicaOwnershipStore(userDefaults: defaults), interrupt: replicaInterrupt),
                 contentCache: DocumentContentCacheStore(directory: cacheDirectory),
                 createStore: creates, deleteStore: deletes, attachmentStore: attachments,
                 listCache: lists, childrenCache: children,
@@ -668,6 +671,47 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertNil(relaunched.attachments.data(for: photoID), "and its bytes are gone")
         XCTAssertNil(relaunched.creates.create(for: local.id))
         XCTAssertFalse(relaunched.coordinator.isPendingDelete(documentID: serverID))
+    }
+
+    /// When the local replica's removal fails (`discardNativeReplica` answers false), the checkpointed delete
+    /// keeps the local draft — and so must keep the queued photo it names.
+    func testACheckpointedTombstoneKeepsThePhotosWhenItsReplicaIsKept() async throws {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        SignedInUserStore(userDefaults: env.defaults).remember(user)
+        let local = env.coordinator.createLocalDocument(title: "Converted", parentID: nil, ownerUserID: user)
+        let localScope = ReplicaScope(serverOrigin: origin, ownerUserID: user, org: "docs", documentID: local.id)
+        let manifest = try env.coordinator.replicaStore.create(for: localScope, checkpoint: Data([0, 0]))
+        env.drafts.save(
+            PendingDraft(
+                documentID: local.id, title: "Converted", markdown: "", updatedAt: Date(),
+                replica: ReplicaDraftReference(manifest: manifest, markdown: "")))
+        let photoID = UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
+        env.attachments.saveData(Data([0xFF, 0xD8, 0xFF]), for: photoID)
+        env.attachments.save(
+            PendingAttachment(
+                localID: photoID, documentID: local.id, createdAt: Date(), serverOrigin: origin,
+                ownerUserID: user,
+                native: NativeMediaTarget(
+                    org: "docs", blockID: photoID.uuidString.lowercased(),
+                    slot: MediaBlock.Slot(node: "image", url: ""),
+                    fileName: "photo.jpg", contentType: "image/jpeg")))
+        var checkpointed = try XCTUnwrap(env.coordinator.pendingCreateForTesting(localID: local.id))
+        checkpointed.syncedServerID = serverID
+        checkpointed.postedTitle = "Converted"
+        env.coordinator.savePendingCreateForTesting(checkpointed)
+
+        let relaunched = makeEnvironment(sharing: env.defaults) { operation, _ in
+            if operation == .remove { throw ReplicaStoreError.corrupt }
+        }
+        relaunched.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log)
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(relaunched.drafts.draft(for: local.id), "the draft stays with its kept replica")
+        XCTAssertNotNil(relaunched.attachments.attachment(for: photoID), "and so does its queued photo")
+        XCTAssertEqual(relaunched.attachments.data(for: photoID), Data([0xFF, 0xD8, 0xFF]))
     }
 
     /// The undo is one request wide and can lose — but it must never lose the user's *work*.
