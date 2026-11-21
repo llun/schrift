@@ -827,12 +827,18 @@ final class ColumnTextContainer: UIScrollView {
         // A column above the screen that changed height (TextKit correcting its
         // estimate as it lays out) moves the columns below it: keep the top
         // column on screen where it was, or the caret just revealed slides away.
+        // Only for stacked columns at an unchanged width: a layout switch or a
+        // rotation moves every column, and then nothing on screen is kept.
         let before = CGRect(x: 0, y: contentOffset.y, width: bounds.width, height: bounds.height)
-        if let index = frames.indices.first(where: {
-            regions[ObjectIdentifier(frames[$0].textView)]?.intersects(before) == true
-        }), let old = regions[ObjectIdentifier(frames[index].textView)] {
+        let olds = frames.map { regions[ObjectIdentifier($0.textView)] }
+        let anchor = olds.firstIndex { $0?.intersects(before) == true }
+        if layout == .stacked, let index = anchor, let old = olds[index], old.width == bounds.width {
             let shift = rects[index].minY - old.minY
-            if abs(shift) > 0.5 { contentOffset.y += shift }
+            if abs(shift) > 0.5 {
+                let lowest = -adjustedContentInset.top
+                let highest = max(lowest, size.height - bounds.height + adjustedContentInset.bottom)
+                contentOffset.y = min(max(contentOffset.y + shift, lowest), highest)
+            }
         }
         let visible = CGRect(x: 0, y: contentOffset.y, width: bounds.width, height: bounds.height)
         placing = true
