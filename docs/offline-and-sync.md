@@ -354,8 +354,9 @@ Existing Markdown drafts retain their classic owner.
   entries), marks `serverScope` ownership, writes the `serverID` `PendingDraft` before removing
   the `localID` draft and `localScope` replica, re-keys child `PendingDocumentCreate.parentID` and
   `PendingAttachment.documentID`, and then enqueues or holds on conflict. With the switch on but
-  no cached Docs 6 config there is no org to seed, so the create affordances refuse with
-  `create.needs_online` instead of minting a classic draft (`reviveAsLocalDocument` is exempt: it
+  no cached Docs 6 config there is no org to seed, so the create affordances mint nothing:
+  offline or under an unsent parent they show `create.needs_online`, and a failed POST keeps its own
+  error (`reviveAsLocalDocument` is exempt: it
   must never drop content).
 - **Offline Docs-6 Markdown-cache guard & stale-cache checks.** When `NativeEditorPreference.isEnabled()`
   is true, the cached server config is Docs 6, `nativeOwnership == .none`, and `storedDraft == nil`,
