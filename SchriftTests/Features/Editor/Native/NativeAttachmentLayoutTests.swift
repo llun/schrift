@@ -657,6 +657,307 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         XCTAssertEqual(try journalCount(harness), 0)
     }
 
+    /// Returns the first laid-out block visible in the viewport (its bottom lies
+    /// below the visible top edge), along with its frame in text-view coordinates.
+    private func firstVisibleBlock(_ session: NativeEditorSession) throws -> (id: String, frame: CGRect) {
+        let view = session.textView
+        let layout = try XCTUnwrap(view.textLayoutManager)
+        layout.textViewportLayoutController.layoutViewport()
+        let viewport = try XCTUnwrap(layout.textViewportLayoutController.viewportRange)
+        let visibleMinY = view.bounds.minY + view.adjustedContentInset.top
+        var found: (String, CGRect)?
+        layout.enumerateTextLayoutFragments(from: viewport.location, options: []) { fragment in
+            guard fragment.rangeInElement.location.compare(viewport.endLocation) == .orderedAscending else {
+                return false
+            }
+            let frame = fragment.layoutFragmentFrame
+            guard frame.height > 0, frame.maxY + view.textContainerInset.top > visibleMinY else { return true }
+            if let blockID = (fragment as? NativeBlockFragment)?.blockID {
+                found = (
+                    blockID,
+                    frame.offsetBy(dx: view.textContainerInset.left, dy: view.textContainerInset.top)
+                )
+                return false
+            }
+            return true
+        }
+        return try XCTUnwrap(found, "viewport has a laid-out visible block")
+    }
+
+    /// (1) In a long document scrolled far past unlaid-out image cards
+    /// (`height == 0`, alongside an earlier laid-out card), finishing their
+    /// loads must capture the viewport anchor without needing cached off-screen
+    /// fragments and keep the first visible block anchored within 0.5 pt.
+    func testFarAboveEvictedImageAspectChangeKeepsFirstVisibleBlockAnchored() async throws {
+        let topURL = "\(Self.origin)/media/top-laid-out.png"
+        let farURL = "\(Self.origin)/media/far-evicted-a.png"
+        let soloURL = "\(Self.origin)/media/far-evicted-b.png"
+        var docBlocks: [BlockNoteBlock] = [image("imgTop", url: topURL)]
+        for index in 0..<5_000 {
+            if index == 100 {
+                docBlocks.append(image("imgFar", url: farURL))
+            }
+            if index == 200 {
+                docBlocks.append(image("imgSolo", url: soloURL))
+            }
+            docBlocks.append(
+                paragraph(
+                    "p\(index)",
+                    "Paragraph \(index) with enough text to wrap across lines for realistic long-document layout."))
+        }
+        let harness = try await makeHarness(docBlocks)
+        addTeardownBlock { await harness.close() }
+        let log = FetchLog()
+        var gates: [String: FetchGate] = [:]
+        harness.view.blockControls.images = loader(log) { url in
+            let gate = gates[url.absoluteString] ?? FetchGate()
+            gates[url.absoluteString] = gate
+            gate.started = true
+            return try await withCheckedThrowingContinuation { continuation in
+                gate.continuation = continuation
+            }
+        }
+        harness.view.blockControls.serverOrigin = Self.origin
+        let window = host(harness.view, height: 300)
+        defer { window.isHidden = true }
+        await waitUntil { gates[topURL]?.started == true }
+        let topView = try XCTUnwrap(realized(harness.session, "imgTop"))
+
+        // Scroll deep into the 5,000-block document so `imgTop` was laid out at
+        // the top while `imgFar` and `imgSolo` have no laid-out fragment (`height == 0`).
+        let targetY = (harness.view.contentSize.height - harness.view.bounds.height) * 0.8
+        harness.view.setContentOffset(CGPoint(x: 0, y: targetY), animated: false)
+        harness.view.layoutIfNeeded()
+
+        // Verify the viewport starts far past `imgFar` and `imgSolo` without
+        // calling `textLayoutFragment(for:)` on them (which would instantiate and
+        // prime off-screen fragments in `NSTextLayoutManager` before the refresh).
+        let layout = try XCTUnwrap(harness.view.textLayoutManager)
+        let content = try XCTUnwrap(layout.textContentManager)
+        let viewport = try XCTUnwrap(layout.textViewportLayoutController.viewportRange)
+        let viewportStart = content.offset(from: content.documentRange.location, to: viewport.location)
+        let soloEntry = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "imgSolo"))
+        XCTAssertGreaterThan(viewportStart, soloEntry.range.location + 1_000)
+
+        let oldFarAttachment = try attachment(harness.session, "imgFar")
+        let firstBefore = try firstVisibleBlock(harness.session)
+        let screenYBefore = firstBefore.frame.minY - harness.view.contentOffset.y
+
+        // First, verify a solo unlaid-out image (`imgSolo`, never laid out so
+        // `height == 0`) still produces a scroll anchor and compensates offset.
+        let soloTask = Task {
+            await harness.view.blockControls.images?.loadIfNeeded(URL(string: soloURL)!)
+        }
+        await waitUntil { gates[soloURL]?.started == true }
+        gates[soloURL]?.continuation?.resume(returning: testPNGData(width: 200, height: 400))
+        _ = await soloTask.value
+        harness.view.blockControls.noteMediaAspectRatioLoaded(for: soloURL)
+        let soloAnchor = harness.view.blockControls.prepareAspectRatioRefresh()
+        XCTAssertNotNil(soloAnchor, "unlaid-out above-viewport image edit must still produce a scroll anchor")
+        harness.view.blockControls.completeAspectRatioRefresh(soloAnchor)
+        layout.textViewportLayoutController.layoutViewport()
+        let soloAfter = try fragmentFrame(harness.session, firstBefore.id)
+        XCTAssertEqual(soloAfter.minY - harness.view.contentOffset.y, screenYBefore, accuracy: 0.5)
+
+        // Then coalesce `imgFar` + `imgTop` into a full windowed `layoutIfNeeded()` pass.
+        let farTask = Task {
+            await harness.view.blockControls.images?.loadIfNeeded(URL(string: farURL)!)
+        }
+        await waitUntil { gates[farURL]?.started == true }
+        gates[farURL]?.continuation?.resume(returning: testPNGData(width: 200, height: 400))
+        _ = await farTask.value
+        gates[topURL]?.continuation?.resume(returning: testPNGData(width: 200, height: 400))
+        await topView.loadTask?.value
+        harness.view.layoutIfNeeded()
+
+        let newFarAttachment = try attachment(harness.session, "imgFar")
+        XCTAssertGreaterThan(newFarAttachment.content.lineHeight - oldFarAttachment.content.lineHeight, 100)
+        layout.textViewportLayoutController.layoutViewport()
+        let firstAfter = try fragmentFrame(harness.session, firstBefore.id)
+        let screenYAfter = firstAfter.minY - harness.view.contentOffset.y
+        XCTAssertGreaterThan(firstAfter.height, 0, "anchor fragment remains laid out")
+        XCTAssertEqual(
+            screenYAfter, screenYBefore, accuracy: 0.5,
+            "first visible block \(firstBefore.id) must stay anchored when unlaid-out far-above image resizes")
+    }
+
+    /// (2) When a storage edit invalidates layout so the captured anchor
+    /// fragment is not laid out until TextKit 2's viewport is relocated to it,
+    /// `completeAspectRatioRefresh` relocates the viewport instead of reading
+    /// `minY == 0` and jumping `contentOffset` toward the top.
+    func testCompleteAspectRatioRefreshRelocatesUnlaidOutAnchorWithoutJumpingToTop() async throws {
+        let url = "\(Self.origin)/media/relocate-top.png"
+        var docBlocks: [BlockNoteBlock] = [image("imgTop", url: url)]
+        for index in 0..<5_000 {
+            docBlocks.append(
+                paragraph(
+                    "p\(index)",
+                    "Paragraph \(index) with enough text to wrap across lines for realistic long-document layout."))
+        }
+        let harness = try await makeHarness(docBlocks)
+        addTeardownBlock { await harness.close() }
+        let log = FetchLog()
+        let imgLoader = loader(log, data: testPNGData(width: 200, height: 400))
+        harness.view.blockControls.images = imgLoader
+        harness.view.blockControls.serverOrigin = Self.origin
+        let window = host(harness.view, height: 400)
+        defer { window.isHidden = true }
+
+        // Scroll deep into the 5,000-block document, capture the first visible block.
+        let targetY = (harness.view.contentSize.height - harness.view.bounds.height) * 0.8
+        harness.view.setContentOffset(CGPoint(x: 0, y: targetY), animated: false)
+        harness.view.layoutIfNeeded()
+
+        let offsetBefore = harness.view.contentOffset.y
+        XCTAssertGreaterThan(offsetBefore, 5_000, "precondition: scrolled deep into the document")
+        let firstBefore = try firstVisibleBlock(harness.session)
+        let anchorEntry = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: firstBefore.id))
+        let anchor = NativeBlockControls.AspectRatioScrollAnchor(
+            location: anchorEntry.range.location,
+            minY: firstBefore.frame.minY - harness.view.textContainerInset.top,
+            offsetBefore: offsetBefore)
+        let screenYBefore = firstBefore.frame.minY - offsetBefore
+
+        // Apply the above-viewport storage edit and invalidate layout so the
+        // anchor fragment is not laid out until relocated.
+        _ = await imgLoader.loadIfNeeded(URL(string: url)!)
+        harness.session.surface.refreshAttachmentGeometry()
+
+        let layout = try XCTUnwrap(harness.view.textLayoutManager)
+        let content = try XCTUnwrap(layout.textContentManager)
+        let anchorLoc = try XCTUnwrap(
+            content.location(content.documentRange.location, offsetBy: anchor.location))
+        // Force an unlaid-out anchor fragment (as happens when TextKit 2's
+        // post-edit re-estimated viewport misses the anchor).
+        layout.invalidateLayout(for: layout.documentRange)
+        harness.view.setContentOffset(.zero, animated: false)
+        _ = layout.textViewportLayoutController.relocateViewport(to: content.documentRange.location)
+        layout.textViewportLayoutController.layoutViewport()
+        // Restore contentOffset back near where we were without laying out anchor.
+        harness.view.contentOffset.y = offsetBefore
+        XCTAssertEqual(layout.textLayoutFragment(for: anchorLoc)?.state, NSTextLayoutFragment.State.none)
+
+        harness.view.blockControls.completeAspectRatioRefresh(anchor)
+        let postFrag = layout.textLayoutFragment(for: anchorLoc)
+
+        XCTAssertGreaterThan(
+            harness.view.contentOffset.y, offsetBefore * 0.5,
+            "contentOffset must not jump toward the top when anchor needed relocation")
+        XCTAssertEqual(postFrag?.state, .layoutAvailable, "anchor fragment must be laid out")
+        let anchorFrameAfter = try fragmentFrame(harness.session, firstBefore.id)
+        let screenYAfter = anchorFrameAfter.minY - harness.view.contentOffset.y
+        XCTAssertEqual(screenYAfter, screenYBefore, accuracy: 0.5)
+    }
+
+    /// (3) When scrolled down so an image card lies inside the viewport (not
+    /// above the first visible block), finishing its load still grows the card
+    /// downward in place without shifting `contentOffset`.
+    func testScrolledInViewportImageStillGrowsNormallyWithoutShiftingOffset() async throws {
+        let url = "\(Self.origin)/media/in-viewport.png"
+        var docBlocks: [BlockNoteBlock] = []
+        for index in 0..<25 {
+            docBlocks.append(paragraph("before\(index)", "Before paragraph \(index) with steady text."))
+        }
+        docBlocks.append(image("imgMid", url: url))
+        for index in 0..<25 {
+            docBlocks.append(paragraph("after\(index)", "After paragraph \(index) with steady text."))
+        }
+        let harness = try await makeHarness(docBlocks)
+        addTeardownBlock { await harness.close() }
+        let log = FetchLog()
+        let gate = FetchGate()
+        harness.view.blockControls.images = loader(log) { _ in
+            gate.started = true
+            return try await withCheckedThrowingContinuation { continuation in
+                gate.continuation = continuation
+            }
+        }
+        harness.view.blockControls.serverOrigin = Self.origin
+        let window = host(harness.view, height: 500)
+        defer { window.isHidden = true }
+
+        // Scroll down so `before22` is at the top of the viewport and `imgMid`
+        // plus `after0` sit inside the visible viewport.
+        XCTAssertTrue(harness.view.scroll(toBlock: "before22", surface: harness.session.surface))
+        harness.view.layoutIfNeeded()
+        await waitUntil { gate.started }
+
+        let offsetBefore = harness.view.contentOffset.y
+        XCTAssertGreaterThan(offsetBefore, 0, "precondition: document is scrolled")
+        let oldAttachment = try attachment(harness.session, "imgMid")
+        let midView = try XCTUnwrap(realized(harness.session, "imgMid"))
+        let belowBefore = try fragmentFrame(harness.session, "after0")
+
+        gate.continuation?.resume(returning: testPNGData(width: 200, height: 400))
+        await midView.loadTask?.value
+        harness.view.layoutIfNeeded()
+
+        let newAttachment = try attachment(harness.session, "imgMid")
+        let expectedDelta = newAttachment.content.lineHeight - oldAttachment.content.lineHeight
+        XCTAssertGreaterThan(expectedDelta, 100)
+        XCTAssertEqual(
+            harness.view.contentOffset.y, offsetBefore, accuracy: 0.5,
+            "in-viewport image growth must not shift contentOffset")
+        XCTAssertEqual(
+            try fragmentFrame(harness.session, "after0").minY - belowBefore.minY,
+            expectedDelta, accuracy: 0.5,
+            "blocks below the in-viewport image shift down by the full height growth")
+        assertS2Consistent(harness.session)
+        try await assertConsistent(harness, localCommands: 0)
+        XCTAssertEqual(try journalCount(harness), 0)
+    }
+
+    /// The document header scrolls inside `contentInset.top`: an image at the top
+    /// of the screen under that inset is visible, so it grows in place.
+    func testImageAtTheTopUnderAHeaderInsetGrowsWithoutShiftingOffset() async throws {
+        let url = "\(Self.origin)/media/under-header.png"
+        var docBlocks: [BlockNoteBlock] = []
+        for index in 0..<25 {
+            docBlocks.append(paragraph("before\(index)", "Before paragraph \(index) with steady text."))
+        }
+        docBlocks.append(image("imgTop", url: url))
+        for index in 0..<25 {
+            docBlocks.append(paragraph("after\(index)", "After paragraph \(index) with steady text."))
+        }
+        let harness = try await makeHarness(docBlocks)
+        addTeardownBlock { await harness.close() }
+        let log = FetchLog()
+        let gate = FetchGate()
+        harness.view.blockControls.images = loader(log) { _ in
+            gate.started = true
+            return try await withCheckedThrowingContinuation { continuation in
+                gate.continuation = continuation
+            }
+        }
+        harness.view.blockControls.serverOrigin = Self.origin
+        let window = host(harness.view, height: 500)
+        defer { window.isHidden = true }
+        harness.view.contentInset.top = 200
+
+        XCTAssertTrue(harness.view.scroll(toBlock: "imgTop", surface: harness.session.surface))
+        harness.view.layoutIfNeeded()
+        let imageFrame = try fragmentFrame(harness.session, "imgTop")
+        // The image's top edge at the top of the screen, fully visible, inside the header inset's height.
+        harness.view.contentOffset.y = imageFrame.minY + harness.view.textContainerInset.top
+        harness.view.layoutIfNeeded()
+        await waitUntil { gate.started }
+
+        let offsetBefore = harness.view.contentOffset.y
+        XCTAssertLessThan(imageFrame.height, 200, "precondition: the image fits in the header inset's height")
+        let oldAttachment = try attachment(harness.session, "imgTop")
+        let topView = try XCTUnwrap(realized(harness.session, "imgTop"))
+
+        gate.continuation?.resume(returning: testPNGData(width: 200, height: 400))
+        await topView.loadTask?.value
+        harness.view.layoutIfNeeded()
+
+        let newAttachment = try attachment(harness.session, "imgTop")
+        XCTAssertGreaterThan(newAttachment.content.lineHeight - oldAttachment.content.lineHeight, 100)
+        XCTAssertEqual(
+            harness.view.contentOffset.y, offsetBefore, accuracy: 0.5,
+            "a visible image under the header inset grows in place")
+    }
+
     /// Multiple images finishing in the same session refresh accurately, never
     /// loop, and pre-cached ratios apply on `.insert` / `.replaceBlock` first frame.
     func testMultipleImageLoadsAndPreCachedPatchApplyFirstFrameHeight() async throws {
