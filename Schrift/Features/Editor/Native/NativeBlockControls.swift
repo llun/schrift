@@ -195,7 +195,8 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         else { return nil }
         layout.textViewportLayoutController.layoutViewport()
         guard let viewport = layout.textViewportLayoutController.viewportRange else { return nil }
-        let visibleMinY = textView.bounds.minY + textView.adjustedContentInset.top
+        // The document header scrolls with the text inside `contentInset.top`; only the safe area covers the text.
+        let visibleMinY = textView.bounds.minY + textView.adjustedContentInset.top - textView.contentInset.top
         var anchor: AspectRatioScrollAnchor?
         layout.enumerateTextLayoutFragments(from: viewport.location, options: []) { fragment in
             guard fragment.rangeInElement.location.compare(viewport.endLocation) == .orderedAscending else {
@@ -281,7 +282,12 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
             guard let fragment,
                 fragment.state != .none,
                 fragment.layoutFragmentFrame.height > 0
-            else { return }
+            else {
+                // The anchor never laid out: leave the offset where the user had it.
+                textView.contentOffset.y = anchor.offsetBefore
+                layout.textViewportLayoutController.layoutViewport()
+                return
+            }
             let measuredDelta = fragment.layoutFragmentFrame.minY - anchor.minY
             let targetOffset = max(minOffsetY, anchor.offsetBefore + measuredDelta)
             if fragment.state == .layoutAvailable, abs(textView.contentOffset.y - targetOffset) < 0.25 {

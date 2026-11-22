@@ -907,6 +907,57 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         XCTAssertEqual(try journalCount(harness), 0)
     }
 
+    /// The document header scrolls inside `contentInset.top`: an image at the top
+    /// of the screen under that inset is visible, so it grows in place.
+    func testImageAtTheTopUnderAHeaderInsetGrowsWithoutShiftingOffset() async throws {
+        let url = "\(Self.origin)/media/under-header.png"
+        var docBlocks: [BlockNoteBlock] = []
+        for index in 0..<25 {
+            docBlocks.append(paragraph("before\(index)", "Before paragraph \(index) with steady text."))
+        }
+        docBlocks.append(image("imgTop", url: url))
+        for index in 0..<25 {
+            docBlocks.append(paragraph("after\(index)", "After paragraph \(index) with steady text."))
+        }
+        let harness = try await makeHarness(docBlocks)
+        addTeardownBlock { await harness.close() }
+        let log = FetchLog()
+        let gate = FetchGate()
+        harness.view.blockControls.images = loader(log) { _ in
+            gate.started = true
+            return try await withCheckedThrowingContinuation { continuation in
+                gate.continuation = continuation
+            }
+        }
+        harness.view.blockControls.serverOrigin = Self.origin
+        let window = host(harness.view, height: 500)
+        defer { window.isHidden = true }
+        harness.view.contentInset.top = 200
+
+        XCTAssertTrue(harness.view.scroll(toBlock: "imgTop", surface: harness.session.surface))
+        harness.view.layoutIfNeeded()
+        let imageFrame = try fragmentFrame(harness.session, "imgTop")
+        // The image's top edge at the top of the screen, fully visible, inside the header inset's height.
+        harness.view.contentOffset.y = imageFrame.minY + harness.view.textContainerInset.top
+        harness.view.layoutIfNeeded()
+        await waitUntil { gate.started }
+
+        let offsetBefore = harness.view.contentOffset.y
+        XCTAssertLessThan(imageFrame.height, 200, "precondition: the image fits in the header inset's height")
+        let oldAttachment = try attachment(harness.session, "imgTop")
+        let topView = try XCTUnwrap(realized(harness.session, "imgTop"))
+
+        gate.continuation?.resume(returning: testPNGData(width: 200, height: 400))
+        await topView.loadTask?.value
+        harness.view.layoutIfNeeded()
+
+        let newAttachment = try attachment(harness.session, "imgTop")
+        XCTAssertGreaterThan(newAttachment.content.lineHeight - oldAttachment.content.lineHeight, 100)
+        XCTAssertEqual(
+            harness.view.contentOffset.y, offsetBefore, accuracy: 0.5,
+            "a visible image under the header inset grows in place")
+    }
+
     /// Multiple images finishing in the same session refresh accurately, never
     /// loop, and pre-cached ratios apply on `.insert` / `.replaceBlock` first frame.
     func testMultipleImageLoadsAndPreCachedPatchApplyFirstFrameHeight() async throws {
