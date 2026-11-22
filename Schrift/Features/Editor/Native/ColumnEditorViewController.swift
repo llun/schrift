@@ -900,9 +900,17 @@ final class ColumnTextContainer: UIScrollView {
             let caret = view.caretRect(for: end)
             guard caret.minY.isFinite, caret.height.isFinite else { return }
             let before = contentOffset
-            scrollRectToVisible(
-                caret.offsetBy(dx: region.minX, dy: region.minY).insetBy(dx: 0, dy: -DocsSpacing.spaceBase),
-                animated: false)
+            // Not scrollRectToVisible: it stops at contentSize, and the column's
+            // height is still TextKit's estimate, which can end above the caret
+            // (iOS 27). The next place() grows the content to fit.
+            let target = caret.offsetBy(dx: region.minX, dy: region.minY).insetBy(dx: 0, dy: -DocsSpacing.spaceBase)
+            let top = contentOffset.y + adjustedContentInset.top
+            let bottom = contentOffset.y + bounds.height - adjustedContentInset.bottom
+            if target.maxY > bottom {
+                contentOffset.y += target.maxY - bottom
+            } else if target.minY < top {
+                contentOffset.y = max(contentOffset.y - (top - target.minY), -adjustedContentInset.top)
+            }
             guard contentOffset != before else { return }
             place()
             view.layoutIfNeeded()
