@@ -359,7 +359,7 @@ final class ColumnEditorTests: NativeEditingTestCase {
             walk(host.view)
             return found
         }
-        await waitUntil {
+        await waitUntil(timeout: 5) {
             host.view.layoutIfNeeded()
             return model.isLoaded && columnViews().count == 2
         }
