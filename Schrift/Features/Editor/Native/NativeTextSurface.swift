@@ -859,17 +859,31 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         return next
     }
 
+    /// Summary of the storage edits applied by `refreshAttachmentGeometry()`.
+    struct AttachmentGeometryRefresh: Equatable {
+        /// UTF-16 start locations of visible (unfolded) blocks whose storage
+        /// representation changed during the refresh.
+        let editedLocations: [Int]
+
+        func hasEdits(before location: Int) -> Bool {
+            editedLocations.contains { $0 < location }
+        }
+    }
+
     /// Recomputes cached image aspect ratios and linked document titles without
     /// changing the width or writing to Yjs, restyling only the blocks whose
     /// ratio or linked document title changed.
-    func refreshAttachmentGeometry() {
+    @discardableResult
+    func refreshAttachmentGeometry() -> AttachmentGeometryRefresh {
         guard !holdsComposition else {
             pendingGeometryRefresh = true
-            return
+            return AttachmentGeometryRefresh(editedLocations: [])
         }
         pendingGeometryRefresh = false
         let next = geometry(width: attachmentGeometry.width)
-        guard next != attachmentGeometry else { return }
+        guard next != attachmentGeometry else {
+            return AttachmentGeometryRefresh(editedLocations: [])
+        }
         let changedRatioURLs = changedKeys(from: attachmentGeometry.aspectRatios, to: next.aspectRatios)
         let changedTitleIDs = changedKeys(from: attachmentGeometry.documentTitles, to: next.documentTitles)
         attachmentGeometry = next
@@ -893,7 +907,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             }
             return false
         }
-        restyleAttachments(positions: positions)
+        return AttachmentGeometryRefresh(editedLocations: restyleAttachments(positions: positions))
     }
 
     private func changedKeys<Key: Hashable, Value: Equatable>(
@@ -930,8 +944,9 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         restyleAttachments(positions: positions)
     }
 
-    private func restyleAttachments(positions: [Int]) {
-        guard !positions.isEmpty else { return }
+    @discardableResult
+    private func restyleAttachments(positions: [Int]) -> [Int] {
+        guard !positions.isEmpty else { return [] }
         let seq = sessionSeq
         let token = NativeEditorDiagnosticsStore.shared.beginInterval(.storageApply)
         isApplyingPatch = true
@@ -943,15 +958,20 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 $0.presentationRestyleCount += 1
             }
         }
+        var editedLocations: [Int] = []
         storage.beginEditing()
         for position in positions {
             let range = rangeIndex.entries[position].range
             let rendered = rendered(blocks[position], at: position)
             if !storage.attributedSubstring(from: range).isEqual(to: rendered) {
                 storage.replaceCharacters(in: range, with: rendered)
+                if !isHidden(position: position) {
+                    editedLocations.append(range.location)
+                }
             }
         }
         storage.endEditing()
+        return editedLocations
     }
 
     private func replace(at position: Int, with block: BlockSnapshot) {

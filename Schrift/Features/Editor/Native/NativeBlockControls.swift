@@ -151,7 +151,9 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         textView?.setNeedsLayout()
         guard aspectRatioRefreshTask == nil else { return }
         aspectRatioRefreshTask = Task { @MainActor [weak self] in
-            self?.flushPendingAspectRatioRefresh(requestLayout: true)
+            guard let self else { return }
+            self.aspectRatioRefreshTask = nil
+            self.flushPendingAspectRatioRefresh(requestLayout: true)
         }
     }
 
@@ -169,10 +171,58 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         }
     }
 
-    /// Snapshots an in-viewport anchor fragment before attachment geometry refreshes,
-    /// applies the pending attachment update, and pre-shifts `contentOffset.y` by any
-    /// above-viewport line-height delta so `super.layoutSubviews()` lays out the
-    /// target viewport region.
+    private func fragmentLocation(
+        _ fragment: NSTextLayoutFragment,
+        surface: NativeTextSurface,
+        content: NSTextContentManager
+    ) -> Int? {
+        if let id = (fragment as? NativeBlockFragment)?.blockID,
+            let entry = surface.rangeIndex.entry(for: id)
+        {
+            return entry.range.location
+        }
+        let offset = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
+        return offset == NSNotFound ? nil : offset
+    }
+
+    private func captureViewportAnchor(
+        in textView: NativeTextView,
+        surface: NativeTextSurface,
+        offsetBefore: CGFloat
+    ) -> AspectRatioScrollAnchor? {
+        guard let layout = textView.textLayoutManager,
+            let content = layout.textContentManager
+        else { return nil }
+        layout.textViewportLayoutController.layoutViewport()
+        guard let viewport = layout.textViewportLayoutController.viewportRange else { return nil }
+        let visibleMinY = textView.bounds.minY + textView.adjustedContentInset.top
+        var anchor: AspectRatioScrollAnchor?
+        layout.enumerateTextLayoutFragments(from: viewport.location, options: []) { fragment in
+            guard fragment.rangeInElement.location.compare(viewport.endLocation) == .orderedAscending else {
+                return false
+            }
+            let frame = fragment.layoutFragmentFrame
+            guard fragment.state == .layoutAvailable,
+                frame.height > 0,
+                frame.maxY + textView.textContainerInset.top > visibleMinY
+            else { return true }
+            guard let location = self.fragmentLocation(fragment, surface: surface, content: content),
+                location < surface.storage.length
+            else { return true }
+            anchor = AspectRatioScrollAnchor(
+                location: location,
+                minY: frame.minY,
+                offsetBefore: offsetBefore)
+            return false
+        }
+        return anchor
+    }
+
+    /// Snapshots the first visible block from TextKit 2's viewport in O(1)
+    /// before attachment geometry refreshes, applies the pending attachment
+    /// update, and returns the anchor whenever a block strictly above it was
+    /// restyled so `completeAspectRatioRefresh` can keep the viewport still
+    /// after `super.layoutSubviews()` settles.
     func prepareAspectRatioRefresh() -> AspectRatioScrollAnchor? {
         guard pendingAspectRatioRefresh else { return nil }
         pendingAspectRatioRefresh = false
@@ -180,71 +230,28 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         aspectRatioRefreshTask = nil
         guard let surface, let textView else { return nil }
 
-        var aboveAttachments: [(location: Int, oldLineHeight: CGFloat)] = []
-        var anchorCandidate: AspectRatioScrollAnchor?
-        let offsetBefore = textView.contentOffset.y
-        if textView.panGestureRecognizer.isEnabled,
-            offsetBefore > 0,
-            !textView.isTracking,
-            !textView.isDecelerating,
-            let layout = textView.textLayoutManager,
-            let content = layout.textContentManager
-        {
-            layout.textViewportLayoutController.layoutViewport()
-            let visibleMinY = textView.bounds.minY + textView.adjustedContentInset.top
-            for (position, block) in surface.blocks.enumerated() {
-                guard !surface.isHidden(position: position),
-                    surface.rangeIndex.entries.indices.contains(position)
-                else { continue }
-                let entry = surface.rangeIndex.entries[position]
-                guard entry.range.location < surface.storage.length,
-                    let location = content.location(content.documentRange.location, offsetBy: entry.range.location),
-                    let fragment = layout.textLayoutFragment(for: location),
-                    fragment.layoutFragmentFrame.height > 0
-                else { continue }
-                if fragment.layoutFragmentFrame.maxY + textView.textContainerInset.top <= visibleMinY {
-                    if AttributedDocumentProjection.isPlaceholder(block),
-                        let oldAttachment = surface.storage.attribute(
-                            .attachment, at: entry.range.location, effectiveRange: nil) as? NativeBlockAttachment
-                    {
-                        aboveAttachments.append((entry.range.location, oldAttachment.content.lineHeight))
-                    }
-                    continue
-                }
-                if anchorCandidate == nil,
-                    fragment.layoutFragmentFrame.minY + textView.textContainerInset.top >= visibleMinY
-                {
-                    anchorCandidate = AspectRatioScrollAnchor(
-                        location: entry.range.location,
-                        minY: fragment.layoutFragmentFrame.minY,
-                        offsetBefore: offsetBefore)
-                    break
-                }
-            }
-        }
-
-        surface.refreshAttachmentGeometry()
-
-        guard let anchorCandidate, !aboveAttachments.isEmpty else { return nil }
-        var estimatedDelta: CGFloat = 0
-        for item in aboveAttachments {
-            if item.location < surface.storage.length,
-                let newAttachment = surface.storage.attribute(
-                    .attachment, at: item.location, effectiveRange: nil) as? NativeBlockAttachment
-            {
-                estimatedDelta += newAttachment.content.lineHeight - item.oldLineHeight
-            }
-        }
-        guard estimatedDelta != 0 else { return nil }
-
         let minOffsetY = -textView.adjustedContentInset.top
-        textView.contentOffset.y = max(minOffsetY, offsetBefore + estimatedDelta)
-        textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+        let offsetBefore = textView.contentOffset.y
+        var anchorCandidate: AspectRatioScrollAnchor?
+        if textView.panGestureRecognizer.isEnabled,
+            textView.isScrollEnabled,
+            offsetBefore > minOffsetY
+        {
+            anchorCandidate = captureViewportAnchor(
+                in: textView, surface: surface, offsetBefore: offsetBefore)
+        }
+
+        let refresh = surface.refreshAttachmentGeometry()
+        guard let anchorCandidate, refresh.hasEdits(before: anchorCandidate.location) else {
+            return nil
+        }
         return anchorCandidate
     }
 
-    /// Measures the actual post-layout movement of `anchor` after `super.layoutSubviews()`
-    /// and compensates `contentOffset.y` to keep the anchor stationary on screen.
+    /// Ensures `anchor`'s fragment is laid out after `super.layoutSubviews()`
+    /// (relocating TextKit 2's viewport to `anchor` whenever the post-edit
+    /// viewport missed it), measures its actual movement, and compensates
+    /// `contentOffset.y` to keep the anchor stationary on screen.
     func completeAspectRatioRefresh(_ anchor: AspectRatioScrollAnchor?) {
         guard let anchor,
             let surface,
@@ -256,12 +263,33 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         else { return }
 
         let minOffsetY = -textView.adjustedContentInset.top
-        for _ in 0..<2 {
+        for _ in 0..<4 {
             layout.textViewportLayoutController.layoutViewport()
-            guard let fragment = layout.textLayoutFragment(for: location) else { break }
+            var fragment = layout.textLayoutFragment(for: location)
+            let isLaidOut =
+                if let fragment, fragment.state == .layoutAvailable, fragment.layoutFragmentFrame.height > 0 {
+                    true
+                } else {
+                    false
+                }
+            if !isLaidOut {
+                let relocatedMinY = layout.textViewportLayoutController.relocateViewport(to: location)
+                textView.contentOffset.y = max(minOffsetY, anchor.offsetBefore + (relocatedMinY - anchor.minY))
+                layout.textViewportLayoutController.layoutViewport()
+                fragment = layout.textLayoutFragment(for: location)
+            }
+            guard let fragment,
+                fragment.state != .none,
+                fragment.layoutFragmentFrame.height > 0
+            else { return }
             let measuredDelta = fragment.layoutFragmentFrame.minY - anchor.minY
             let targetOffset = max(minOffsetY, anchor.offsetBefore + measuredDelta)
-            if abs(textView.contentOffset.y - targetOffset) < 0.25 { break }
+            if fragment.state == .layoutAvailable, abs(textView.contentOffset.y - targetOffset) < 0.25 {
+                if textView.contentOffset.y != targetOffset {
+                    textView.contentOffset.y = targetOffset
+                }
+                break
+            }
             textView.contentOffset.y = targetOffset
         }
         layout.textViewportLayoutController.layoutViewport()
