@@ -1,0 +1,28 @@
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  h_580a04e334fef4 411-413,672,718-719,725-797,2140
+docs/native-editor-acceptance.md
+  h_580a04e334fef4 187-191
+SchriftTests/Features/Editor/Native/NativeInlineMarkShortcutTests.swift
+  h_580a04e334fef4 1-635
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  h_580a04e334fef4 126-133,821-823,862-864,904,907-910,918,1123-1128,1130-1137,1139,1141-1149,1702-1762
+Schrift/Core/Yjs/InlineMarkShortcut.swift
+  h_580a04e334fef4 1-96
+Schrift/Features/Editor/Native/NativeFormattingCommands.swift
+  h_580a04e334fef4 52-74
+docs/standards/document-engine.md
+  h_580a04e334fef4 384-390
+Schrift/Features/Editor/Native/NativeEditCommand.swift
+  h_580a04e334fef4 30-32,143-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c1b9573af5b02c7d415ec0f5bc44d29eb726bbcf",
+  "prompts": {},
+  "humans": {
+    "h_580a04e334fef4": {
+      "author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
