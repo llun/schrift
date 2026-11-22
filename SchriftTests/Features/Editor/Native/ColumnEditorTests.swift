@@ -359,9 +359,9 @@ final class ColumnEditorTests: NativeEditingTestCase {
             walk(host.view)
             return found
         }
-        for _ in 0..<100 where !(model.isLoaded && columnViews().count == 2) {
+        await waitUntil(timeout: 5) {
             host.view.layoutIfNeeded()
-            try await Task.sleep(for: .milliseconds(50))
+            return model.isLoaded && columnViews().count == 2
         }
         XCTAssertEqual(columnViews().count, 2)
         let sessions = model.columns.map(ObjectIdentifier.init)
@@ -514,9 +514,11 @@ final class ColumnEditorTests: NativeEditingTestCase {
         window.rootViewController = host
         window.isHidden = false
         windows.append(window)
-        for _ in 0..<200 where !(model.isLoaded && model.columns.count == 2) {
+        await waitUntil {
             host.view.layoutIfNeeded()
-            try await Task.sleep(for: .milliseconds(10))
+            return model.isLoaded
+                && model.columns.count == 2
+                && model.columns.allSatisfy { $0.textView.window != nil }
         }
         XCTAssertEqual(model.columns.count, 2)
         XCTAssertEqual(model.active, 0)
@@ -595,9 +597,11 @@ final class ColumnEditorTests: NativeEditingTestCase {
         window.rootViewController = host
         window.isHidden = false
         windows.append(window)
-        for _ in 0..<200 where !(model.isLoaded && model.columns.count == 2) {
+        await waitUntil {
             host.view.layoutIfNeeded()
-            try await Task.sleep(for: .milliseconds(10))
+            return model.isLoaded
+                && model.columns.count == 2
+                && model.columns.allSatisfy { $0.textView.window != nil }
         }
         XCTAssertEqual(model.columns.count, 2)
 
@@ -725,9 +729,11 @@ final class ColumnEditorTests: NativeEditingTestCase {
         window.rootViewController = host
         window.isHidden = false
         windows.append(window)
-        for _ in 0..<200 where !(model.isLoaded && model.columns.count == 2) {
+        await waitUntil {
             host.view.layoutIfNeeded()
-            try await Task.sleep(for: .milliseconds(10))
+            return model.isLoaded
+                && model.columns.count == 2
+                && model.columns.allSatisfy { $0.textView.window != nil }
         }
         XCTAssertEqual(model.columns.count, 2)
 
@@ -764,13 +770,10 @@ final class ColumnEditorTests: NativeEditingTestCase {
             for sub in root.subviews { out.append(contentsOf: labels(in: sub)) }
             return out
         }
-        for _ in 0..<100
-        where
-            !(col1.textView.blockControls.uploadingBlocks.contains(ids[0])
-            && labels(in: col1.textView).contains(uploadingLabel))
-        {
+        await waitUntil {
             host.view.layoutIfNeeded()
-            try await Task.sleep(for: .milliseconds(10))
+            return col1.textView.blockControls.uploadingBlocks.contains(ids[0])
+                && labels(in: col1.textView).contains(uploadingLabel)
         }
         XCTAssertTrue(col1.textView.blockControls.uploadingBlocks.contains(ids[0]))
         XCTAssertTrue(labels(in: col1.textView).contains(uploadingLabel))
