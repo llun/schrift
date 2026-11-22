@@ -174,9 +174,6 @@ final class DocumentSaveCoordinator {
     /// finished (`retryClassicDraft` / waiting-edits drain), without changing
     /// `syncPendingDrafts()`'s immediate coalesced return for existing triggers.
     @ObservationIgnored private var syncPassWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
-    /// Coordinator-owned task running `syncPendingDrafts()` for callers that trigger the
-    /// shared pass without owning its cancellation (`syncPendingDraftsAndAwaitCompletion`).
-    @ObservationIgnored private var sharedSyncPassTask: Task<Void, Never>?
     /// Bumped on every `draftStore` mutation so SwiftUI views and `NativeEditorOpen`
     /// observe UserDefaults-backed draft changes live.
     private(set) var draftsVersion = 0
@@ -4977,7 +4974,6 @@ final class DocumentSaveCoordinator {
     struct WaitingClassicContent: Equatable, Sendable {
         let title: String
         let markdown: String
-        let attachmentOwnerID: UUID
     }
 
     /// Resolves waiting classic edits for `documentID` (in-flight/queued classic save,
@@ -4989,23 +4985,23 @@ final class DocumentSaveCoordinator {
         _ = pins.revision
         if let pending = pendingSave(documentID: documentID), pending.replicaRequest == nil {
             return WaitingClassicContent(
-                title: pending.title, markdown: pending.markdown, attachmentOwnerID: documentID)
+                title: pending.title, markdown: pending.markdown)
         }
         if let draft = draftStore.draft(for: documentID), draft.replica == nil {
             return WaitingClassicContent(
-                title: draft.title, markdown: draft.markdown, attachmentOwnerID: documentID)
+                title: draft.title, markdown: draft.markdown)
         }
         if let checkpointed = ownedCheckpointedRecord(forServerID: documentID) {
             if let pending = pendingSave(documentID: checkpointed.localID) {
                 return WaitingClassicContent(
-                    title: pending.title, markdown: pending.markdown, attachmentOwnerID: checkpointed.localID)
+                    title: pending.title, markdown: pending.markdown)
             }
             if let draft = draftStore.draft(for: checkpointed.localID) {
                 return WaitingClassicContent(
-                    title: draft.title, markdown: draft.markdown, attachmentOwnerID: checkpointed.localID)
+                    title: draft.title, markdown: draft.markdown)
             }
             return WaitingClassicContent(
-                title: checkpointed.title, markdown: "", attachmentOwnerID: checkpointed.localID)
+                title: checkpointed.title, markdown: "")
         }
         return nil
     }
@@ -5049,12 +5045,11 @@ final class DocumentSaveCoordinator {
     func syncPendingDraftsAndAwaitCompletion() async {
         if isSyncingDrafts {
             needsAnotherSyncPass = true
-        } else if sharedSyncPassTask == nil {
-            sharedSyncPassTask = Task { @MainActor [weak self] in
-                guard let self else { return }
-                defer { self.sharedSyncPassTask = nil }
-                await self.syncPendingDrafts()
-            }
+        } else {
+            // Always start one when none is running: a task still finishing has already resumed
+            // its waiters, so a waiter registered now needs a pass of its own (at worst a
+            // coalesced extra pass).
+            Task { @MainActor [weak self] in await self?.syncPendingDrafts() }
         }
         guard !Task.isCancelled else { return }
         let waiterID = UUID()

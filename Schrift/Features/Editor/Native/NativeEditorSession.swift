@@ -1178,7 +1178,7 @@ final class NativeEditorOpen {
         }
         // Re-read connectivity after awaiting `closing` so a reconnect while `.loading`
         // updates `lastIsOffline`, starts waiting-classic drain, and feeds later reopens.
-        if lastIsOffline == isOffline, viewModel.availability.isOffline != initialAvailabilityOffline {
+        if viewModel.availability.isOffline != initialAvailabilityOffline {
             lastIsOffline = viewModel.availability.isOffline
         }
         let isOffline = lastIsOffline
@@ -2065,8 +2065,8 @@ final class NativeEditorOpen {
     /// The fetch ended without an answer for a still-current open (connectivity or
     /// availability moved while it was in flight). There is no deadline to fall back
     /// on, so decide again from what is on the device rather than leave the spinner up:
-    /// nothing cached → "Go online"; a cached classic copy or pending work → classic;
-    /// otherwise the retryable error.
+    /// waiting classic edits → the waiting page; nothing cached → "Go online"; a cached
+    /// classic copy or other pending work → classic; otherwise the retryable error.
     private func settleWithoutAnswer(
         request: Int, viewModel: EditorViewModel, account: UUID?, isOffline: Bool,
         allowCachedClassicFallback: Bool = true
