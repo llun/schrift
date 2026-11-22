@@ -812,7 +812,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             if let requested = barrier.requestedSource {
                 requestedSource = requested
             }
-            if endBarrierSelection(ownEcho: true) { return }
+            if endBarrierSelection(ownEcho: true) {
+                // The user's own selection wins, but the typed space is shown: the
+                // check still runs (it bails unless the caret sits after the prefix).
+                if let shortcutCheck { convertMarkdownShortcutIfNeeded(in: shortcutCheck.blockID) }
+                return
+            }
             switch barrier.placement {
             case .caret:
                 if let caret, let entry = surface.rangeIndex.entry(for: caret.blockID) {
@@ -894,6 +899,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             if let pending = pendingShortcutCheck, pending.barrierID == id {
                 pendingShortcutCheck =
                     retried ? self.barrier.map { (blockID: pending.blockID, barrierID: $0.id) } : nil
+                // A retry that predicted instead of posting shows the space now.
+                if retried, self.barrier == nil { convertMarkdownShortcutIfNeeded(in: pending.blockID) }
             }
             if let carried {
                 // The view shows the user's selection; the retry keeps it as theirs.
@@ -945,6 +952,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                         selection.place(NSRange(location: NSMaxRange(entry.textRange), length: 0))
                     }
                     keepSelectionVisible()
+                    // A composing keyboard's bare space in a block with inline objects
+                    // is shown only now; it converts like a typed one.
+                    if pending.text == " " { convertMarkdownShortcutIfNeeded(in: pending.blockID) }
                 }
             case .failed:
                 if let pending = pendingCompositionCommit, pending.id == id {
