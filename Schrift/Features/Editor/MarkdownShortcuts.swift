@@ -18,7 +18,7 @@ func detectMarkdownShortcut(text: String) -> BlockShortcutMatch? {
                 kind: .checklistItem(checked: checked), remainderText: String(text.dropFirst(prefix.count)))
         }
     }
-    for prefix in ["- ", "* "] {
+    for prefix in ["- ", "* ", "+ "] {
         if text.hasPrefix(prefix) {
             return BlockShortcutMatch(kind: .bulletItem, remainderText: String(text.dropFirst(prefix.count)))
         }

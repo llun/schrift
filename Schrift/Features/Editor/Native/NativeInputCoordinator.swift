@@ -1076,7 +1076,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         } else if text == "\t" {
             insertTab()
         } else {
-            replace(range: view.selectedRange, with: text)
+            let typed = replace(range: view.selectedRange, with: text)
+            // A markdown prefix converts as its trailing space is typed, never
+            // on paste or a multi-character insertion (those take other paths).
+            if typed, text == " " { convertMarkdownShortcutIfNeeded() }
         }
     }
 
@@ -1542,17 +1545,33 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // BlockNote's Enter in a code block inserts a line break in the block.
         if isCode(entry.blockID) { return replace(range: effectiveSelection, with: "\n") }
         let block = surface.blocks[position]
-        // Plain `---`, `***`, `___` + Return converts the paragraph into a divider.
+        // Plain `---`, `***`, `___` + Return converts the paragraph into a
+        // divider; a ``` fence (with an optional language) becomes a code block.
         if block.node == "paragraph", tableMove == nil, sourceKind == nil,
-            let match = detectEnterShortcut(text: text(of: block)), match.kind == .divider
+            let match = detectEnterShortcut(text: text(of: block))
         {
             let length = text(of: block).utf16.count
-            let ids = [UUID().uuidString, UUID().uuidString]
-            return applyStructural(
-                entry.blockID, .insertDivider(ids: ids, removing: 0..<length),
-                refusal: .native_editor_input_unavailable,
-                retry: again { [weak self] in self?.insertNewline() ?? false },
-                readsSelection: true)
+            switch match.kind {
+            case .divider:
+                let ids = [UUID().uuidString, UUID().uuidString]
+                return applyStructural(
+                    entry.blockID, .insertDivider(ids: ids, removing: 0..<length),
+                    refusal: .native_editor_input_unavailable,
+                    retry: again { [weak self] in self?.insertNewline() ?? false },
+                    readsSelection: true)
+            case .codeBlock(let language):
+                // A language the engine's `language` prop refuses would turn
+                // Return into a refusal; such a fence splits as ordinary text.
+                guard language.isEmpty || Self.isCodeLanguage(language) else { break }
+                let props = language.isEmpty ? [] : [ProjectedProp(key: "language", value: .string(language))]
+                return applyStructural(
+                    entry.blockID, .blockType(node: "codeBlock", props: props, removing: 0..<length),
+                    refusal: .native_editor_input_unavailable,
+                    retry: again { [weak self] in self?.insertNewline() ?? false },
+                    readsSelection: true)
+            default:
+                break
+            }
         }
         let offset = effectiveSelection.location - entry.textRange.location
         // BlockNote's Enter reads whether the toggle (or a toggle parent) is open.
@@ -1560,6 +1579,44 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return applyStructural(
             entry.blockID, .split(offset: offset, newID: UUID().uuidString, open: open),
             refusal: .native_editor_input_unavailable, retry: again { [weak self] in self?.insertNewline() ?? false },
+            readsSelection: true)
+    }
+
+    /// A markdown typing shortcut: a paragraph whose text now starts with a
+    /// prefix and whose caret sits right after it becomes that block type, the
+    /// prefix removed in the same transaction (BlockNote's input rule). Only a
+    /// plain paragraph converts; a locked, opaque, table-cell or scoped-source
+    /// block stays literal, and so does a prefix typed mid-line.
+    @discardableResult
+    private func convertMarkdownShortcutIfNeeded() -> Bool {
+        guard barrier == nil, !isBusy, !compositionOwnsView, sourceKind == nil, tableMove == nil,
+            let view, view.isEditable, !isFrozen, !isDetached, view.selectedRange.length == 0,
+            let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location),
+            let position = surface.rangeIndex.position(for: entry.blockID)
+        else { return false }
+        let block = surface.blocks[position]
+        guard block.node == "paragraph", !block.isOpaque, !block.isLocked,
+            !AttributedDocumentProjection.isPlaceholder(block), !surface.isHidden(position: position)
+        else { return false }
+        let text = text(of: block)
+        let caret = view.selectedRange.location - entry.textRange.location
+        guard caret > 0, caret <= text.utf16.count, let match = detectMarkdownShortcut(text: text) else {
+            return false
+        }
+        // The caret must be right after the prefix: a prefix typed mid-line, or
+        // one the caret has moved away from, stays literal.
+        let consumed = text.utf16.count - match.remainderText.utf16.count
+        guard caret == consumed else { return false }
+        // The native editor offers headings 1–3 only; "#### " and deeper stay literal.
+        if case .heading(let level) = match.kind, level > 3 { return false }
+        guard var type = Self.slashType(.convert(match.kind)) else { return false }
+        if case .checklistItem(let checked) = match.kind {
+            type.props.append(ProjectedProp(key: "checked", value: .bool(checked)))
+        }
+        return applyStructural(
+            entry.blockID, .blockType(node: type.node, props: type.props, removing: 0..<consumed),
+            refusal: .native_editor_input_unavailable,
+            retry: again { [weak self] in self?.convertMarkdownShortcutIfNeeded() ?? false },
             readsSelection: true)
     }
 
@@ -1572,6 +1629,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     private func isCode(_ blockID: String) -> Bool {
         surface.rangeIndex.position(for: blockID).map { surface.blocks[$0].node == "codeBlock" } == true
+    }
+
+    /// A fence's language must be one the engine's `language` prop accepts
+    /// (1–64 characters, no whitespace or control characters).
+    private static func isCodeLanguage(_ language: String) -> Bool {
+        (1...64).contains(language.count)
+            && !language.unicodeScalars.contains {
+                CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0)
+            }
     }
 
     /// Backspace at a block's start: the engine joins a paragraph into the

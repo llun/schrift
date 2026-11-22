@@ -1,0 +1,267 @@
+import UIKit
+import XCTest
+
+@testable import Schrift
+
+/// PR09: markdown typing shortcuts in the native editor. A paragraph that
+/// starts with a markdown prefix converts as its trailing space is typed, the
+/// prefix removed in the same transaction and the caret left at the start; a
+/// ``` fence converts on Return. Only typing converts (never paste), only a
+/// plain paragraph (never a table cell, a locked block or a scoped source),
+/// and one undo after a conversion restores the paragraph with its typed
+/// prefix.
+@MainActor
+final class NativeMarkdownShortcutTests: NativeEditingTestCase {
+    /// Grouping must not depend on CI speed: the typing of a prefix and the
+    /// conversion that follows it split only at the conversion's boundary.
+    override func makeHarness(
+        _ blocks: [BlockNoteBlock] = seedBlocks(),
+        interrupt: (@Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil,
+        hooks: DocumentReplicaSession.Hooks = .init()
+    ) async throws -> Harness {
+        let harness = try await super.makeHarness(blocks, interrupt: interrupt, hooks: hooks)
+        _ = await harness.session.history { $0.history.captureTimeout = 60_000 }
+        addTeardownBlock { await harness.close() }
+        return harness
+    }
+
+    private func caret(_ harness: Harness, _ id: String, _ offset: Int) throws {
+        setSelection(harness, NSRange(location: try location(harness.session, id, offset), length: 0))
+    }
+
+    /// A selection on a table or column surface, whose session is not the harness's.
+    private func select(_ session: NativeEditorSession, _ range: NSRange) {
+        session.textView.selectedRange = range
+        session.input?.textViewDidChangeSelection(session.textView)
+    }
+
+    /// Types `text` one character at a time, as the keyboard does.
+    private func type(_ session: NativeEditorSession, _ text: String) {
+        for character in text { session.textView.insertText(String(character)) }
+    }
+
+    private func converted(_ harness: Harness) -> Bool {
+        harness.log.commands.contains {
+            if case .blockType = $0.kind { true } else { false }
+        }
+    }
+
+    private func fixture(_ name: String) throws -> Data {
+        let base64 =
+            BlockNoteTableCaptures.fixtures.first { $0.name == name }?.update
+            ?? BlockNoteColumnCaptures.fixtures.first { $0.name == name }?.update
+        return try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(base64, name)))
+    }
+
+    // MARK: - Typing shortcuts
+
+    func testTypingShortcutsConvertAtBlockStart() async throws {
+        let cases: [(prefix: String, node: String, props: [ProjectedProp])] = [
+            ("# ", "heading", [ProjectedProp(key: "level", value: .int(1))]),
+            ("## ", "heading", [ProjectedProp(key: "level", value: .int(2))]),
+            ("### ", "heading", [ProjectedProp(key: "level", value: .int(3))]),
+            ("- ", "bulletListItem", []),
+            ("* ", "bulletListItem", []),
+            ("+ ", "bulletListItem", []),
+            ("1. ", "numberedListItem", []),
+            ("1) ", "numberedListItem", []),
+            ("[] ", "checkListItem", [ProjectedProp(key: "checked", value: .bool(false))]),
+            ("[ ] ", "checkListItem", [ProjectedProp(key: "checked", value: .bool(false))]),
+            ("[x] ", "checkListItem", [ProjectedProp(key: "checked", value: .bool(true))]),
+            ("> ", "quote", []),
+        ]
+        for (prefix, node, props) in cases {
+            let harness = try await makeHarness([paragraph("p", ""), paragraph("after", "Next")])
+            let session = harness.session
+            try caret(harness, "p", 0)
+            type(session, prefix)
+            await harness.settle()
+            let block = try block(session, "p")
+            XCTAssertEqual(block.node, node, prefix)
+            XCTAssertEqual(text(of: block), "", "the prefix is removed: \(prefix)")
+            for prop in props {
+                XCTAssertTrue(block.props.contains(prop), "\(prefix) carries \(prop.key)")
+            }
+            XCTAssertEqual(
+                harness.view.selectedRange, NSRange(location: try location(session, "p", 0), length: 0),
+                "the caret is at the start: \(prefix)")
+            XCTAssertEqual(
+                harness.log.commands.last?.kind,
+                .blockType(node: node, props: props, removing: 0..<prefix.utf16.count), prefix)
+            try await assertConsistent(harness, localCommands: prefix.count + 1)
+            await harness.close()
+        }
+    }
+
+    func testHeadingLevelsFourToSixStayLiteral() async throws {
+        for prefix in ["#### ", "##### ", "###### "] {
+            let harness = try await makeHarness([paragraph("p", "")])
+            let session = harness.session
+            try caret(harness, "p", 0)
+            type(session, prefix)
+            await harness.settle()
+            XCTAssertEqual(try block(session, "p").node, "paragraph", prefix)
+            XCTAssertEqual(text(of: try block(session, "p")), prefix, prefix)
+            XCTAssertFalse(converted(harness), prefix)
+            try await assertConsistent(harness, localCommands: prefix.count)
+            await harness.close()
+        }
+    }
+
+    func testMidLineShortcutStaysLiteral() async throws {
+        let harness = try await makeHarness([paragraph("p", "abc")])
+        let session = harness.session
+        try caret(harness, "p", 3)
+        type(session, "# ")
+        await harness.settle()
+        XCTAssertEqual(try block(session, "p").node, "paragraph")
+        XCTAssertEqual(text(of: try block(session, "p")), "abc# ")
+        XCTAssertFalse(converted(harness))
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    func testShortcutInATableCellStaysLiteral() async throws {
+        let harness = try await makeHarness(state: try fixture("styled"))
+        let table = try await unwrapped(await harness.session.openTable("tbl"), "the table opens")
+        addTeardownBlock { await table.close().value }
+        let input = try XCTUnwrap(table.input)
+        let cellID = table.surface.blocks[0].id
+        input.showCell([cellID])
+        select(table, NSRange(location: try location(table, cellID, 0), length: 0))
+        type(table, "# ")
+        await table.settle()
+        await harness.settle()
+        XCTAssertEqual(table.surface.blocks[0].node, "paragraph")
+        XCTAssertEqual(text(of: table.surface.blocks[0]), "# Name")
+        XCTAssertFalse(converted(harness))
+        await table.close().value
+        await harness.settle()
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    func testLockedBlockStaysLiteral() async throws {
+        let harness = try await makeHarness([
+            paragraph("before", "Before"),
+            BlockNoteBlock(
+                node: "paragraph", props: Self.paragraphProps + [("futureProp", .string("v1"))],
+                runs: [InlineRun("Future")], id: "future"),
+            paragraph("after", "After"),
+        ])
+        let session = harness.session
+        try caret(harness, "future", 0)
+        type(session, "# ")
+        await harness.settle()
+        XCTAssertEqual(try block(session, "future").node, "paragraph")
+        XCTAssertEqual(text(of: try block(session, "future")), "# Future")
+        XCTAssertFalse(converted(harness))
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    func testParagraphWithChildrenKeepsThem() async throws {
+        let harness = try await makeHarness([
+            BlockNoteBlock(
+                node: "paragraph", props: Self.paragraphProps, runs: [], id: "p",
+                children: [paragraph("child", "Child")])
+        ])
+        let session = harness.session
+        try caret(harness, "p", 0)
+        type(session, "# ")
+        await harness.settle()
+        XCTAssertEqual(try block(session, "p").node, "heading")
+        XCTAssertEqual(session.surface.blocks.map(\.id), ["p", "child"])
+        XCTAssertEqual(try block(session, "child").parentID, "p")
+        try await assertConsistent(harness, localCommands: 3)
+    }
+
+    func testShortcutWorksInAColumn() async throws {
+        let harness = try await makeHarness(state: try fixture("two"))
+        let column = try await unwrapped(
+            await harness.session.openColumn(group: "cl", column: "c1"), "the column opens")
+        addTeardownBlock { await column.close().value }
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        window.addSubview(column.textView)
+        column.textView.frame = window.bounds
+        window.isHidden = false
+        addTeardownBlock { window.isHidden = true }
+        select(column, NSRange(location: try location(column, "a", 0), length: 0))
+        type(column, "# ")
+        await column.settle()
+        await harness.settle()
+        XCTAssertEqual(column.surface.blocks[0].node, "heading")
+        XCTAssertEqual(text(of: column.surface.blocks[0]), "Left text")
+        XCTAssertEqual(
+            column.textView.selectedRange, NSRange(location: try location(column, "a", 0), length: 0))
+        await column.close().value
+        await harness.settle()
+        try await assertConsistent(harness, localCommands: 3)
+    }
+
+    // MARK: - Return shortcuts
+
+    func testCodeFenceOnReturnBecomesACodeBlock() async throws {
+        for (fence, language) in [("```swift", "swift"), ("```", "text")] {
+            let harness = try await makeHarness([paragraph("p", fence), paragraph("after", "Next")])
+            let session = harness.session
+            try caret(harness, "p", fence.utf16.count)
+            let converted = await harness.run { harness.input.insertNewline() }
+            XCTAssertTrue(converted, fence)
+            let block = try block(session, "p")
+            XCTAssertEqual(block.node, "codeBlock", fence)
+            XCTAssertEqual(text(of: block), "", fence)
+            XCTAssertTrue(
+                block.props.contains(ProjectedProp(key: "language", value: .string(language))), fence)
+            XCTAssertEqual(
+                harness.view.selectedRange, NSRange(location: try location(session, "p", 0), length: 0), fence)
+            try await assertConsistent(harness, localCommands: 1)
+            await harness.close()
+        }
+    }
+
+    func testDividerOnReturnStillConverts() async throws {
+        let harness = try await makeHarness([paragraph("p", "---"), paragraph("after", "Next")])
+        let session = harness.session
+        try caret(harness, "p", 3)
+        let converted = await harness.run { harness.input.insertNewline() }
+        XCTAssertTrue(converted)
+        XCTAssertEqual(session.surface.blocks.map(\.node), ["divider", "paragraph"])
+        XCTAssertEqual(text(of: session.surface.blocks[1]), "Next")
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    // MARK: - Paste and undo
+
+    func testPasteOfAMarkdownPrefixDoesNotConvert() async throws {
+        let harness = try await makeHarness([paragraph("p", "")])
+        let session = harness.session
+        try caret(harness, "p", 0)
+        harness.pasteboard.string = "# Title"
+        let pasted = await harness.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(pasted)
+        XCTAssertEqual(try block(session, "p").node, "paragraph")
+        XCTAssertEqual(text(of: try block(session, "p")), "# Title")
+        XCTAssertFalse(converted(harness))
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    func testUndoAfterAShortcutRestoresTheTypedPrefix() async throws {
+        let harness = try await makeHarness([paragraph("p", "")])
+        let session = harness.session
+        try caret(harness, "p", 0)
+        type(session, "# ")
+        await harness.settle()
+        XCTAssertEqual(try block(session, "p").node, "heading")
+        XCTAssertEqual(text(of: try block(session, "p")), "")
+
+        let undone = await harness.run { harness.input.undo() }
+        XCTAssertTrue(undone)
+        XCTAssertEqual(try block(session, "p").node, "paragraph")
+        XCTAssertEqual(text(of: try block(session, "p")), "# ", "the typed prefix stays")
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(session, "p", 2), length: 0))
+
+        let redone = await harness.run { harness.input.redo() }
+        XCTAssertTrue(redone)
+        XCTAssertEqual(try block(session, "p").node, "heading")
+        XCTAssertEqual(text(of: try block(session, "p")), "")
+        try await assertConsistent(harness, localCommands: 5)
+    }
+}
