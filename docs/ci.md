@@ -16,7 +16,17 @@ by construction). See the Safety section in [`AGENTS.md`](../AGENTS.md).
 
 ## What runs on every PR and every push to `main`
 
-`pr-checks.yml` builds once and tests in parallel on `macos-latest`. It runs on every PR targeting
+Both `pr-checks.yml` and `testflight.yml` run on the `xcode-27` runner image
+([GitHub's Xcode 27 image](https://github.blog/changelog/2026-09-10-xcode-27-runner-image-now-runs-on-macos-27/)
+on macOS 27, arm64; `setup-xcode` picks its latest stable Xcode; installed
+software is listed in the
+[image readme](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md)). `macos-latest` only carries Xcode 26, and App Store Connect
+requires the iOS 27 SDK for uploads from April 2027 (ITMS-90725). When the next
+major Xcode is required, move both workflows to its `xcode-NN` label together.
+The image has only iOS 27 simulators, so CI tests on iOS 27; behaviour on the
+iOS 26 deployment floor is checked locally or on devices.
+
+`pr-checks.yml` builds once and tests in parallel. It runs on every PR targeting
 `main` **and on every push to `main`**: PRs are squash-merged with no "branch
 up to date" requirement, so when `main` has moved since the PR's last CI run,
 the squash commit's tree was never built (a `pull_request` run builds the
@@ -57,8 +67,9 @@ The steps below run in the Build job (1, 2, 5) or in every shard (3, 4, 6, 7):
 6. `xcrun simctl bootstatus <udid> -b`, which blocks until the boot finishes,
    so no test lands on a half-booted device. The UI shards then turn the simulator's accessibility on and
    launch and quit Settings: on a cold simulator the UI test runner can otherwise time out
-   waiting for the accessibility server and fail the whole shard before a test runs (best-effort,
-   never fails the shard).
+   waiting for the accessibility server and fail the whole shard before a test runs. They also
+   install, launch and quit each test host app once, because on the iOS 27 simulator a host's first
+   launch can outlast XCUITest's launch timeout (best-effort, never fails the shard).
 7. `xcodebuild test-without-building -xctestrun` on that simulator (by UDID, so it is the
    device step 4 booted) with the step 5 products and the shard's selection — together the
    shards run the same suite as the documented local test command, including
@@ -137,7 +148,7 @@ hang in one shard no longer eats the others' time.
 
 ### Where the time goes
 
-Measured on hosted `macos-latest` runners: the build takes 12-20 minutes (it compiles the
+Measured on hosted `macos-latest` runners (before the `xcode-27` move): the build takes 12-20 minutes (it compiles the
 production sources for the app and for both UI test hosts); the ~5,100 unit tests take about
 7-9 minutes; the UI tests take about 34 minutes in a row — `NativeEditorUITests` about 21
 (several relaunch or scroll a large document), `ChecklistFilterTests` 5, `ThemeFlowTests` 4,

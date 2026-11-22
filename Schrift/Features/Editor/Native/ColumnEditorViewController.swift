@@ -824,6 +824,20 @@ final class ColumnTextContainer: UIScrollView {
         }
         let size = CGSize(width: bounds.width, height: rects.map(\.maxY).max() ?? 0)
         if contentSize != size { contentSize = size }
+        // A column above the screen that changed height (TextKit correcting its
+        // estimate as it lays out) moves the columns below it: keep the top
+        // column on screen where it was, or the caret just revealed slides away.
+        // Only for stacked columns at an unchanged width: a layout switch or a
+        // rotation moves every column, and then nothing on screen is kept.
+        let before = CGRect(x: 0, y: contentOffset.y, width: bounds.width, height: bounds.height)
+        let olds = frames.map { regions[ObjectIdentifier($0.textView)] }
+        let anchor = olds.firstIndex { $0?.intersects(before) == true }
+        if layout == .stacked, let index = anchor, let old = olds[index], old.width == bounds.width {
+            let shift = rects[index].minY - old.minY
+            // No upper clamp: a column's own height is still an estimate here,
+            // so the content can end above a caret TextKit already placed.
+            if abs(shift) > 0.5 { contentOffset.y = max(contentOffset.y + shift, -adjustedContentInset.top) }
+        }
         let visible = CGRect(x: 0, y: contentOffset.y, width: bounds.width, height: bounds.height)
         placing = true
         defer { placing = false }
@@ -886,9 +900,17 @@ final class ColumnTextContainer: UIScrollView {
             let caret = view.caretRect(for: end)
             guard caret.minY.isFinite, caret.height.isFinite else { return }
             let before = contentOffset
-            scrollRectToVisible(
-                caret.offsetBy(dx: region.minX, dy: region.minY).insetBy(dx: 0, dy: -DocsSpacing.spaceBase),
-                animated: false)
+            // Not scrollRectToVisible: it stops at contentSize, and the column's
+            // height is still TextKit's estimate, which can end above the caret
+            // (iOS 27). The next place() grows the content to fit.
+            let target = caret.offsetBy(dx: region.minX, dy: region.minY).insetBy(dx: 0, dy: -DocsSpacing.spaceBase)
+            let top = contentOffset.y + adjustedContentInset.top
+            let bottom = contentOffset.y + bounds.height - adjustedContentInset.bottom
+            if target.maxY > bottom {
+                contentOffset.y += target.maxY - bottom
+            } else if target.minY < top {
+                contentOffset.y = max(contentOffset.y - (top - target.minY), -adjustedContentInset.top)
+            }
             guard contentOffset != before else { return }
             place()
             view.layoutIfNeeded()

@@ -36,7 +36,13 @@ permissions:
 jobs:
   build:
     name: Build
-    runs-on: macos-latest
+    # xcode-27: GitHub's Xcode 27 image (macOS 27, arm64). App Store Connect
+    # requires the iOS 27 SDK for uploads from April 2027 (ITMS-90725), and
+    # macos-latest only carries Xcode 26. Keep pr-checks.yml and testflight.yml
+    # on the same label so PRs test what ships. See docs/ci.md.
+    # Image: https://github.blog/changelog/2026-09-10-xcode-27-runner-image-now-runs-on-macos-27/
+    # Installed Xcode/SDKs/simulators: https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md
+    runs-on: xcode-27
     # The build alone takes 12-20 minutes on a hosted runner; the cap turns a
     # hang into a failure.
     timeout-minutes: 45
@@ -116,7 +122,13 @@ jobs:
   test:
     name: Test (${{ matrix.shard }})
     needs: build
-    runs-on: macos-latest
+    # xcode-27: GitHub's Xcode 27 image (macOS 27, arm64). App Store Connect
+    # requires the iOS 27 SDK for uploads from April 2027 (ITMS-90725), and
+    # macos-latest only carries Xcode 26. Keep pr-checks.yml and testflight.yml
+    # on the same label so PRs test what ships. See docs/ci.md.
+    # Image: https://github.blog/changelog/2026-09-10-xcode-27-runner-image-now-runs-on-macos-27/
+    # Installed Xcode/SDKs/simulators: https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md
+    runs-on: xcode-27
     # The slowest shard takes about 13 minutes; the cap turns a hang into a failure.
     timeout-minutes: 45
     strategy:
@@ -232,6 +244,18 @@ jobs:
           xcrun simctl launch "$SIM_UDID" com.apple.Preferences >/dev/null || true
           sleep 10
           xcrun simctl terminate "$SIM_UDID" com.apple.Preferences || true
+          # On the iOS 27 simulator the first launch of a test host can outlast XCUITest's
+          # launch timeout ("Timed out while launching application via Xcode"), failing the
+          # shard's first test on both attempts. Install and launch each host app once here
+          # so that first-launch cost is paid before any test runs.
+          for app in "$RUNNER_TEMP"/Products/Debug-iphonesimulator/*TestHost*.app; do
+            [ -d "$app" ] || continue
+            id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist" 2>/dev/null)" || continue
+            xcrun simctl install "$SIM_UDID" "$app" || continue
+            xcrun simctl launch "$SIM_UDID" "$id" >/dev/null || true
+            sleep 10
+            xcrun simctl terminate "$SIM_UDID" "$id" || true
+          done
 
       # UI shards get a second chance: a UI test fails on a starved hosted
       # simulator for reasons the app does not control, and a unit test that fails
