@@ -184,6 +184,11 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
      triple-backtick fence (optionally with a language) and press Return for a code block. Verify
      one undo restores the paragraph with the typed prefix, and that pasting `# Title` does not
      convert.
+   - Type inline markdown delimiters (`**bold**`, `__bold__`, `*italic*`, `_italic_`, `` `code` ``,
+     `~~strike~~`) in prose blocks and table cells and verify they convert on the closing delimiter
+     with the caret after the formatted text and the next typed character plain; mid-word
+     (`snake_case_`, `foo**bar**`), whitespace-only, code blocks, code-marked text, IME composition,
+     and paste stay literal, and one undo restores the literal delimiters.
 4. **IME, system text tools & Pencil:**
    - Test Chinese, Japanese, and Korean IME composition around Return, block join/split, and
      concurrent peer edits (including `provisional.json` recovery if a peer deletes the active

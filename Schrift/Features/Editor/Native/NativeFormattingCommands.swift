@@ -49,6 +49,14 @@ struct NativeMarkCommand: Equatable, Sendable {
     let attributes: [TextMark]
 }
 
+/// One inline markdown mark shortcut conversion within a single block or table
+/// cell: applies `attributes` to `match.bodyRange` and deletes both delimiters
+/// in `match.fullRange` in one Yjs transaction.
+struct NativeMarkShortcutCommand: Equatable, Sendable {
+    let match: InlineMarkShortcutMatch
+    let attributes: [TextMark]
+}
+
 /// The marks at a selection, read from the surface's runs with ProseMirror's
 /// rules, which BlockNote's typing follows.
 enum NativeMarkSelection {

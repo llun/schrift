@@ -408,6 +408,9 @@ final class DocumentEngine {
         if case .pasteInline(let payload, let range) = command.kind {
             return try preparePasteInline(command, payload: payload, range: range)
         }
+        if case .markShortcut(let shortcut) = command.kind {
+            return try prepareMarkShortcut(command, shortcut)
+        }
         // A prop edit (a code block's language) is the one command code accepts.
         let isPropEdit = if case .props = command.kind { true } else { false }
         let (node, units) = try structuralTarget(
@@ -666,7 +669,7 @@ final class DocumentEngine {
         case .undo, .redo:
             throw DocumentEngineError.unsupportedNativeInput  // `applyHistoryStep`
         case .lineBreak, .table, .columns, .insertColumns, .insertMedia, .insertMediaBatch, .insertSourceBlock,
-            .insertDivider, .mediaProps, .insertInlineObject, .insertInlineMath, .pasteInline:
+            .insertDivider, .mediaProps, .insertInlineObject, .insertInlineMath, .pasteInline, .markShortcut:
             throw DocumentEngineError.unsupportedNativeInput  // cells, tables, groups, media and inline atoms, prepared above
         }
         return (write, caret)
@@ -712,9 +715,76 @@ final class DocumentEngine {
             return try prepareInsertInlineMath(command, replacing: range, source: source, trailingSpace: trailingSpace)
         case .pasteInline(let payload, let range):
             return try preparePasteInline(command, payload: payload, range: range)
+        case .markShortcut(let shortcut):
+            return try prepareMarkShortcut(command, shortcut)
         default:
             throw DocumentEngineError.unsupportedNativeInput
         }
+    }
+
+    private func prepareMarkShortcut(
+        _ command: NativeEditCommand, _ shortcut: NativeMarkShortcutCommand
+    ) throws -> PreparedCommand {
+        guard builder.index.isCanonical, let entry = builder.index.entries[command.blockID] else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        let units: [UInt16]
+        let runs: [InlineRun]
+        if isCellText(entry) {
+            guard entry.isProjectable else { throw DocumentEngineError.unsupportedNativeInput }
+            units = textUnits(entry)
+            if !entry.isSimpleText, let element = entry.element {
+                runs = TableGrid.paragraphRuns(element) ?? []
+            } else {
+                runs = entry.runs
+            }
+        } else {
+            units = try structuralTarget(
+                command.blockID, allowCode: false,
+                allowLossy: Self.lossyAllowance(for: command.kind, blockID: command.blockID)
+            ).units
+            runs = entry.runs
+        }
+        let match = shortcut.match
+        let delimiterUnits = Array(match.delimiter.utf16)
+        guard !shortcut.attributes.isEmpty,
+            shortcut.attributes.allSatisfy({ Self.isMarkValue($0) }),
+            match.delimiterLength > 0,
+            delimiterUnits.count == match.delimiterLength,
+            match.fullRange.lowerBound >= 0, match.fullRange.upperBound <= units.count,
+            match.fullRange.count > 2 * match.delimiterLength
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let bodyRange = match.bodyRange
+        let openRange = match.openingRange
+        let closeRange = match.closingRange
+        guard Self.isBoundary(openRange.lowerBound, in: units),
+            Self.isBoundary(bodyRange.lowerBound, in: units),
+            Self.isBoundary(bodyRange.upperBound, in: units),
+            Self.isBoundary(closeRange.upperBound, in: units),
+            Array(units[openRange]) == delimiterUnits,
+            Array(units[closeRange]) == delimiterUnits,
+            InlineMarkShortcutMatch.hasVisibleBody(units[bodyRange])
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        guard
+            !NativeMarkSelection.spans(runs).contains(where: {
+                $0.range.overlaps(match.fullRange) && $0.marks.contains { $0.key == "code" }
+            })
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let target = try textTarget(entry)
+        let attributes = YTextAttributes(shortcut.attributes.map { ($0.key, $0.valueJSON) })
+        let caretOffset = match.fullRange.lowerBound + bodyRange.count
+        return (
+            write: {
+                try self.writer.transaction { _ in
+                    // Format body first, then delete closing delimiter before opening
+                    // delimiter so every earlier offset stays valid.
+                    try self.writer.formatRange(in: target, range: bodyRange, attributes: attributes)
+                    try self.writer.replaceText(in: target, range: closeRange, with: "")
+                    try self.writer.replaceText(in: target, range: openRange, with: "")
+                }
+            },
+            caret: { EditorPosition(blockID: command.blockID, offset: caretOffset, assoc: -1) }
+        )
     }
 
     private func prepareInsertInlineObject(
@@ -2059,7 +2129,7 @@ final class DocumentEngine {
     /// styled-only `.lossy` blocks; multi-block ranges require modeled blocks.
     private static func lossyAllowance(for kind: NativeEditCommand.Kind, blockID: String) -> LossyAllowance {
         switch kind {
-        case .replace, .marks, .props, .insertInlineObject, .insertInlineMath, .pasteInline:
+        case .replace, .marks, .markShortcut, .props, .insertInlineObject, .insertInlineMath, .pasteInline:
             return .any
         case .range(let range):
             if range.endBlockID != blockID { return .none }

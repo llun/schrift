@@ -377,11 +377,15 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   it, and a choice is one `.blockType(node:props:removing:)` that deletes only that token
   (text after the caret stays, as in the classic editor) and
   `setBlockType`s in one transaction, as BlockNote's suggestion menu does. **Markdown typing
-  shortcuts** reuse the same command: a paragraph that starts with `# `, `## `, `### `, `- `,
-  `* `, `+ `, `1. `, `1) `, `[] `, `[ ] `, `[x] ` or `> ` converts as its trailing space is
-  typed (headings 4–6 stay literal), and a triple-backtick fence converts on Return with its
-  language prop; only typing converts, never paste, and only a plain paragraph (never a table
-  cell, a locked block or a scoped source). The engine has no
+  shortcuts** reuse `.blockType` for block prefixes (a paragraph starting with `# `, `## `,
+  `### `, `- `, `* `, `+ `, `1. `, `1) `, `[] `, `[ ] `, `[x] ` or `> ` converts on its
+  trailing space, headings 4–6 stay literal, and a triple-backtick fence converts on Return
+  with its language prop; only plain paragraphs, never table cells, locked blocks or scoped
+  sources) and use `.markShortcut` for inline marks (`**x**`/`__x__` bold, `*x*`/`_x_` italic,
+  `` `x` `` code, `~~x~~` strike: closing delimiter removes both delimiters and formats the
+  body in one transaction, with code clearing other marks and the new mark off for subsequent
+  typing; works in prose blocks and table cells, never in code blocks, code-marked text or
+  opaque cards); only typing converts, never paste or IME composition. The engine has no
   `NSRange`/UIKit (`DocumentEngineBoundaryTests`); the writer has `Range<Int>` overloads. Return in a code block, and pasting
   lines into one, is one `.replace` that keeps "\n" in the block (the engine accepts "\n"
   only for `codeBlock`). Under `nativeMarks` the projection also models `callout`,

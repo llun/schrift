@@ -123,9 +123,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @ObservationIgnored private var intents: [Intent] = []
     /// Blocks whose predictions the session refused: typing there is a barrier.
     @ObservationIgnored private var barrierOnly: Set<String> = []
-    /// A typed space that took the barrier path: its markdown shortcut check
-    /// runs once that barrier settles, when the surface finally shows it.
-    @ObservationIgnored private var pendingShortcutCheck: (blockID: String, barrierID: UUID)?
+    private enum PendingShortcutKind {
+        case block
+        case inlineMark
+    }
+    /// A typed space or inline-mark delimiter that took the barrier path: its
+    /// markdown shortcut check runs once that barrier settles, when the surface
+    /// finally shows it.
+    @ObservationIgnored private var pendingShortcutCheck: (blockID: String, barrierID: UUID, kind: PendingShortcutKind)?
     /// Block-menu availability by (block, structural revision), from the session.
     private var availability: [String: (revision: UInt64, actions: [NativeBlockAction])] = [:]
     @ObservationIgnored private var requestedAvailability: Set<String> = []
@@ -813,9 +818,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 requestedSource = requested
             }
             if endBarrierSelection(ownEcho: true) {
-                // The user's own selection wins, but the typed space is shown: the
-                // check still runs (it bails unless the caret sits after the prefix).
-                if let shortcutCheck { convertMarkdownShortcutIfNeeded(in: shortcutCheck.blockID) }
+                // The user's own selection wins, but the typed character is shown: the
+                // check still runs (it bails unless the caret sits after the shortcut).
+                if let shortcutCheck { runShortcutCheck(shortcutCheck.kind, in: shortcutCheck.blockID) }
                 return
             }
             switch barrier.placement {
@@ -854,9 +859,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 break
             }
             noticeKey = nil
-            // The typed space is shown now: convert its prefix, if the caret is
-            // still right after it in the same block.
-            if let shortcutCheck { convertMarkdownShortcutIfNeeded(in: shortcutCheck.blockID) }
+            // The typed character is shown now: convert its shortcut, if the caret
+            // is still right after it in the same block.
+            if let shortcutCheck { runShortcutCheck(shortcutCheck.kind, in: shortcutCheck.blockID) }
         case .refused(let id, let error):
             settleCopies(after: id, applied: false)
             if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
@@ -896,12 +901,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 retried = barrier.retry?() == true
             }
             // The retry posts a new barrier: the shortcut check follows it.
-            var shortcutNow: String?
+            var shortcutNow: (blockID: String, kind: PendingShortcutKind)?
             if let pending = pendingShortcutCheck, pending.barrierID == id {
                 pendingShortcutCheck =
-                    retried ? self.barrier.map { (blockID: pending.blockID, barrierID: $0.id) } : nil
-                // A retry that predicted instead of posting shows the space now.
-                if retried, self.barrier == nil { shortcutNow = pending.blockID }
+                    retried
+                    ? self.barrier.map { (blockID: pending.blockID, barrierID: $0.id, kind: pending.kind) } : nil
+                // A retry that predicted instead of posting shows the typed character now.
+                if retried, self.barrier == nil { shortcutNow = (pending.blockID, pending.kind) }
             }
             if let carried {
                 // The view shows the user's selection; the retry keeps it as theirs.
@@ -909,7 +915,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 show(carried)
             }
             // After the user's selection is back: a caret they moved away keeps the text literal.
-            if let shortcutNow { convertMarkdownShortcutIfNeeded(in: shortcutNow) }
+            if let shortcutNow { runShortcutCheck(shortcutNow.kind, in: shortcutNow.blockID) }
             if retried, let next = lastCommandID, next != id {
                 // A cut's copy follows its retried delete.
                 for (copy, pending) in pendingCopies where pending.after == id { pendingCopies[copy]?.after = next }
@@ -1114,15 +1120,33 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
     }
 
-    /// A typed space: convert a markdown prefix now, or once the barrier the
-    /// space took settles (a paragraph with inline objects, a block the session
-    /// refused predictions for, or a full prediction queue shows nothing yet).
+    private static let inlineMarkShortcutTriggers: Set<String> = ["*", "_", "`", "~"]
+
+    /// A typed space or inline-mark closing delimiter: convert a markdown
+    /// shortcut now, or once the barrier the keystroke took settles (a
+    /// paragraph with inline objects, a block the session refused predictions
+    /// for, or a full prediction queue shows nothing yet).
     private func shortcutCheckAfterTyping(_ text: String, blockID: String?) {
-        guard text == " " else { return }
-        if let barrier, let blockID {
-            pendingShortcutCheck = (blockID: blockID, barrierID: barrier.id)
+        let kind: PendingShortcutKind
+        if text == " " {
+            kind = .block
+        } else if Self.inlineMarkShortcutTriggers.contains(text) {
+            kind = .inlineMark
         } else {
-            convertMarkdownShortcutIfNeeded()
+            return
+        }
+        if let barrier, let blockID {
+            pendingShortcutCheck = (blockID: blockID, barrierID: barrier.id, kind: kind)
+        } else {
+            runShortcutCheck(kind)
+        }
+    }
+
+    @discardableResult
+    private func runShortcutCheck(_ kind: PendingShortcutKind, in blockID: String? = nil) -> Bool {
+        switch kind {
+        case .block: return convertMarkdownShortcutIfNeeded(in: blockID)
+        case .inlineMark: return convertInlineMarkShortcutIfNeeded(in: blockID)
         }
     }
 
@@ -1458,13 +1482,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             canPredict(surface.blocks[position], blockRange, text, typed)
         else {
             // The engine's own validation decides: shown on its result.
-            return postBarrier(
+            let retryMarks = marks ?? pendingTypingMarks
+            let posted = postBarrier(
                 entry.blockID, .replace(range: blockRange, replacement: text, marks: typed),
                 refusal: .native_editor_input_unavailable, placement: .at(caret.location), undoBefore: undoBefore,
                 undoAfter: false,
                 retry: again(at: range) { [weak self] in
-                    self?.replace(range: $0, with: text, marks: marks, holdWhenBusy: holdWhenBusy) ?? false
+                    self?.replace(range: $0, with: text, marks: retryMarks, holdWhenBusy: holdWhenBusy) ?? false
                 })
+            if posted { pendingTypingMarks = nil }
+            return posted
         }
         let command = NativeEditCommand(
             id: UUID(), baseRevision: canonicalRevision, blockID: entry.blockID, range: blockRange,
@@ -1673,6 +1700,66 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             refusal: .native_editor_input_unavailable,
             retry: again { [weak self] in self?.convertMarkdownShortcutIfNeeded() ?? false },
             readsSelection: true)
+    }
+
+    /// An inline markdown mark shortcut (`**x**`, `__x__`, `*x*`, `_x_`,
+    /// `` `x` ``, `~~x~~`): deletes the delimiters and applies the mark to the
+    /// body in one transaction, placing the caret right after the formatted
+    /// text with the new mark cleared for subsequent typing. Works in prose
+    /// blocks and table cells; never in code blocks, code-marked text, opaque
+    /// cards or scoped source editors.
+    @discardableResult
+    private func convertInlineMarkShortcutIfNeeded(in blockID: String? = nil) -> Bool {
+        guard barrier == nil, !surface.expectsInvalidation, !awaitsReset, pendingCompositionCommit == nil,
+            !compositionOwnsView, sourceKind == nil,
+            let view, view.isEditable, !isFrozen, !isDetached, view.selectedRange.length == 0,
+            let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location),
+            let position = surface.rangeIndex.position(for: entry.blockID)
+        else { return false }
+        let block = surface.blocks[position]
+        guard block.node != "codeBlock", !block.isOpaque,
+            !AttributedDocumentProjection.isPlaceholder(block), !surface.isHidden(position: position),
+            blockID == nil || entry.blockID == blockID
+        else { return false }
+        let blockText = text(of: block)
+        let caret = view.selectedRange.location - entry.textRange.location
+        guard caret > 0, caret <= blockText.utf16.count,
+            let match = detectInlineMarkShortcut(text: blockText, caretOffset: caret)
+        else { return false }
+        let spans = NativeMarkSelection.spans(block.runs)
+        // Never convert when any part of the shortcut, delimiters included, is already code-marked.
+        guard !spans.contains(where: { $0.range.overlaps(match.fullRange) && $0.marks.contains { $0.key == "code" } })
+        else { return false }
+        var attributes = [TextMark(key: match.markKey, valueJSON: "{}")]
+        if match.markKey == "code" {
+            // TipTap's code mark excludes every other mark.
+            let excluded = Set(
+                spans.filter { $0.range.overlaps(match.bodyRange) }
+                    .flatMap { $0.marks.map(\.key) }
+                    .filter { $0 != "code" }
+            ).sorted()
+            attributes += excluded.map { TextMark(key: $0, valueJSON: "null") }
+        }
+        let command = NativeMarkShortcutCommand(match: match, attributes: attributes)
+        let targetBlockID = entry.blockID
+        let expectedCaretOffset = match.fullRange.lowerBound + match.bodyRange.count
+        let addedMarkKey = match.markKey
+        return applyStructural(
+            targetBlockID, .markShortcut(command),
+            refusal: .native_editor_input_unavailable,
+            retry: again { [weak self] in self?.convertInlineMarkShortcutIfNeeded() ?? false },
+            readsSelection: true,
+            onSettled: { [weak self] applied in
+                guard applied, let self, let view = self.view, view.selectedRange.length == 0,
+                    let pos = self.surface.rangeIndex.textPosition(atUTF16: view.selectedRange.location),
+                    self.surface.rangeIndex.entries[pos.position].blockID == targetBlockID,
+                    pos.offset == expectedCaretOffset
+                else { return }
+                let marks = NativeMarkSelection.typing(self.surface.blocks[pos.position].runs, at: pos.offset)
+                    .filter { $0.key != addedMarkKey }
+                self.pendingTypingMarks = marks
+                self.refreshSelectionMarks()
+            })
     }
 
     /// The folded-content rule (PR06b): a range or mark command that touches
