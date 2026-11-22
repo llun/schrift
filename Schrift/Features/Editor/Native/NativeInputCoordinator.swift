@@ -123,6 +123,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @ObservationIgnored private var intents: [Intent] = []
     /// Blocks whose predictions the session refused: typing there is a barrier.
     @ObservationIgnored private var barrierOnly: Set<String> = []
+    /// A typed space that took the barrier path: its markdown shortcut check
+    /// runs once that barrier settles, when the surface finally shows it.
+    @ObservationIgnored private var pendingShortcutCheck: (blockID: String, barrierID: UUID)?
     /// Block-menu availability by (block, structural revision), from the session.
     private var availability: [String: (revision: UInt64, actions: [NativeBlockAction])] = [:]
     @ObservationIgnored private var requestedAvailability: Set<String> = []
@@ -801,6 +804,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             guard let barrier, barrier.id == id else { return }
             self.barrier = nil
             let onSettled = barrier.onSettled
+            let shortcutCheck = pendingShortcutCheck?.barrierID == id ? pendingShortcutCheck : nil
+            if shortcutCheck != nil { pendingShortcutCheck = nil }
             defer { onSettled?(true) }
             endUndoStep()
             noticeKey = nil
@@ -844,12 +849,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 break
             }
             noticeKey = nil
+            // The typed space is shown now: convert its prefix, if the caret is
+            // still right after it in the same block.
+            if let shortcutCheck { convertMarkdownShortcutIfNeeded(in: shortcutCheck.blockID) }
         case .refused(let id, let error):
             settleCopies(after: id, applied: false)
             if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
             guard let barrier, barrier.id == id else { return }
             self.barrier = nil
             let onSettled = barrier.onSettled
+            if pendingShortcutCheck?.barrierID == id { pendingShortcutCheck = nil }
             endBarrierSelection(ownEcho: false)
             endUndoStep()
             lastOutcome = false
@@ -881,6 +890,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 if let origin = origin ?? nil, origin != view?.selectedRange { selection.place(origin) }
                 retried = barrier.retry?() == true
             }
+            // The retry posts a new barrier: the shortcut check follows it.
+            if let pending = pendingShortcutCheck, pending.barrierID == id {
+                pendingShortcutCheck =
+                    retried ? self.barrier.map { (blockID: pending.blockID, barrierID: $0.id) } : nil
+            }
             if let carried {
                 // The view shows the user's selection; the retry keeps it as theirs.
                 if self.barrier != nil { userSelection = blockRange(carried).map { ($0, 0) } }
@@ -898,6 +912,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         case .invalidated(let epoch, let id):
             let dropped = (barrier?.id == id) ? barrier?.onSettled : nil
             if barrier?.id == id { barrier = nil }
+            if pendingShortcutCheck?.barrierID == id { pendingShortcutCheck = nil }
             settleCopies(after: id, applied: false)
             if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
             if let predicted = surface.predictions.first(where: { $0.commandID == id }) {
@@ -910,6 +925,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         case .failed:
             let dropped = barrier?.onSettled
             barrier = nil
+            pendingShortcutCheck = nil
             pendingSlashPageLink = nil
             userSelection = nil
             lastOutcome = false
@@ -1076,10 +1092,24 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         } else if text == "\t" {
             insertTab()
         } else {
-            let typed = replace(range: view.selectedRange, with: text)
+            let caret = view.selectedRange
+            let blockID = surface.rangeIndex.entry(atUTF16: caret.location)?.blockID
+            let typed = replace(range: caret, with: text)
             // A markdown prefix converts as its trailing space is typed, never
             // on paste or a multi-character insertion (those take other paths).
-            if typed, text == " " { convertMarkdownShortcutIfNeeded() }
+            if typed { shortcutCheckAfterTyping(text, blockID: blockID) }
+        }
+    }
+
+    /// A typed space: convert a markdown prefix now, or once the barrier the
+    /// space took settles (a paragraph with inline objects, a block the session
+    /// refused predictions for, or a full prediction queue shows nothing yet).
+    private func shortcutCheckAfterTyping(_ text: String, blockID: String?) {
+        guard text == " " else { return }
+        if let barrier, let blockID {
+            pendingShortcutCheck = (blockID: blockID, barrierID: barrier.id)
+        } else {
+            convertMarkdownShortcutIfNeeded()
         }
     }
 
@@ -1172,9 +1202,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 return
             }
             // A refused command must still leave storage equal to the model.
-            if !replace(range: direct.range, with: direct.text), !surface.storageMatchesModel {
+            let typed = replace(range: direct.range, with: direct.text)
+            if !typed, !surface.storageMatchesModel {
                 surface.restoreStorage()
             }
+            // A composing keyboard's space is a typed space like any other.
+            if typed { shortcutCheckAfterTyping(direct.text, blockID: blockID) }
             return
         }
         // A late notification for marked text this view already cleared and
@@ -1547,7 +1580,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let block = surface.blocks[position]
         // Plain `---`, `***`, `___` + Return converts the paragraph into a
         // divider; a ``` fence (with an optional language) becomes a code block.
-        if block.node == "paragraph", tableMove == nil, sourceKind == nil,
+        // A paragraph with inline objects is never a fence: its text carries
+        // their placeholders, which no language accepts.
+        if block.node == "paragraph", tableMove == nil, sourceKind == nil, !block.hasInlineObjects,
             let match = detectEnterShortcut(text: text(of: block))
         {
             let length = text(of: block).utf16.count
@@ -1562,7 +1597,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             case .codeBlock(let language):
                 // A language the engine's `language` prop refuses would turn
                 // Return into a refusal; such a fence splits as ordinary text.
-                guard language.isEmpty || Self.isCodeLanguage(language) else { break }
+                guard language.isEmpty || DocumentEngine.isValidCodeLanguage(language) else { break }
                 let props = language.isEmpty ? [] : [ProjectedProp(key: "language", value: .string(language))]
                 return applyStructural(
                     entry.blockID, .blockType(node: "codeBlock", props: props, removing: 0..<length),
@@ -1588,15 +1623,19 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// plain paragraph converts; a locked, opaque, table-cell or scoped-source
     /// block stays literal, and so does a prefix typed mid-line.
     @discardableResult
-    private func convertMarkdownShortcutIfNeeded() -> Bool {
-        guard barrier == nil, !isBusy, !compositionOwnsView, sourceKind == nil, tableMove == nil,
+    private func convertMarkdownShortcutIfNeeded(in blockID: String? = nil) -> Bool {
+        // A prediction count at the cap is not a reason to skip: the structural
+        // command has its own busy handling, like the slash menu's choice.
+        guard barrier == nil, !surface.expectsInvalidation, !awaitsReset, pendingCompositionCommit == nil,
+            !compositionOwnsView, sourceKind == nil, tableMove == nil,
             let view, view.isEditable, !isFrozen, !isDetached, view.selectedRange.length == 0,
             let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location),
             let position = surface.rangeIndex.position(for: entry.blockID)
         else { return false }
         let block = surface.blocks[position]
         guard block.node == "paragraph", !block.isOpaque, !block.isLocked,
-            !AttributedDocumentProjection.isPlaceholder(block), !surface.isHidden(position: position)
+            !AttributedDocumentProjection.isPlaceholder(block), !surface.isHidden(position: position),
+            blockID == nil || entry.blockID == blockID
         else { return false }
         let text = text(of: block)
         let caret = view.selectedRange.location - entry.textRange.location
@@ -1629,15 +1668,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     private func isCode(_ blockID: String) -> Bool {
         surface.rangeIndex.position(for: blockID).map { surface.blocks[$0].node == "codeBlock" } == true
-    }
-
-    /// A fence's language must be one the engine's `language` prop accepts
-    /// (1–64 characters, no whitespace or control characters).
-    private static func isCodeLanguage(_ language: String) -> Bool {
-        (1...64).contains(language.count)
-            && !language.unicodeScalars.contains {
-                CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0)
-            }
     }
 
     /// Backspace at a block's start: the engine joins a paragraph into the
@@ -3271,6 +3301,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // A post that fails stops authoring; the rollback keeps the text.
         _ = post(.compositionCommit(surfaceID: surfaceID, epoch: epoch, commandID: commit.id, text: commitText))
         releaseComposition()
+        // An IME committing a bare space is a typed space like any other; the
+        // commit is posted first, so the conversion follows it in order.
+        if commitText == " " { convertMarkdownShortcutIfNeeded() }
         return true
     }
 

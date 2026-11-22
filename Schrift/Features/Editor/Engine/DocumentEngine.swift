@@ -2071,6 +2071,17 @@ final class DocumentEngine {
         }
     }
 
+    /// A code block's `language` prop: 1–64 characters, no whitespace, control
+    /// characters or inline-object placeholders. The one rule the engine and
+    /// the native editor's fence shortcut share.
+    static func isValidCodeLanguage(_ language: String) -> Bool {
+        (1...64).contains(language.count)
+            && !language.unicodeScalars.contains {
+                CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0)
+                    || $0.value == 0xfffc
+            }
+    }
+
     /// A prop a `.props` command may write on `node`, with BlockNote 0.56's
     /// value type. Anything else (an unknown key, another type's prop, a
     /// malformed value) would make the block lossy, so it is refused.
@@ -2083,9 +2094,7 @@ final class DocumentEngine {
         case ("heading", "level", .int(let level)): return (1...6).contains(level)
         case ("heading", "isToggleable", .bool): return true
         case ("codeBlock", "language", .string(let language)):
-            return (1...64).contains(language.count)
-                && !language.unicodeScalars.contains { CharacterSet.whitespacesAndNewlines.contains($0) }
-                && !language.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+            return Self.isValidCodeLanguage(language)
         case ("callout", "emoji", .string(let emoji)):
             return emoji.count == 1 && emoji.unicodeScalars.count <= 16
                 && emoji.unicodeScalars.contains { $0.properties.isEmoji && $0.value > 0x7f }

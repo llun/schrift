@@ -53,6 +53,16 @@ final class NativeMarkdownShortcutTests: NativeEditingTestCase {
         return try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(base64, name)))
     }
 
+    /// A checkpoint whose `blockID` paragraph carries a mention at `offset`.
+    private func stateWithMention(_ blocks: [BlockNoteBlock], blockID: String, at offset: Int) throws -> Data {
+        let doc = try makeDoc(blocks, clientID: 1)
+        defer { doc.destroy() }
+        let writer = BlockNoteWriter(doc: doc)
+        _ = try writer.insertInlineObject(
+            .mention(userID: "u1", fullName: "Ada"), in: try writer.find(blockID), replacing: offset..<offset)
+        return try YStateEncoder.encodeStateAsUpdate(doc)
+    }
+
     // MARK: - Typing shortcuts
 
     func testTypingShortcutsConvertAtBlockStart() async throws {
@@ -263,5 +273,138 @@ final class NativeMarkdownShortcutTests: NativeEditingTestCase {
         XCTAssertEqual(try block(session, "p").node, "heading")
         XCTAssertEqual(text(of: try block(session, "p")), "")
         try await assertConsistent(harness, localCommands: 5)
+    }
+
+    // MARK: - The barrier path
+
+    /// A paragraph with an inline object shows a typed space only when its
+    /// barrier settles: the check must run then, not bail on the busy surface.
+    func testShortcutConvertsAParagraphWithAnInlineObject() async throws {
+        let harness = try await makeHarness(
+            state: try stateWithMention([paragraph("p", "Hi "), paragraph("after", "Next")], blockID: "p", at: 3))
+        let session = harness.session
+        try caret(harness, "p", 0)
+        type(session, "# ")
+        await harness.settle()
+        let block = try block(session, "p")
+        XCTAssertEqual(block.node, "heading")
+        XCTAssertEqual(block.runs.last?.inlineObject, .mention(userID: "u1", fullName: "Ada"), "the mention stays")
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(session, "p", 0), length: 0))
+        try await assertConsistent(harness, localCommands: 3)
+    }
+
+    /// A block the session refused predictions for types through barriers: the
+    /// space's check follows the barrier that shows it.
+    func testShortcutConvertsInABarrierOnlyBlock() async throws {
+        let blocks = [paragraph("p", "Alpha beta"), paragraph("after", "Next")]
+        let harness = try await makeHarness(blocks)
+        let session = harness.session
+        // A peer edit the surface cannot rebase puts the block on the barrier path.
+        let peer = try makeDoc(blocks, clientID: 9)
+        defer { peer.destroy() }
+        let update = try BlockNoteWriter(doc: peer).replaceText(block: "p", range: 2..<8, with: "")
+        session.replica?.mailbox.post(.integrate(update, reply: nil))
+        try caret(harness, "p", 4)
+        session.textView.insertText("x")
+        await harness.settle()
+        XCTAssertEqual(text(of: try block(session, "p")), "Alta", "the peer edit stands")
+
+        try caret(harness, "p", 0)
+        type(session, "# ")
+        await harness.settle()
+        XCTAssertEqual(try block(session, "p").node, "heading")
+        XCTAssertEqual(text(of: try block(session, "p")), "Alta")
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(session, "p", 0), length: 0))
+        try await assertConsistent(harness, localCommands: 3)
+    }
+
+    // MARK: - Composing keyboards
+
+    /// A ja/ko keyboard's space is written by UIKit and submitted as a command:
+    /// it is a typed space, so the prefix converts.
+    func testShortcutConvertsAfterAComposingKeyboardsDirectSpace() async throws {
+        let harness = try await makeHarness([paragraph("p", ""), paragraph("after", "Next")])
+        let session = harness.session
+        let input = try XCTUnwrap(session.input)
+        input.inputLanguage = { "ja-JP" }
+        try caret(harness, "p", 0)
+        session.textView.insertText("#")
+        await harness.settle()
+
+        let range = NSRange(location: try location(session, "p", 1), length: 0)
+        session.textView.selectedRange = range
+        XCTAssertTrue(
+            input.textView(session.textView, shouldChangeTextInRanges: [NSValue(range: range)], replacementText: " "))
+        session.textView.textStorage.replaceCharacters(in: range, with: " ")
+        input.textViewDidChange(session.textView)
+        await harness.settle()
+
+        XCTAssertEqual(try block(session, "p").node, "heading")
+        XCTAssertEqual(text(of: try block(session, "p")), "")
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(session, "p", 0), length: 0))
+        try await assertConsistent(harness, localCommands: 3)
+    }
+
+    /// An IME composition that commits a bare space is a typed space too.
+    func testShortcutConvertsAfterAnIMEBareSpaceCommit() async throws {
+        let harness = try await makeHarness([paragraph("p", ""), paragraph("after", "Next")])
+        let session = harness.session
+        try caret(harness, "p", 0)
+        session.textView.insertText("#")
+        await harness.settle()
+
+        session.textView.selectedRange = NSRange(location: try location(session, "p", 1), length: 0)
+        session.textView.setMarkedText(" ", selectedRange: NSRange(location: 1, length: 0))
+        await harness.settle()
+        session.textView.unmarkText()
+        await harness.settle()
+
+        XCTAssertEqual(try block(session, "p").node, "heading")
+        XCTAssertEqual(text(of: try block(session, "p")), "")
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(session, "p", 0), length: 0))
+        try await assertConsistent(harness, localCommands: 3)
+    }
+
+    // MARK: - Fences
+
+    /// A fence paragraph with an inline object is never a fence: its text
+    /// carries the object's placeholder, so Return splits it as ordinary text.
+    func testACodeFenceWithAnInlineObjectSplitsAsText() async throws {
+        let harness = try await makeHarness(
+            state: try stateWithMention([paragraph("p", "```"), paragraph("after", "Next")], blockID: "p", at: 3))
+        let session = harness.session
+        try caret(harness, "p", 3)
+        let split = await harness.run { harness.input.insertNewline() }
+        XCTAssertTrue(split)
+        XCTAssertNil(harness.input.noticeKey, "no refusal: the fence is never attempted")
+        XCTAssertEqual(session.surface.blocks.map(\.node), ["paragraph", "paragraph", "paragraph"])
+        XCTAssertEqual(text(of: session.surface.blocks[0]), "```")
+        XCTAssertEqual(
+            session.surface.blocks[1].runs.first?.inlineObject, .mention(userID: "u1", fullName: "Ada"),
+            "the mention stays")
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    /// A language the engine's `language` prop refuses splits as text instead
+    /// of turning Return into a refusal.
+    func testACodeFenceWithAnInvalidLanguageSplitsAsText() async throws {
+        let harness = try await makeHarness([paragraph("p", "```foo bar"), paragraph("after", "Next")])
+        let session = harness.session
+        try caret(harness, "p", 10)
+        let split = await harness.run { harness.input.insertNewline() }
+        XCTAssertTrue(split)
+        XCTAssertNil(harness.input.noticeKey)
+        XCTAssertEqual(session.surface.blocks.map(\.node), ["paragraph", "paragraph", "paragraph"])
+        XCTAssertEqual(text(of: session.surface.blocks[0]), "```foo bar")
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    /// The engine and the fence shortcut share one language rule, and it
+    /// refuses an inline object's placeholder.
+    func testTheSharedLanguageRuleRefusesAnInlineObjectPlaceholder() {
+        XCTAssertFalse(DocumentEngine.isValidCodeLanguage("\u{FFFC}"))
+        XCTAssertFalse(DocumentEngine.isValidCodeLanguage("foo bar"))
+        XCTAssertFalse(DocumentEngine.isValidCodeLanguage(""))
+        XCTAssertTrue(DocumentEngine.isValidCodeLanguage("swift"))
     }
 }
