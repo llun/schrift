@@ -2210,9 +2210,12 @@ final class DocumentSaveCoordinator {
     }
 
     /// Whether `documentID` is the server ID of a checkpointed local create for the signed-in
-    /// account and server origin whose migration onto that server ID has not completed yet.
+    /// account (or any account when identity is still unknown) and server origin whose migration
+    /// onto that server ID has not completed yet.
     func hasCheckpointedCreate(forServerID documentID: UUID) -> Bool {
-        checkpointedRecord(forServerID: documentID) != nil
+        _ = pendingCreatesVersion
+        _ = pins.revision
+        return checkpointedRecord(forServerID: documentID) != nil
     }
 
     /// A checkpointed record owned by the currently signed-in account on `client.serverOrigin`.
@@ -2226,12 +2229,6 @@ final class DocumentSaveCoordinator {
                 && $0.serverOrigin == client.serverOrigin
                 && $0.ownerUserID == currentUserID
         }
-    }
-
-    /// Whether `documentID` has a checkpointed local create owned by the currently signed-in
-    /// account on `client.serverOrigin`.
-    func hasOwnedCheckpointedCreate(forServerID documentID: UUID) -> Bool {
-        ownedCheckpointedRecord(forServerID: documentID) != nil
     }
 
     // MARK: - Create replay
@@ -4642,8 +4639,7 @@ final class DocumentSaveCoordinator {
                 // via Retry or Discard.
                 markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
             } catch {
-                // Leave the draft for a later sync (e.g. offline, expired session, missing route,
-                // or cancellation).
+                // Leave the draft for a later sync (e.g. offline, expired session, or cancellation).
                 if isDeferredReplayFailure(error) {
                     if draft.replica != nil {
                         states[draft.documentID] = .pendingSync
@@ -4669,12 +4665,11 @@ final class DocumentSaveCoordinator {
 
     /// Errors during a background sync pass that leave the draft waiting for a later pass rather
     /// than marking it `.failed`: transient transport/5xx/rate-limit failures, `.sessionExpired`
-    /// (the shared client already raised re-login), `.routeNotFound` (a server-route failure, not
-    /// a refusal of this document), and `CancellationError`.
+    /// (the shared client already raised re-login), and `CancellationError`.
     private func isDeferredReplayFailure(_ error: Error) -> Bool {
         if error is CancellationError { return true }
         guard let docsError = error as? DocsAPIError else { return false }
-        return retryableSaveFailure(docsError) || docsError == .sessionExpired || docsError == .routeNotFound
+        return retryableSaveFailure(docsError) || docsError == .sessionExpired
     }
 
     /// Record a conflict the editor's own revalidation (`reconcileDraft`, or `apply`'s dirty
@@ -4988,6 +4983,7 @@ final class DocumentSaveCoordinator {
     func waitingClassicContent(documentID: UUID) -> WaitingClassicContent? {
         _ = draftsVersion
         _ = pendingCreatesVersion
+        _ = pins.revision
         if let pending = pendingSave(documentID: documentID), pending.replicaRequest == nil {
             return WaitingClassicContent(
                 title: pending.title, markdown: pending.markdown, attachmentOwnerID: documentID)
@@ -5032,6 +5028,7 @@ final class DocumentSaveCoordinator {
         _ = draftsVersion
         _ = pendingCreatesVersion
         _ = pendingAttachmentsVersion
+        _ = pins.revision
         if case .failed = state(for: documentID) { return true }
         let checkpointed = ownedCheckpointedRecord(forServerID: documentID)
         if let checkpointed, case .failed = state(for: checkpointed.localID) { return true }

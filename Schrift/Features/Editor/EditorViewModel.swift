@@ -406,6 +406,13 @@ final class EditorViewModel {
         }
     }
 
+    /// The signed-in account's id, reading `pins.revision` so screens react when
+    /// `/users/me/` resolves after launch (`SignedInUserStore` itself is not observable).
+    var signedInUserID: UUID? {
+        _ = saveCoordinator.pins.revision
+        return signedInUser.userID
+    }
+
     /// True while this server document still has classic edits, a queued/in-flight classic
     /// save, or an unfinished checkpointed create waiting to sync.
     var hasWaitingClassicWork: Bool {

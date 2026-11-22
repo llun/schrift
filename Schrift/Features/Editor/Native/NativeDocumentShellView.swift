@@ -585,6 +585,15 @@ struct NativeDocumentShellView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    /// Copies the currently owned waiting classic draft (title + blank line + Markdown) to the
+    /// pasteboard. Refuses when `waitingClassicContent` is nil (e.g. an unowned checkpointed create).
+    @discardableResult
+    func copyWaitingClassicPayload() -> Bool {
+        guard let waiting = viewModel.waitingClassicContent else { return false }
+        copyTextToPasteboard(waitingClassicCopyText(title: waiting.title, markdown: waiting.markdown))
+        return true
+    }
+
     private var waitingClassicEditsContent: some View {
         let waiting = viewModel.waitingClassicContent
         let displayTitle = waiting?.title ?? viewModel.title
@@ -611,9 +620,9 @@ struct NativeDocumentShellView: View {
                                 Task { await nativeOpen.retryWaitingClassicEdits(viewModel: viewModel) }
                             },
                             onCopyText: {
-                                copyTextToPasteboard(
-                                    waitingClassicCopyText(title: displayTitle, markdown: markdown))
-                                toastMessage = ToastMessage(loc[.toast_text_copied])
+                                if copyWaitingClassicPayload() {
+                                    toastMessage = ToastMessage(loc[.toast_text_copied])
+                                }
                             },
                             onDiscard: {
                                 isConfirmingDiscardWaitingEdits = true
@@ -1106,6 +1115,15 @@ enum WaitingClassicNoticeState: Equatable, Sendable {
     case syncing
     case failed
     case hidden
+
+    /// The recovery buttons the card shows: only a refused draft offers any.
+    var actions: [WaitingClassicNoticeAction] {
+        self == .failed ? [.retry, .copyText, .discard] : []
+    }
+}
+
+enum WaitingClassicNoticeAction: Equatable, Sendable {
+    case retry, copyText, discard
 }
 
 /// Maps coordinator/route flags to the waiting-classic notice card state.
@@ -1207,19 +1225,41 @@ struct WaitingClassicEditsNotice: View {
 
     @ViewBuilder
     private var failedActionButtons: some View {
-        DocsButton(
-            title: loc[.common_retry], variant: .primary, color: .brand, size: .small, action: onRetry
-        )
-        .accessibilityIdentifier("nativeEditor.waitingClassic.retry")
-        DocsButton(
-            title: loc[.native_editor_waiting_classic_copy_text], variant: .outline, color: .neutral,
-            size: .small, action: onCopyText
-        )
-        .accessibilityIdentifier("nativeEditor.waitingClassic.copy")
-        DocsButton(
-            title: loc[.native_editor_recovery_discard], variant: .secondary, color: .danger, size: .small,
-            action: onDiscard
-        )
-        .accessibilityIdentifier("nativeEditor.waitingClassic.discard")
+        ForEach(state.actions, id: \.self) { action in
+            button(for: action)
+        }
+    }
+
+    /// The handler each recovery button runs; the view and its tests share it.
+    func perform(_ action: WaitingClassicNoticeAction) {
+        switch action {
+        case .retry: onRetry()
+        case .copyText: onCopyText()
+        case .discard: onDiscard()
+        }
+    }
+
+    @ViewBuilder
+    private func button(for action: WaitingClassicNoticeAction) -> some View {
+        switch action {
+        case .retry:
+            DocsButton(
+                title: loc[.common_retry], variant: .primary, color: .brand, size: .small,
+                action: { perform(.retry) }
+            )
+            .accessibilityIdentifier("nativeEditor.waitingClassic.retry")
+        case .copyText:
+            DocsButton(
+                title: loc[.native_editor_waiting_classic_copy_text], variant: .outline, color: .neutral,
+                size: .small, action: { perform(.copyText) }
+            )
+            .accessibilityIdentifier("nativeEditor.waitingClassic.copy")
+        case .discard:
+            DocsButton(
+                title: loc[.native_editor_recovery_discard], variant: .secondary, color: .danger, size: .small,
+                action: { perform(.discard) }
+            )
+            .accessibilityIdentifier("nativeEditor.waitingClassic.discard")
+        }
     }
 }

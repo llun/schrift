@@ -519,7 +519,143 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         await waitUntil { !env.coordinator.isWaitingClassicInFlight(documentID: env.documentID) }
     }
 
+    func testOnlineOpenWhileClassicPatchIsInFlightStaysWaitingUntilPatchLandsThenOpensNative() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let patchGate = MockURLProtocol.ResponseGate()
+        defer { patchGate.open() }
+        let serverText = "Authoritative server state after in-flight PATCH"
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState(serverText))
+        server.patchGate = patchGate
+        server.install()
+
+        env.coordinator.enqueue(documentID: env.documentID, title: "In-Flight Title", markdown: "In-flight body")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        XCTAssertTrue(env.coordinator.isWaitingClassicInFlight(documentID: env.documentID))
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .waitingClassicEdits = open.route else {
+            return XCTFail("in-flight classic PATCH must keep route on .waitingClassicEdits, got \(open.route)")
+        }
+        XCTAssertTrue(env.model.isWaitingClassicInFlight)
+        await waitAndConfirmNever {
+            if case .waitingClassicEdits = open.route { return false }
+            return true
+        }
+
+        patchGate.open()
+        await waitUntil {
+            if case .native = open.route { return true }
+            return false
+        }
+        guard case .native(let session) = open.route else {
+            return XCTFail("route must transition to .native once in-flight classic PATCH lands, got \(open.route)")
+        }
+        XCTAssertFalse(env.coordinator.isWaitingClassicInFlight(documentID: env.documentID))
+        XCTAssertFalse(env.coordinator.hasWaitingClassicWork(documentID: env.documentID))
+        XCTAssertEqual(session.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
+    }
+
     // MARK: - Ownership, Failure Classification, Never-Classic & Drain Lifecycle
+
+    func testOwnCheckpointedCreateWithUnknownUserWaitsEmptyWithoutBlockingMigrationThenReopensWithDraft() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let serverText = "Migrated server ydoc after identity resolves"
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState(serverText))
+        server.serverTitle = "Offline Created"
+        server.serverContent = ""
+        server.serverUpdatedAt = "2026-11-07T10:00:00Z"
+        server.install()
+
+        let local = env.coordinator.createLocalDocument(
+            title: "Offline Created", parentID: nil, ownerUserID: owner, seedMarkdown: "Checkpointed classic body")
+        var record = try XCTUnwrap(env.creates.create(for: local.id))
+        record.syncedServerID = env.documentID
+        env.creates.save(record)
+
+        // (a) Before /users/me/ resolves (`signedInUser.userID == nil`), route stays `.waitingClassicEdits`
+        // with empty body, waiting notice, and no writable open-editor count blocking migration.
+        env.model.signedInUser.clear()
+        let relaunchedOffline = env.relaunch()
+        relaunchedOffline.noteEditorAppeared()
+        XCTAssertTrue(relaunchedOffline.saveCoordinator.hasOpenEditorForTesting(documentID: env.documentID))
+
+        let openOffline = NativeEditorOpen(preference: { true })
+        defer { openOffline.close() }
+        await openOffline.open(viewModel: relaunchedOffline, isOffline: true, canUpdate: true)
+        guard case .waitingClassicEdits = openOffline.route else {
+            return XCTFail(
+                "unknown user + own checkpointed create offline must route to .waitingClassicEdits, "
+                    + "got \(openOffline.route)"
+            )
+        }
+        XCTAssertNil(relaunchedOffline.waitingClassicContent, "body must stay empty while user is unknown")
+        XCTAssertFalse(openOffline.isWaitingClassicSyncing)
+        XCTAssertFalse(relaunchedOffline.isWaitingClassicFailed)
+        XCTAssertEqual(
+            waitingClassicNoticeState(
+                hasConflict: relaunchedOffline.visibleNativeSyncConflict != nil,
+                isSyncing: openOffline.isWaitingClassicSyncing || relaunchedOffline.isWaitingClassicInFlight,
+                isFailed: relaunchedOffline.isWaitingClassicFailed),
+            .waitingOffline)
+        XCTAssertFalse(
+            relaunchedOffline.saveCoordinator.hasWritableOpenEditorForTesting(documentID: env.documentID),
+            "waiting route must release writable open-editor count so migration is not blocked")
+        XCTAssertFalse(relaunchedOffline.saveCoordinator.discardClassicDraft(documentID: env.documentID))
+        await openOffline.retryWaitingClassicEdits(viewModel: relaunchedOffline)
+        XCTAssertFalse(openOffline.isWaitingClassicSyncing)
+
+        // (b) Setting the signed-in user id to the owner reopens and reveals the draft.
+        relaunchedOffline.signedInUser.remember(owner)
+        relaunchedOffline.saveCoordinator.pins.sessionIdentityDidChange()
+        await waitUntil {
+            relaunchedOffline.title == "Offline Created"
+                && relaunchedOffline.waitingClassicContent?.markdown == "Checkpointed classic body"
+        }
+        guard case .waitingClassicEdits = openOffline.route else {
+            return XCTFail(
+                "offline reopen after owner resolves must stay .waitingClassicEdits, got \(openOffline.route)")
+        }
+        XCTAssertEqual(relaunchedOffline.waitingClassicContent?.title, "Offline Created")
+        XCTAssertEqual(relaunchedOffline.waitingClassicContent?.markdown, "Checkpointed classic body")
+        openOffline.close()
+
+        // Same check online: stays on `.waitingClassicEdits` with empty body and non-blocking open count
+        // until identity resolves, then reopens, drains/migrates, and lands on `.native`.
+        env.model.signedInUser.clear()
+        let relaunchedOnline = env.relaunch()
+        relaunchedOnline.noteEditorAppeared()
+
+        let openOnline = NativeEditorOpen(preference: { true })
+        defer { openOnline.close() }
+        await openOnline.open(viewModel: relaunchedOnline, isOffline: false, canUpdate: true)
+        guard case .waitingClassicEdits = openOnline.route else {
+            return XCTFail(
+                "unknown user + own checkpointed create online must route to .waitingClassicEdits, "
+                    + "got \(openOnline.route)"
+            )
+        }
+        XCTAssertNil(relaunchedOnline.waitingClassicContent)
+        XCTAssertFalse(openOnline.isWaitingClassicSyncing)
+        XCTAssertFalse(
+            relaunchedOnline.saveCoordinator.hasWritableOpenEditorForTesting(documentID: env.documentID),
+            "online waiting route with unknown user must not hold a writable open-editor count")
+
+        relaunchedOnline.signedInUser.remember(owner)
+        relaunchedOnline.saveCoordinator.pins.sessionIdentityDidChange()
+        await waitUntil {
+            if case .native = openOnline.route { return true }
+            return false
+        }
+        guard case .native(let session) = openOnline.route else {
+            return XCTFail("online reopen after owner resolves must migrate and open .native, got \(openOnline.route)")
+        }
+        XCTAssertFalse(relaunchedOnline.saveCoordinator.hasCheckpointedCreate(forServerID: env.documentID))
+        XCTAssertEqual(session.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
+    }
 
     func testOtherAccountCheckpointedCreateIsNotShownOrDiscardedWhenSignedOutOrDifferentUser() async throws {
         let env = makeEnvironment()
@@ -536,9 +672,11 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         record.syncedServerID = env.documentID
         env.creates.save(record)
 
-        // 1. signedInUser is nil: must not display or discard other account's draft, and never open .classic.
+        // 1. signedInUser is nil: fail closed onto `.waitingClassicEdits` with empty body, waiting notice,
+        // no writable open-editor count, and Retry/Discard refused (never exposing private draft or `.classic`).
         env.model.signedInUser.clear()
         let relaunchedNil = env.relaunch()
+        relaunchedNil.noteEditorAppeared()
         XCTAssertNil(relaunchedNil.waitingClassicContent)
         XCTAssertFalse(relaunchedNil.hasWaitingClassicWork)
         XCTAssertFalse(relaunchedNil.isWaitingClassicFailed)
@@ -551,26 +689,43 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         let openNilOffline = NativeEditorOpen(preference: { true })
         defer { openNilOffline.close() }
         await openNilOffline.open(viewModel: relaunchedNil, isOffline: true, canUpdate: true)
-        guard case .unavailable(.offlineNeverOpened) = openNilOffline.route else {
+        guard case .waitingClassicEdits = openNilOffline.route else {
             return XCTFail(
-                "signed-out offline open must not show other account's draft or .classic, got \(openNilOffline.route)")
+                "signed-out offline open must fail closed onto .waitingClassicEdits, got \(openNilOffline.route)")
         }
+        XCTAssertNil(relaunchedNil.waitingClassicContent, "must not display other account's draft while signed out")
+        XCTAssertFalse(relaunchedNil.saveCoordinator.hasWritableOpenEditorForTesting(documentID: env.documentID))
         openNilOffline.close()
 
         let openNilOnline = NativeEditorOpen(preference: { true })
         defer { openNilOnline.close() }
         await openNilOnline.open(viewModel: relaunchedNil, isOffline: false, canUpdate: true)
-        guard case .native(let nilSession) = openNilOnline.route else {
+        guard case .waitingClassicEdits = openNilOnline.route else {
             return XCTFail(
-                "signed-out online open must open read-only .native, got \(openNilOnline.route)")
+                "signed-out online open must fail closed onto .waitingClassicEdits, got \(openNilOnline.route)")
         }
-        XCTAssertNil(nilSession.input, "signed-out native open must stay read-only")
-        XCTAssertEqual(nilSession.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
+        XCTAssertNil(relaunchedNil.waitingClassicContent)
+        XCTAssertFalse(relaunchedNil.saveCoordinator.hasWritableOpenEditorForTesting(documentID: env.documentID))
+
+        // Once identity resolves to a different known account (`owner` != `otherOwner`), the waiting route
+        // reopens natively on the server document while keeping the other account's record untouched.
+        relaunchedNil.signedInUser.remember(owner)
+        relaunchedNil.saveCoordinator.pins.sessionIdentityDidChange()
+        await waitUntil {
+            if case .native = openNilOnline.route { return true }
+            return false
+        }
+        guard case .native(let reopenedSession) = openNilOnline.route else {
+            return XCTFail("different account resolution must reopen server doc natively, got \(openNilOnline.route)")
+        }
+        XCTAssertEqual(reopenedSession.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
+        XCTAssertNotNil(env.creates.create(for: local.id))
+        XCTAssertEqual(env.drafts.draft(for: local.id)?.markdown, "Private other account draft")
         openNilOnline.close()
 
-        // 2. signedInUser is a different account (`owner` != `otherOwner`).
-        env.model.signedInUser.remember(owner)
+        // 2. Fresh open as a different KNOWN account (`owner` != `otherOwner`) excludes the record directly.
         let relaunchedOther = env.relaunch()
+        XCTAssertFalse(relaunchedOther.saveCoordinator.hasCheckpointedCreate(forServerID: env.documentID))
         XCTAssertNil(relaunchedOther.waitingClassicContent)
         XCTAssertFalse(relaunchedOther.hasWaitingClassicWork)
         XCTAssertFalse(relaunchedOther.isWaitingClassicFailed)
@@ -592,7 +747,7 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         XCTAssertEqual(env.drafts.draft(for: local.id)?.markdown, "Private other account draft")
     }
 
-    func testSessionExpiredAndRouteNotFoundLeaveClassicDraftNotFailed() async {
+    func testSessionExpiredDefersClassicDraftAndRouteNotFoundMarksItFailed() async {
         let env = makeEnvironment()
         defer { env.clean() }
         let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState("Server"))
@@ -610,14 +765,14 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
             "401 (.sessionExpired) on formattedContent must not mark a classic draft .failed")
         XCTAssertNotNil(env.drafts.draft(for: env.documentID))
 
-        // HTML 404 maps to `.routeNotFound` (missing server route, not a document refusal).
+        // HTML 404 maps to `.routeNotFound`, which is not a transient deferral and must mark the draft `.failed`.
         server.formattedStatus = 404
         server.formattedContentType = "text/html"
         await env.coordinator.syncPendingDrafts()
-        XCTAssertFalse(
+        XCTAssertTrue(
             env.coordinator.isWaitingClassicFailed(documentID: env.documentID),
-            ".routeNotFound on formattedContent must not mark a classic draft .failed")
-        XCTAssertNotNil(env.drafts.draft(for: env.documentID))
+            ".routeNotFound on formattedContent must mark a classic draft .failed")
+        XCTAssertNotNil(env.drafts.draft(for: env.documentID), "failed draft must stay intact for Retry/Copy/Discard")
     }
 
     func testPostDiscardReopenGoingOfflineMidFetchWithCachedCopyNeverFallsBackToClassic() async {
@@ -905,41 +1060,37 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         XCTAssertEqual(waitingClassicCopyText(title: "", markdown: ""), "")
     }
 
-    func testWaitingClassicNoticeViewRendersStatesAndCopyWritesFormattedPayload() {
+    func testWaitingClassicNoticeViewRendersStatesAndCopyWritesFormattedPayload() async throws {
         let suite = "NativeEditorWaitingClassicTests.NoticeView.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let loc = LocalizationStore(userDefaults: defaults)
         loc.language = .english
 
+        // Only a refused draft offers recovery buttons, in this order.
+        XCTAssertEqual(WaitingClassicNoticeState.waitingOffline.actions, [])
+        XCTAssertEqual(WaitingClassicNoticeState.syncing.actions, [])
+        XCTAssertEqual(WaitingClassicNoticeState.hidden.actions, [])
+        XCTAssertEqual(WaitingClassicNoticeState.failed.actions, [.retry, .copyText, .discard])
+
+        // Each button runs its own handler (the view's buttons call `perform`).
         var copiedPayload: String?
         var retryTapped = false
         var discardTapped = false
-
-        for state in [WaitingClassicNoticeState.waitingOffline, .syncing, .failed] {
-            let notice = WaitingClassicEditsNotice(
-                state: state,
-                onRetry: { retryTapped = true },
-                onCopyText: { copiedPayload = waitingClassicCopyText(title: "Draft Title", markdown: "Body text") },
-                onDiscard: { discardTapped = true }
-            )
-            .environment(loc)
-
-            let host = UIHostingController(rootView: notice)
-            host.view.frame = CGRect(x: 0, y: 0, width: 360, height: 140)
-            host.view.layoutIfNeeded()
-            let size = host.sizeThatFits(in: CGSize(width: 360, height: UIView.layoutFittingCompressedSize.height))
-            XCTAssertGreaterThan(size.height, 0, "notice must render non-zero height for \(state)")
-            if state == .failed {
-                XCTAssertGreaterThanOrEqual(size.height, DocsSpacing.rowMinHeight + 20)
-            }
-        }
-
-        let copyAction: (String) -> Void = { copiedPayload = $0 }
-        copyAction(waitingClassicCopyText(title: "Draft Title", markdown: "Body text"))
+        let notice = WaitingClassicEditsNotice(
+            state: .failed,
+            onRetry: { retryTapped = true },
+            onCopyText: { copiedPayload = waitingClassicCopyText(title: "Draft Title", markdown: "Body text") },
+            onDiscard: { discardTapped = true })
+        notice.perform(.copyText)
         XCTAssertEqual(copiedPayload, "Draft Title\n\nBody text")
         XCTAssertFalse(retryTapped)
         XCTAssertFalse(discardTapped)
+        notice.perform(.retry)
+        XCTAssertTrue(retryTapped)
+        notice.perform(.discard)
+        XCTAssertTrue(discardTapped)
+
         XCTAssertEqual(loc[.native_editor_waiting_classic_offline], "Waiting to sync your offline edits")
         XCTAssertEqual(loc[.native_editor_waiting_classic_syncing], "Syncing…")
         XCTAssertEqual(loc[.native_editor_waiting_classic_failed], "Couldn't sync")
@@ -951,25 +1102,31 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
             "Your unsynced changes on this device will be permanently deleted.")
     }
 
-    func testShellViewHostsWaitingClassicRouteReadOnlyWithoutClassicEditor() async {
+    func testShellViewHostsWaitingClassicRouteReadOnlyWithoutClassicEditor() async throws {
         let env = makeEnvironment()
         defer { env.clean() }
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState("Server"))
+        server.formattedStatus = 404
+        server.install()
         let locSuite = "NativeEditorWaitingClassicTests.Shell.\(UUID().uuidString)"
         let locDefaults = UserDefaults(suiteName: locSuite)!
         defer { locDefaults.removePersistentDomain(forName: locSuite) }
         let loc = LocalizationStore(userDefaults: locDefaults)
         loc.language = .english
 
+        let bodyMarkdown = "# Heading\n\n- [ ] Checklist item\n\nBody paragraph"
         env.drafts.save(
             PendingDraft(
                 documentID: env.documentID,
                 title: "Read-Only Title",
-                markdown: "# Heading\n\n- [ ] Checklist item\n\nBody paragraph",
+                markdown: bodyMarkdown,
                 updatedAt: Date()))
+        await env.coordinator.syncPendingDrafts()
+        XCTAssertTrue(env.model.isWaitingClassicFailed)
 
         let open = NativeEditorOpen(preference: { true })
         defer { open.close() }
-        await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
         guard case .waitingClassicEdits = open.route else {
             return XCTFail("expected .waitingClassicEdits")
         }
@@ -994,7 +1151,7 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
             linkRole: nil,
             initialIsFavorite: false,
             pinRow: nil,
-            isOffline: true,
+            isOffline: false,
             onDeleted: nil,
             onOpenDocument: nil,
             onCreatedDocument: nil,
@@ -1002,14 +1159,17 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
             onReopenAfterUndo: {},
             copyTextToPasteboard: { pasted = $0 }
         )
-        .environment(loc)
 
-        let host = UIHostingController(rootView: shell)
+        let host = UIHostingController(rootView: shell.environment(loc))
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         host.view.layoutIfNeeded()
         XCTAssertEqual(host.view.bounds.size, CGSize(width: 390, height: 844))
         XCTAssertFalse(env.model.isEditing, "waiting route must stay read-only")
         XCTAssertNil(pasted)
+
+        // Trigger the shell's Copy text action path and verify the formatted payload reaches the pasteboard.
+        XCTAssertTrue(shell.copyWaitingClassicPayload())
+        XCTAssertEqual(pasted, "Read-Only Title\n\n\(bodyMarkdown)")
     }
 
     // MARK: - Helpers
@@ -1261,7 +1421,7 @@ private final class WaitingClassicServerStub: @unchecked Sendable {
                 let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
                 return .init(statusCode: 201, headers: json, body: data, error: nil, releasedBy: self.createGate)
             }
-            if url.contains("formatted-content") {
+            if url.contains("formatted-content") || (url.contains("/content/") && method == "GET") {
                 let status = self.formattedStatus
                 if status != 200 {
                     let headers = ["Content-Type": self.formattedContentType]

@@ -414,10 +414,18 @@ struct EditorView: View {
                 session.input?.refreshInlinePicker()
             }
         }
-        .onChange(of: viewModel.signedInUser.userID) { _, _ in
+        .onChange(of: viewModel.signedInUserID) { _, _ in
             syncMentionLoader()
-            if case .native(let session) = nativeOpen.route {
+            switch nativeOpen.route {
+            case .native(let session):
                 session.input?.refreshInlinePicker()
+            case .waitingClassicEdits:
+                nativeOpen.reopen(
+                    viewModel: viewModel, isOffline: showsOffline,
+                    canUpdate: pinRow?.abilities.update == true,
+                    canMention: pinRow?.abilities.mention == true)
+            case .loading, .classic, .preservedUnavailable, .unavailable:
+                break
             }
         }
         .onChange(of: viewModel.isLocalDocument) { _, _ in

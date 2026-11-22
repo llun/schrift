@@ -2096,7 +2096,16 @@ final class NativeEditorOpen {
         let coordinator = viewModel.saveCoordinator
         guard coordinator.cachedServerConfig()?.usesCollaborationYDocServer != false else { return false }
         guard coordinator.nativeOwnership(documentID: viewModel.documentID) == .none else { return false }
-        return coordinator.hasWaitingClassicWork(documentID: viewModel.documentID)
+        return hasWaitingClassicOrCheckpointed(viewModel)
+    }
+
+    /// Fail-closed check for routing and waiting-route observation: matches owned waiting classic
+    /// work as well as any checkpointed create for the current or still-unknown account so a launch
+    /// open before `/users/me/` resolves never opens the empty server doc or holds a writable count
+    /// that blocks migration.
+    private func hasWaitingClassicOrCheckpointed(_ viewModel: EditorViewModel) -> Bool {
+        viewModel.hasWaitingClassicWork
+            || viewModel.saveCoordinator.hasCheckpointedCreate(forServerID: viewModel.documentID)
     }
 
     private func showWaitingClassicEdits(viewModel: EditorViewModel, isOffline: Bool, request: Int) {
@@ -2105,20 +2114,25 @@ final class NativeEditorOpen {
         viewModel.setOpenEditorWritable(false)
         editUnavailableReason = nil
         route = .waitingClassicEdits
-        startObservingWaitingClassicWork(viewModel: viewModel, request: request)
+        startObservingWaitingClassicWork(
+            viewModel: viewModel, request: request, account: viewModel.signedInUser.userID)
         let offline = isOffline || viewModel.availability.showsOfflineStatus
-        if !offline, !viewModel.isWaitingClassicFailed, viewModel.visibleNativeSyncConflict == nil {
+        if !offline, viewModel.hasWaitingClassicWork,
+            !viewModel.isWaitingClassicFailed, viewModel.visibleNativeSyncConflict == nil
+        {
             startWaitingClassicDrain(viewModel: viewModel, request: request)
         }
     }
 
     /// Connectivity changed while on `.waitingClassicEdits`: coming online starts the serialized
-    /// classic replay unless the draft is already `.failed` or waiting on a conflict decision.
+    /// classic replay unless the draft is already `.failed`, unowned, or waiting on a conflict decision.
     func handleConnectivityChange(viewModel: EditorViewModel, isOffline: Bool) {
         lastIsOffline = isOffline
         guard isOpen, case .waitingClassicEdits = route else { return }
         let offline = isOffline || viewModel.availability.showsOfflineStatus
-        guard !offline, !viewModel.isWaitingClassicFailed, viewModel.visibleNativeSyncConflict == nil else { return }
+        guard !offline, viewModel.hasWaitingClassicWork,
+            !viewModel.isWaitingClassicFailed, viewModel.visibleNativeSyncConflict == nil
+        else { return }
         startWaitingClassicDrain(viewModel: viewModel, request: generation)
     }
 
@@ -2126,6 +2140,7 @@ final class NativeEditorOpen {
     /// clears terminal `.failed` state, and runs the serialized sync pass.
     func retryWaitingClassicEdits(viewModel: EditorViewModel) async {
         guard isOpen, case .waitingClassicEdits = route else { return }
+        guard viewModel.hasWaitingClassicWork else { return }
         let request = generation
         isWaitingClassicSyncing = true
         defer {
@@ -2150,7 +2165,8 @@ final class NativeEditorOpen {
         waitingDrainTask = nil
         isWaitingClassicSyncing = false
         guard coordinator.discardClassicDraft(documentID: viewModel.documentID) else {
-            startObservingWaitingClassicWork(viewModel: viewModel, request: generation)
+            startObservingWaitingClassicWork(
+                viewModel: viewModel, request: generation, account: viewModel.signedInUser.userID)
             return
         }
         if isOffline || viewModel.availability.showsOfflineStatus {
@@ -2181,12 +2197,13 @@ final class NativeEditorOpen {
         }
     }
 
-    private func startObservingWaitingClassicWork(viewModel: EditorViewModel, request: Int) {
+    private func startObservingWaitingClassicWork(viewModel: EditorViewModel, request: Int, account: UUID?) {
         waitingWorkTask?.cancel()
         waitingWorkTask = Task { @MainActor [weak self, weak viewModel] in
             while let self, let viewModel, !Task.isCancelled, self.isOpen, self.generation == request {
                 guard case .waitingClassicEdits = self.route else { return }
-                if !viewModel.hasWaitingClassicWork {
+                let accountChanged = viewModel.signedInUserID != account
+                if accountChanged || !self.hasWaitingClassicOrCheckpointed(viewModel) {
                     if !viewModel.isDocumentPendingDelete {
                         self.reopen(
                             viewModel: viewModel,
@@ -2196,22 +2213,23 @@ final class NativeEditorOpen {
                     }
                     return
                 }
-                await self.waitForWaitingClassicWorkChange(viewModel: viewModel)
+                await self.waitForWaitingClassicWorkChange(viewModel: viewModel, account: account)
             }
         }
     }
 
-    private func waitForWaitingClassicWorkChange(viewModel: EditorViewModel) async {
+    private func waitForWaitingClassicWorkChange(viewModel: EditorViewModel, account: UUID?) async {
         let stream = AsyncStream<Void> { continuation in
-            var alreadyCleared = false
+            var shouldReopen = false
             withObservationTracking {
-                alreadyCleared = !viewModel.hasWaitingClassicWork
+                shouldReopen =
+                    viewModel.signedInUserID != account || !self.hasWaitingClassicOrCheckpointed(viewModel)
                 _ = viewModel.isDocumentPendingDelete
             } onChange: {
                 continuation.yield()
                 continuation.finish()
             }
-            if alreadyCleared {
+            if shouldReopen {
                 continuation.yield()
                 continuation.finish()
             }
@@ -2236,7 +2254,7 @@ final class NativeEditorOpen {
     private func canOpenIgnoringConnectivity(_ viewModel: EditorViewModel) -> Bool {
         enabled && !viewModel.isLocalDocument
             && !viewModel.isDocumentPendingDelete
-            && !viewModel.saveCoordinator.hasOwnedCheckpointedCreate(forServerID: viewModel.documentID)
+            && !viewModel.saveCoordinator.hasCheckpointedCreate(forServerID: viewModel.documentID)
             && !viewModel.isEditing && !viewModel.hasUnsavedLocalContent
             && viewModel.saveCoordinator.storedDraft(documentID: viewModel.documentID) == nil
             && viewModel.saveCoordinator.pendingSave(documentID: viewModel.documentID) == nil
