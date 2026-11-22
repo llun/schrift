@@ -481,6 +481,25 @@ final class NativeInlineMarkShortcutTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: "**bold**".count)
     }
 
+    func testNoConversionWhenADelimiterIsCodeMarked() async throws {
+        // An opening `*` inside a code run, then plain `foo*`: converting would delete it from the code.
+        let harness = try await makeHarness([
+            BlockNoteBlock(
+                node: "paragraph", props: Self.paragraphProps,
+                runs: [InlineRun("*", marks: [("code", "{}")]), InlineRun("foo")], id: "p")
+        ])
+        let session = harness.session
+        try caret(harness, "p", 4)
+        type(session, "*")
+        await harness.settle()
+
+        let b = try block(session, "p")
+        XCTAssertEqual(text(of: b), "*foo*")
+        XCTAssertEqual(markKeys(of: b.runs[0]), ["code"])
+        XCTAssertTrue(markShortcutCommands(harness).isEmpty)
+        XCTAssertNil(harness.input.noticeKey)
+    }
+
     func testNoConversionWhenWrappingCodeMarkedBody() async throws {
         let harness = try await makeHarness([
             BlockNoteBlock(

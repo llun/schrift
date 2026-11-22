@@ -767,7 +767,7 @@ final class DocumentEngine {
         else { throw DocumentEngineError.unsupportedNativeInput }
         guard
             !NativeMarkSelection.spans(runs).contains(where: {
-                $0.range.overlaps(bodyRange) && $0.marks.contains { $0.key == "code" }
+                $0.range.overlaps(match.fullRange) && $0.marks.contains { $0.key == "code" }
             })
         else { throw DocumentEngineError.unsupportedNativeInput }
         let target = try textTarget(entry)

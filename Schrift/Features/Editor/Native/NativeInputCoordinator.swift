@@ -1727,8 +1727,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             let match = detectInlineMarkShortcut(text: blockText, caretOffset: caret)
         else { return false }
         let spans = NativeMarkSelection.spans(block.runs)
-        // Never convert when any part of the body is already code-marked.
-        guard !spans.contains(where: { $0.range.overlaps(match.bodyRange) && $0.marks.contains { $0.key == "code" } })
+        // Never convert when any part of the shortcut, delimiters included, is already code-marked.
+        guard !spans.contains(where: { $0.range.overlaps(match.fullRange) && $0.marks.contains { $0.key == "code" } })
         else { return false }
         var attributes = [TextMark(key: match.markKey, valueJSON: "{}")]
         if match.markKey == "code" {
