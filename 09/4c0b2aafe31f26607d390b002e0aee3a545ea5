@@ -1,0 +1,33 @@
+SchriftTests/Features/Editor/Native/NativeEditorWaitingClassicTests.swift
+  s_4fb28ab57323fe::t_d03eec0c46d4f6 590,619-620,636
+  s_4fb28ab57323fe::t_ac02d43c8d04d0 591-592,637-638
+  s_4fb28ab57323fe::t_342cea6b7f7a9a 1070-1076,1080-1085,1089-1092
+  s_4fb28ab57323fe::t_3557e7123def7d 522-560,563-589,593-618,621-635,639-659,675-676,679,692,694,696-697,703,705-719,721-723,726,728,750,768,772,774-775,1063,1093,1105,1108-1110,1117,1122,1124-1125,1129,1154,1163,1169-1172,1424
+Schrift/Features/Editor/Native/NativeDocumentShellView.swift
+  s_4fb28ab57323fe::t_342cea6b7f7a9a 595,1118-1126,1228-1263
+  s_4fb28ab57323fe::t_775b4c81b4c70a 588-594,596,623-625
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_4fb28ab57323fe::t_41a354f2bcfd1c 2213-2214,2216-2218,4642,4668,4672,4986,5031
+Schrift/Features/Editor/EditorView.swift
+  s_4fb28ab57323fe::t_fcef4fbf7ad2b4 417,419-420,422-428
+Schrift/Features/Editor/EditorViewModel.swift
+  s_4fb28ab57323fe::t_ad596b970eacbb 409-415
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_4fb28ab57323fe::t_5247eb7399d694 2099-2108,2117-2118,2120-2122,2128,2133-2135,2143,2168-2169,2200,2205-2206,2216,2221,2223,2225-2226,2232,2257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "094c0b2aafe31f26607d390b002e0aee3a545ea5",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
