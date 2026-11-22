@@ -11,6 +11,7 @@ final class ProfileViewModel {
     private let signedInUser: SignedInUserStore
     private let cachedUser: CurrentUserCacheStore
     @ObservationIgnored private let now: () -> Date
+    @ObservationIgnored private let onSignedInUserChanged: (@MainActor () -> Void)?
     /// Keyed on the session generation, so a re-login (which bumps it) always reloads.
     @ObservationIgnored private var freshness = LoadFreshness<Int>()
     /// Set by `load()` when the account fetch answered with account detail.
@@ -20,8 +21,10 @@ final class ProfileViewModel {
         client: DocsAPIClient,
         signedInUser: SignedInUserStore = SignedInUserStore(),
         cachedUser: CurrentUserCacheStore = CurrentUserCacheStore(),
-        now: @escaping () -> Date = { Date() }
+        now: @escaping () -> Date = { Date() },
+        onSignedInUserChanged: (@MainActor () -> Void)? = nil
     ) {
+        self.onSignedInUserChanged = onSignedInUserChanged
         self.now = now
         self.client = client
         self.signedInUser = signedInUser
@@ -89,7 +92,10 @@ final class ProfileViewModel {
         // for another account's unsynced documents, and only a live `/users/me/` is evidence
         // of whose session this is. Kept beside the user write, before the second await, so
         // there is one cancellation window here rather than two.
+        let previousUserID = signedInUser.userID
         signedInUser.remember(freshUser?.id)
+        // Screens waiting on the account (an open waiting-edits page) observe the pin revision.
+        if signedInUser.userID != previousUserID { onSignedInUserChanged?() }
         // The version row hides itself when nil, so there is nothing to preserve and a stale
         // version number is worth less than an absent one — it describes the *server*, which
         // may well have been upgraded since.

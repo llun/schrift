@@ -73,6 +73,26 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertEqual(SignedInUserStore(userDefaults: defaults).userID, Self.adaID)
     }
 
+    /// A newly learned account is announced, so a screen waiting on it (an open waiting-edits
+    /// page) reopens; an unchanged one is not.
+    func testLoadAnnouncesANewlyLearnedAccountOnlyOnce() async {
+        let defaults = makeIsolatedDefaults()
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        var announcements = 0
+        let viewModel = ProfileViewModel(
+            client: client, signedInUser: SignedInUserStore(userDefaults: defaults),
+            cachedUser: CurrentUserCacheStore(userDefaults: defaults),
+            onSignedInUserChanged: { announcements += 1 })
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: Self.userFixture, error: nil)
+        }
+
+        await viewModel.load()
+        XCTAssertEqual(announcements, 1, "the account was unknown and is now Ada")
+        await viewModel.load()
+        XCTAssertEqual(announcements, 1, "the same account is not announced again")
+    }
+
     func testLoadTolerates500WithoutThrowing() async {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in

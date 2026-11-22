@@ -170,6 +170,13 @@ final class DocumentSaveCoordinator {
     /// A trigger that arrived while a pass was running. Coalesced into another pass
     /// rather than dropped — see `syncPendingDrafts`.
     private var needsAnotherSyncPass = false
+    /// Callers that need to know when the current (and any coalesced) sync pass has
+    /// finished (`retryClassicDraft` / waiting-edits drain), without changing
+    /// `syncPendingDrafts()`'s immediate coalesced return for existing triggers.
+    @ObservationIgnored private var syncPassWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    /// Bumped on every `draftStore` mutation so SwiftUI views and `NativeEditorOpen`
+    /// observe UserDefaults-backed draft changes live.
+    private(set) var draftsVersion = 0
     /// Documents whose queued draft conflicts with the server (the sync path or the
     /// editor detected the server moved on). The push is **held** until the user
     /// resolves it via `resolveConflictKeeping{Local,Server}`.
@@ -384,6 +391,11 @@ final class DocumentSaveCoordinator {
     /// tabs flow leaves it unreplayed while the indicator reads "syncs when online". Bounded
     /// by user action rather than by connectivity, and popping back kicks the funnel.
     private var openEditors: [UUID: Int] = [:]
+    /// Subset of `openEditors` whose screen can write or flush content under this id.
+    /// A read-only waiting-classic screen holds `openEditors` (so deletes still defer)
+    /// without holding `writableOpenEditors`, so checkpointed-create migration and
+    /// attachment cleanup can complete while the waiting screen is open.
+    private var writableOpenEditors: [UUID: Int] = [:]
     /// Local documents whose create POST is on the wire right now.
     ///
     /// `replayCreate` copies its record before the await and writes that copy back after, so
@@ -612,11 +624,21 @@ final class DocumentSaveCoordinator {
     /// nothing forward — stating the exemption beats leaving a silent fourth writer.
     ///
     /// Skips the UserDefaults round-trip when the stamp is already what it should be.
+    private func saveDraft(_ draft: PendingDraft) {
+        draftStore.save(draft)
+        draftsVersion &+= 1
+    }
+
+    private func removeDraft(documentID: UUID) {
+        draftStore.remove(documentID: documentID)
+        draftsVersion &+= 1
+    }
+
     private func persistConflictOnDraft(documentID: UUID) {
         guard let draft = draftStore.draft(for: documentID) else { return }
         let stamp = conflicts[documentID]?.serverUpdatedAt
         guard draft.conflictServerUpdatedAt != stamp else { return }
-        draftStore.save(
+        saveDraft(
             PendingDraft(
                 documentID: documentID, title: draft.title, markdown: draft.markdown,
                 updatedAt: draft.updatedAt, baseline: draft.baseline,
@@ -849,6 +871,7 @@ final class DocumentSaveCoordinator {
     @discardableResult
     func recoverQuarantinedDrafts() -> Bool {
         guard draftStore.recoverQuarantinedDrafts() else { return false }
+        draftsVersion &+= 1
         for draft in draftStore.allDrafts() {
             if let serverUpdatedAt = draft.conflictServerUpdatedAt {
                 conflicts[draft.documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
@@ -1076,7 +1099,7 @@ final class DocumentSaveCoordinator {
                 }
             }
         }
-        draftStore.save(draft)
+        saveDraft(draft)
         syncBackupExclusion(for: record.localID, scope: createdScope)
         if let createdScope {
             recordReplicaOpened(scope: createdScope)
@@ -1193,7 +1216,7 @@ final class DocumentSaveCoordinator {
 
         // Step 3: the draft takes the replica reference and the replica's own projection as its
         // shadow, so `ReplicaDraftReference.matches` holds and no placeholder reaches a save.
-        draftStore.save(
+        saveDraft(
             PendingDraft(
                 documentID: documentID, title: draft.title, markdown: prepared.markdown,
                 updatedAt: draft.updatedAt, baseline: draft.baseline,
@@ -1590,7 +1613,7 @@ final class DocumentSaveCoordinator {
             // Reversed, so a document is only ever cleaned up after everything filed inside it.
             states[documentID] = .idle
             clearFailure(documentID)
-            draftStore.remove(documentID: documentID)
+            removeDraft(documentID: documentID)
             // The draft that referenced them is going, so nothing would ever collect these.
             discardPendingAttachments(documentID: documentID)
             queued[documentID] = nil
@@ -1625,6 +1648,10 @@ final class DocumentSaveCoordinator {
     /// hop rather than assume it.
     func hasOpenEditorForTesting(documentID: UUID) -> Bool {
         hasOpenEditor(documentID: documentID)
+    }
+
+    func hasWritableOpenEditorForTesting(documentID: UUID) -> Bool {
+        hasWritableOpenEditor(documentID: documentID)
     }
 
     /// The server id a locally-created document has already been POSTed under, if any.
@@ -2074,14 +2101,20 @@ final class DocumentSaveCoordinator {
 
     /// Called while an editor for this document is on screen. Balanced by
     /// `releaseOpenEditor`; the create replay skips any document held here.
-    func retainOpenEditor(documentID: UUID) {
+    func retainOpenEditor(documentID: UUID, isWritable: Bool = true) {
         openEditors[documentID, default: 0] += 1
+        if isWritable {
+            writableOpenEditors[documentID, default: 0] += 1
+        }
     }
 
     /// Balances `retainOpenEditor`. When the last hold on a *local* document goes, kick the
     /// sync funnel: on iPhone that is the moment popping back makes the document replayable,
     /// and waiting for the next reconnect or foreground would be an arbitrary delay.
-    func releaseOpenEditor(documentID: UUID) {
+    func releaseOpenEditor(documentID: UUID, wasWritable: Bool = true) {
+        if wasWritable {
+            releaseWritableOpenEditor(documentID: documentID)
+        }
         guard let held = openEditors[documentID] else { return }
         if held <= 1 {
             openEditors[documentID] = nil
@@ -2107,6 +2140,19 @@ final class DocumentSaveCoordinator {
         }
     }
 
+    func retainWritableOpenEditor(documentID: UUID) {
+        writableOpenEditors[documentID, default: 0] += 1
+    }
+
+    func releaseWritableOpenEditor(documentID: UUID) {
+        guard let held = writableOpenEditors[documentID] else { return }
+        if held <= 1 {
+            writableOpenEditors[documentID] = nil
+        } else {
+            writableOpenEditors[documentID] = held - 1
+        }
+    }
+
     /// Registered by an editor while it is on screen, so a replay can rewrite its in-memory
     /// blocks in the same turn it rewrites the draft.
     ///
@@ -2129,6 +2175,10 @@ final class DocumentSaveCoordinator {
 
     private func hasOpenEditor(documentID: UUID) -> Bool {
         (openEditors[documentID] ?? 0) > 0
+    }
+
+    private func hasWritableOpenEditor(documentID: UUID) -> Bool {
+        (writableOpenEditors[documentID] ?? 0) > 0
     }
 
     /// How many editor screens have this document open (`retainOpenEditor`).
@@ -2157,9 +2207,25 @@ final class DocumentSaveCoordinator {
     }
 
     /// Whether `documentID` is the server ID of a checkpointed local create for the signed-in
-    /// account and server origin whose migration onto that server ID has not completed yet.
+    /// account (or any account when identity is still unknown) and server origin whose migration
+    /// onto that server ID has not completed yet.
     func hasCheckpointedCreate(forServerID documentID: UUID) -> Bool {
-        checkpointedRecord(forServerID: documentID) != nil
+        _ = pendingCreatesVersion
+        _ = pins.revision
+        return checkpointedRecord(forServerID: documentID) != nil
+    }
+
+    /// A checkpointed record owned by the currently signed-in account on `client.serverOrigin`.
+    /// Unlike `checkpointedRecord(forServerID:)` (which fails closed when `signedInUser.userID`
+    /// is nil to block writes), display, retry and discard require a known matching owner so
+    /// another account's waiting edits are never shown, copied, retried or discarded.
+    private func ownedCheckpointedRecord(forServerID documentID: UUID) -> PendingDocumentCreate? {
+        guard let currentUserID = signedInUser.userID else { return nil }
+        return pendingCreates.values.first {
+            $0.syncedServerID == documentID
+                && $0.serverOrigin == client.serverOrigin
+                && $0.ownerUserID == currentUserID
+        }
     }
 
     // MARK: - Create replay
@@ -2462,7 +2528,7 @@ final class DocumentSaveCoordinator {
             // on in memory, unrepairable (that method needs a draft to write to), so the hold
             // is silently lost at the next relaunch.
             if draftStore.draft(for: record.localID) == nil, let orphan = draftStore.draft(for: serverID),
-                !mayPredateSave(marker), inFlight[serverID] == nil, !hasOpenEditor(documentID: serverID)
+                !mayPredateSave(marker), inFlight[serverID] == nil, !hasWritableOpenEditor(documentID: serverID)
             {
                 if let orphanReplica = orphan.replica {
                     let serverScope = orphanReplica.scope
@@ -2476,24 +2542,24 @@ final class DocumentSaveCoordinator {
                         let localRef =
                             prepared?.request.reference
                             ?? ReplicaDraftReference(manifest: copied, markdown: body)
-                        draftStore.save(
+                        saveDraft(
                             PendingDraft(
                                 documentID: record.localID, title: orphan.title, markdown: body,
                                 updatedAt: orphan.updatedAt, baseline: nil,
                                 replica: localRef))
                         rekeyAttachments(from: serverID, to: record.localID, ownerUserID: record.ownerUserID)
-                        draftStore.remove(documentID: serverID)
+                        removeDraft(documentID: serverID)
                         try? replicaStore.remove(for: serverScope)
                         syncBackupExclusion(for: record.localID, scope: localScope)
                         syncBackupExclusion(for: serverID)
                     }
                 } else {
-                    draftStore.save(
+                    saveDraft(
                         PendingDraft(
                             documentID: record.localID, title: orphan.title, markdown: orphan.markdown,
                             updatedAt: orphan.updatedAt, baseline: nil))
                     rekeyAttachments(from: serverID, to: record.localID, ownerUserID: record.ownerUserID)
-                    draftStore.remove(documentID: serverID)
+                    removeDraft(documentID: serverID)
                     syncBackupExclusion(for: record.localID)
                     syncBackupExclusion(for: serverID)
                 }
@@ -2558,7 +2624,7 @@ final class DocumentSaveCoordinator {
             // nothing left to hold its draft back. The checkpoint is the app's own record
             // that it believed this document alive; a bare `.notFound` is not the evidence
             // to retract it while a screen is still writing under it.
-            guard !hasOpenEditor(documentID: serverID) else { return }
+            guard !hasWritableOpenEditor(documentID: serverID) else { return }
             guard draftStore.draft(for: serverID) == nil else { return }
             // **And never while the tombstones are unknown.** This is the one branch that
             // turns a 404 into a re-POST, and with the delete store undecodable we cannot tell
@@ -2658,7 +2724,7 @@ final class DocumentSaveCoordinator {
         // self-perpetuating queued slot *is* the conflict hold, already counted.) In both
         // cases the bodies stay on disk: this costs the local document its sync, never its
         // content.
-        guard !hasOpenEditor(documentID: serverID) else { return }
+        guard !hasWritableOpenEditor(documentID: serverID) else { return }
         guard inFlight[serverID] == nil, queued[serverID] == nil else { return }
         // A draft under the server id is *ours* only in the partial-migration window — the
         // one `migrated` exists for — and that window is defined by the local draft already
@@ -2851,11 +2917,11 @@ final class DocumentSaveCoordinator {
         // *instant* has the body on disk nowhere, and an in-process test cannot sample an
         // instant between two synchronous statements. What it guards against is a process
         // death here, which is exactly what the suite cannot stage.
-        draftStore.save(
+        saveDraft(
             PendingDraft(
                 documentID: serverID, title: title, markdown: body, updatedAt: Date(),
                 baseline: baseline, lastPushedMarkdown: carriedPush))
-        draftStore.remove(documentID: localID)
+        removeDraft(documentID: localID)
         // Every per-document map the coordinator keys by id. `queued` matters most: it holds
         // a copy of the user's newest keystrokes. (Hygiene rather than a rescue: for a pending
         // create it always agrees with the draft, since `enqueue` write-ahead-saves from the
@@ -2915,7 +2981,7 @@ final class DocumentSaveCoordinator {
         // checkpointed, both drafts gone, so the next resume re-derives `body = ""` and
         // re-enters the same branch.
         let willAdoptServer = canonicalBody.isEmpty && !canonicalServer.isEmpty
-        if willAdoptServer { draftStore.remove(documentID: serverID) }
+        if willAdoptServer { removeDraft(documentID: serverID) }
         // **The parent is read from the mirror, not from `record`.** The resume path captures
         // its copy before two network round trips, and a move landing inside that window
         // re-points the stored record — so the captured `parentID` is the *pre-move* placement.
@@ -3164,8 +3230,8 @@ final class DocumentSaveCoordinator {
         localScope: ReplicaScope, serverScope: ReplicaScope
     ) {
         let localID = record.localID
-        draftStore.remove(documentID: localID)
-        draftStore.remove(documentID: serverID)
+        removeDraft(documentID: localID)
+        removeDraft(documentID: serverID)
         states[localID] = nil
         clearFailure(localID)
         queued[localID] = nil
@@ -3315,11 +3381,11 @@ final class DocumentSaveCoordinator {
             : DraftBaseline(serverUpdatedAt: serverUpdatedAt, markdown: serverMarkdown, title: serverTitle)
         let carriedPush = (draft == nil && queued[localID] == nil) ? migrated?.lastPushedMarkdown : nil
 
-        draftStore.save(
+        saveDraft(
             PendingDraft(
                 documentID: serverID, title: title, markdown: body, updatedAt: Date(),
                 baseline: baseline, lastPushedMarkdown: carriedPush, replica: serverRef))
-        draftStore.remove(documentID: localID)
+        removeDraft(documentID: localID)
         states[localID] = nil
         clearFailure(localID)
         queued[localID] = nil
@@ -3671,7 +3737,7 @@ final class DocumentSaveCoordinator {
         // stale stamp simply stops matching and rule 2 takes over.
         let lastPushed =
             lastConfirmedPushMarkdown[documentID] ?? draftStore.draft(for: documentID)?.lastPushedMarkdown
-        draftStore.save(
+        saveDraft(
             PendingDraft(
                 documentID: documentID, title: save.title, markdown: save.markdown, updatedAt: Date(),
                 baseline: baseline,
@@ -3799,7 +3865,12 @@ final class DocumentSaveCoordinator {
             return
         }
         isSyncingDrafts = true
-        defer { isSyncingDrafts = false }
+        defer {
+            isSyncingDrafts = false
+            let waiters = Array(syncPassWaiters.values)
+            syncPassWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
         repeat {
             needsAnotherSyncPass = false
             // Creates first, inside the same pass. Note what that ordering does and does not
@@ -4305,7 +4376,7 @@ final class DocumentSaveCoordinator {
             // document was deleted would never be cleaned up. Deferred while an editor is open:
             // that screen may be about to flush a body that still names the photo.
             if !referencesPendingAttachment(record) {
-                if !hasOpenEditor(documentID: record.documentID) {
+                if !hasWritableOpenEditor(documentID: record.documentID) {
                     removePendingAttachment(localID: record.localID)
                 }
                 continue
@@ -4388,7 +4459,7 @@ final class DocumentSaveCoordinator {
                 // every other field — the baseline, the last-pushed stamp, the conflict record,
                 // the client timestamp — is reconciliation evidence this pass has no business
                 // restating.
-                draftStore.save(
+                saveDraft(
                     PendingDraft(
                         documentID: documentID, title: draft.title, markdown: rewritten,
                         updatedAt: draft.updatedAt, baseline: draft.baseline,
@@ -4565,16 +4636,40 @@ final class DocumentSaveCoordinator {
                 // via Retry or Discard.
                 markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
             } catch {
-                // Leave the draft for a later sync (e.g. offline right now).
-                if draft.replica != nil {
-                    if let error = error as? DocsAPIError, retryableSaveFailure(error) {
+                // Leave the draft for a later sync (offline, expired session, missing route, or
+                // cancellation).
+                if isDeferredReplayFailure(error) {
+                    if draft.replica != nil {
                         states[draft.documentID] = .pendingSync
-                    } else {
-                        markFailed(draft.documentID, reason: "Draft sync failed: \(safeErrorSummary(error))")
                     }
+                } else if draft.replica != nil {
+                    markFailed(draft.documentID, reason: "Draft sync failed: \(safeErrorSummary(error))")
+                } else {
+                    guard inFlight[draft.documentID] == nil,
+                        queued[draft.documentID] == nil,
+                        !isLiveReplicaHeld(draft.documentID),
+                        draftStore.draft(for: draft.documentID) == draft,
+                        !isPendingCreate(documentID: draft.documentID),
+                        !createStoreUnreadable,
+                        anyCheckpointedRecord(forServerID: draft.documentID) == nil,
+                        !isPendingDelete(documentID: draft.documentID),
+                        !deleteStoreUnreadable
+                    else { continue }
+                    markFailed(draft.documentID, reason: "Draft sync failed: \(safeErrorSummary(error))")
                 }
             }
         }
+    }
+
+    /// Errors during a background sync pass that leave the draft waiting for a later pass rather
+    /// than marking it `.failed`: transient transport/5xx/rate-limit failures, `.sessionExpired`
+    /// (the shared client already raised re-login), `.routeNotFound` (a fact about the route, not
+    /// about this document — create and delete replay treat it as transient too), and
+    /// `CancellationError`. The waiting page still offers Retry / Copy text / Discard online.
+    private func isDeferredReplayFailure(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        guard let docsError = error as? DocsAPIError else { return false }
+        return retryableSaveFailure(docsError) || docsError == .sessionExpired || docsError == .routeNotFound
     }
 
     /// Record a conflict the editor's own revalidation (`reconcileDraft`, or `apply`'s dirty
@@ -4604,7 +4699,7 @@ final class DocumentSaveCoordinator {
         guard inFlight[documentID] == nil, queued[documentID] == nil,
             let draft = draftStore.draft(for: documentID), draft.title != title
         else { return }
-        draftStore.save(
+        saveDraft(
             PendingDraft(
                 documentID: documentID, title: title, markdown: draft.markdown, updatedAt: draft.updatedAt,
                 baseline: adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: title),
@@ -4753,7 +4848,7 @@ final class DocumentSaveCoordinator {
         // *again* the timestamp advances past it once more: a genuinely new conflict,
         // which is exactly what should be asked about.
         if let resolved, let draft = draftStore.draft(for: documentID) {
-            draftStore.save(
+            saveDraft(
                 PendingDraft(
                     documentID: documentID, title: draft.title, markdown: draft.markdown,
                     updatedAt: draft.updatedAt,
@@ -4857,7 +4952,7 @@ final class DocumentSaveCoordinator {
         // starts whatever the hold was parking, and this is the one resolution where
         // that work must be thrown away, not sent.
         queued[documentID] = nil
-        draftStore.remove(documentID: documentID)
+        removeDraft(documentID: documentID)
         // Both bodies that could have named a queued photo are now gone, so nothing would ever
         // collect its record — and the server body the user chose does not reference it either.
         discardPendingAttachments(documentID: documentID)
@@ -4870,6 +4965,187 @@ final class DocumentSaveCoordinator {
         states[documentID] = .idle
         clearFailure(documentID)
         syncBackupExclusion(for: documentID, scope: reference?.scope)
+        return true
+    }
+
+    // MARK: - Waiting classic edits
+
+    /// Snapshot of unsynced classic edits waiting to push for a server document.
+    struct WaitingClassicContent: Equatable, Sendable {
+        let title: String
+        let markdown: String
+    }
+
+    /// Resolves waiting classic edits for `documentID` (in-flight/queued classic save,
+    /// classic `PendingDraft`, or checkpointed local create), tracking observable versions
+    /// so SwiftUI views and `NativeEditorOpen` update as saves settle or migrate.
+    func waitingClassicContent(documentID: UUID) -> WaitingClassicContent? {
+        _ = draftsVersion
+        _ = pendingCreatesVersion
+        _ = pins.revision
+        if let pending = pendingSave(documentID: documentID), pending.replicaRequest == nil {
+            return WaitingClassicContent(
+                title: pending.title, markdown: pending.markdown)
+        }
+        if let draft = draftStore.draft(for: documentID), draft.replica == nil {
+            return WaitingClassicContent(
+                title: draft.title, markdown: draft.markdown)
+        }
+        if let checkpointed = ownedCheckpointedRecord(forServerID: documentID) {
+            if let pending = pendingSave(documentID: checkpointed.localID) {
+                return WaitingClassicContent(
+                    title: pending.title, markdown: pending.markdown)
+            }
+            if let draft = draftStore.draft(for: checkpointed.localID) {
+                return WaitingClassicContent(
+                    title: draft.title, markdown: draft.markdown)
+            }
+            return WaitingClassicContent(
+                title: checkpointed.title, markdown: "")
+        }
+        return nil
+    }
+
+    /// True while `documentID` still has classic edits, a queued/in-flight classic save, or
+    /// an unfinished checkpointed create waiting to sync.
+    func hasWaitingClassicWork(documentID: UUID) -> Bool {
+        waitingClassicContent(documentID: documentID) != nil
+    }
+
+    /// True while a classic push for `documentID` is actively on the wire or in `.saving` state.
+    func isWaitingClassicInFlight(documentID: UUID) -> Bool {
+        _ = draftsVersion
+        _ = pendingCreatesVersion
+        if inFlightContent[documentID] != nil { return true }
+        if case .saving = state(for: documentID) { return true }
+        return false
+    }
+
+    /// True when waiting classic edits for `documentID` (or its checkpointed create or classic
+    /// queued photos) are in a terminal `.failed` state that requires explicit Retry or Discard.
+    func isWaitingClassicFailed(documentID: UUID) -> Bool {
+        _ = draftsVersion
+        _ = pendingCreatesVersion
+        _ = pendingAttachmentsVersion
+        _ = pins.revision
+        if case .failed = state(for: documentID) { return true }
+        let checkpointed = ownedCheckpointedRecord(forServerID: documentID)
+        if let checkpointed, case .failed = state(for: checkpointed.localID) { return true }
+        let owner = signedInUser.userID
+        return pendingAttachments.values.contains { record in
+            record.native == nil && record.failedAt != nil
+                && owner != nil && record.ownerUserID == owner
+                && (record.documentID == documentID || record.documentID == checkpointed?.localID)
+        }
+    }
+
+    /// Starts or coalesces the app-wide sync pass in a coordinator-owned task and awaits its
+    /// completion. Cancelling the caller stops waiting without cancelling the shared pass or
+    /// other documents' in-flight requests.
+    func syncPendingDraftsAndAwaitCompletion() async {
+        if isSyncingDrafts {
+            needsAnotherSyncPass = true
+        } else {
+            // Always start one when none is running: a task still finishing has already resumed
+            // its waiters, so a waiter registered now needs a pass of its own (at worst a
+            // coalesced extra pass).
+            Task { @MainActor [weak self] in await self?.syncPendingDrafts() }
+        }
+        guard !Task.isCancelled else { return }
+        let waiterID = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                syncPassWaiters[waiterID] = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.syncPassWaiters.removeValue(forKey: waiterID)?.resume()
+            }
+        }
+    }
+
+    /// Manual retry for waiting classic edits: clears terminal `.failed` state (including
+    /// failed classic attachments and any failed checkpointed create), marks `.saving`
+    /// immediately so the UI switches to "Syncing…", and runs the serialized sync pass so
+    /// `runSyncPass` re-checks against the server rather than pushing blindly.
+    func retryClassicDraft(documentID: UUID) async {
+        guard inFlight[documentID] == nil else { return }
+        guard hasWaitingClassicWork(documentID: documentID) else { return }
+        let checkpointed = ownedCheckpointedRecord(forServerID: documentID)
+        clearFailure(documentID)
+        states[documentID] = .saving
+        if let checkpointed, case .failed = state(for: checkpointed.localID) {
+            states[checkpointed.localID] = .pendingSync
+            clearFailure(checkpointed.localID)
+        }
+        let owner = signedInUser.userID
+        for record in pendingAttachments.values where record.native == nil && record.failedAt != nil {
+            guard record.documentID == documentID || record.documentID == checkpointed?.localID else { continue }
+            guard owner != nil, record.ownerUserID == owner else { continue }
+            var cleared = record
+            cleared.failedAt = nil
+            updatePendingAttachment(cleared)
+        }
+        await syncPendingDraftsAndAwaitCompletion()
+        if inFlight[documentID] == nil, case .saving = state(for: documentID) {
+            states[documentID] = hasWaitingClassicWork(documentID: documentID) ? .pendingSync : .idle
+        }
+    }
+
+    /// Discards unsynced classic edits for a server document (draft, queued save, classic
+    /// pending attachments, failure state, conflict, and any non-open checkpointed create)
+    /// without deleting the server document itself. Refuses if native owns the document, a
+    /// save is currently in flight, or an unowned checkpointed create targets this server id.
+    @discardableResult
+    func discardClassicDraft(documentID: UUID) -> Bool {
+        guard nativeOwnership(documentID: documentID) == .none else { return false }
+        guard inFlight[documentID] == nil else { return false }
+        let ownedCheckpointed = ownedCheckpointedRecord(forServerID: documentID)
+        let hasUnownedCheckpointed = pendingCreates.values.contains { record in
+            record.syncedServerID == documentID && record.localID != ownedCheckpointed?.localID
+        }
+        guard !hasUnownedCheckpointed else { return false }
+        guard hasWaitingClassicWork(documentID: documentID) else { return false }
+        if let checkpointed = ownedCheckpointed {
+            if hasOpenEditor(documentID: checkpointed.localID) {
+                var restarted = checkpointed
+                restarted.syncedServerID = nil
+                restarted.postedTitle = nil
+                updatePendingCreate(restarted)
+            } else {
+                let localOwnership = nativeOwnership(documentID: checkpointed.localID)
+                if case .unreadable = localOwnership { return false }
+                if let scope = localOwnership.scope, scope.ownerUserID != signedInUser.userID {
+                    return false
+                }
+                guard discardNativeReplica(documentID: checkpointed.localID) else { return false }
+                // Re-parent any local subpages onto `documentID` so discarding this document's
+                // unsynced edits never destroys separate subpages filed under it.
+                for var child in pendingCreates.values where child.parentID == checkpointed.localID {
+                    child.parentID = documentID
+                    updatePendingCreate(child)
+                }
+                removePendingCreate(documentID: checkpointed.localID)
+                discardPendingAttachments(documentID: checkpointed.localID)
+                removeDraft(documentID: checkpointed.localID)
+                queued[checkpointed.localID] = nil
+                settledSaves[checkpointed.localID] = nil
+                lastConfirmedPushMarkdown[checkpointed.localID] = nil
+                knownServerTitles[checkpointed.localID] = nil
+                conflicts[checkpointed.localID] = nil
+                states[checkpointed.localID] = .idle
+                clearFailure(checkpointed.localID)
+                syncBackupExclusion(for: checkpointed.localID)
+            }
+        }
+        queued[documentID] = nil
+        replayedPushes.remove(documentID)
+        removeDraft(documentID: documentID)
+        discardPendingAttachments(documentID: documentID)
+        clearResolvedConflict(documentID: documentID)
+        states[documentID] = .idle
+        clearFailure(documentID)
+        syncBackupExclusion(for: documentID)
         return true
     }
 
@@ -4990,7 +5266,7 @@ final class DocumentSaveCoordinator {
                 if mayRemoveLocalDraft { discardPendingAttachments(documentID: checkpointed.localID) }
                 states[checkpointed.localID] = .idle
                 clearFailure(checkpointed.localID)
-                if mayRemoveLocalDraft { draftStore.remove(documentID: checkpointed.localID) }
+                if mayRemoveLocalDraft { removeDraft(documentID: checkpointed.localID) }
                 queued[checkpointed.localID] = nil
                 settledSaves[checkpointed.localID] = nil
                 lastConfirmedPushMarkdown[checkpointed.localID] = nil
@@ -4998,7 +5274,7 @@ final class DocumentSaveCoordinator {
                 syncBackupExclusion(for: checkpointed.localID)
             }
         }
-        if mayRemoveDraft { draftStore.remove(documentID: documentID) }
+        if mayRemoveDraft { removeDraft(documentID: documentID) }
         syncBackupExclusion(for: documentID)
         if inFlight[documentID] != nil {
             discardedDuringSave.insert(documentID)
@@ -5144,7 +5420,7 @@ final class DocumentSaveCoordinator {
             // only a differing one missed exactly that case). The branches below remove it if
             // it should not survive; stamping first is harmless and keeps the rule one line.
             if let draft = draftStore.draft(for: documentID) {
-                draftStore.save(
+                saveDraft(
                     PendingDraft(
                         documentID: documentID, title: draft.title, markdown: draft.markdown,
                         updatedAt: draft.updatedAt, baseline: draft.baseline, lastPushedMarkdown: save.markdown,
@@ -5168,7 +5444,7 @@ final class DocumentSaveCoordinator {
                 draft.replica == save.replicaRequest?.reference,
                 save.replicaRequest.map({ $0.adapter.isCurrent($0) }) ?? true
             {
-                draftStore.remove(documentID: documentID)
+                removeDraft(documentID: documentID)
             }
             return
         }
@@ -5187,7 +5463,7 @@ final class DocumentSaveCoordinator {
                 draft.markdown == save.markdown, draft.replica == save.replicaRequest?.reference,
                 save.replicaRequest.map({ $0.adapter.isCurrent($0) }) ?? true
             {
-                draftStore.remove(documentID: documentID)
+                removeDraft(documentID: documentID)
             }
             // Keep the local copy consistent with what the server now holds.
             // The save PATCHes are void, so there is no server `updated_at` to

@@ -213,6 +213,13 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
   launch ("This server needs Docs 6 or later"). One whose config proves nothing (hidden version,
   failed fetch, offline) is never blocked, so the `ClassicEditorView` fallback for
   `usesCollaborationYDocServer == false` is still reachable for it until the classic editor is removed.
+- **Waiting classic edits:** With the native switch on, a server document with waiting classic
+  edits (a classic `PendingDraft`, queued classic save, or checkpointed create) opens read-only
+  in `NativeDocumentShellView` (`.waitingClassicEdits`) instead of `ClassicEditorView`, showing a
+  status notice (waiting offline, syncing, or failed with Retry, Copy text, and confirmed Discard)
+  and the existing conflict pill/sheet when diverged. Once the classic replay is acknowledged, the
+  route reopens natively from the server's Yjs state. With the switch off or on a pre-Docs 6
+  server, the classic route is unchanged.
 - **Native open failures:** A failed fetch, an unreadable fetched state or a failed seed shows the
   native error state with Retry instead of the classic editor, so the document is not readable until
   the open succeeds. An offline or unreachable open with no replica and no cached copy shows

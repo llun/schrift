@@ -299,16 +299,29 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .none)
     }
 
-    func testUnsyncedClassicDraftKeepsTheDocumentClassic() async throws {
+    func testUnsyncedClassicDraftRoutesToWaitingClassicWhenSwitchOnAndClassicWhenOff() async throws {
         let env = makeEnvironment()
         defer { env.clean() }
         ServerStub(owner: owner, state: seedState()).install()
         PendingDraftStore(userDefaults: env.defaults).save(
             PendingDraft(documentID: env.model.documentID, title: "Local", markdown: "Unsynced", updatedAt: Date()))
-        let open = NativeEditorOpen(preference: { true })
-        defer { open.close() }
-        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
-        guard case .classic = open.route else { return XCTFail("a classic draft must stay classic until it syncs") }
+
+        let openOn = NativeEditorOpen(preference: { true })
+        defer { openOn.close() }
+        await openOn.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .waitingClassicEdits = openOn.route else {
+            return XCTFail("with switch on, a waiting classic draft must open on .waitingClassicEdits")
+        }
+        XCTAssertNil(MockURLProtocol.lastRequest, "offline waiting route must not issue network calls")
+        XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .none)
+        openOn.close()
+
+        let openOff = NativeEditorOpen(preference: { false })
+        defer { openOff.close() }
+        await openOff.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .classic = openOff.route else {
+            return XCTFail("with switch off, a classic draft must stay on .classic")
+        }
         XCTAssertNil(MockURLProtocol.lastRequest)
         XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .none)
     }
@@ -827,7 +840,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
     func testOpeningCheckpointedServerIDDoesNotSeedClearOrOwnReplica() async throws {
         // 1. Path A: serverID has no ownership yet, create is checkpointed -> must not seed or own.
         do {
-            let env = makeEnvironment()
+            let env = makeEnvironment(serverOrigin: "https://docs.example.org")
             defer { env.clean() }
             let server = ServerStub(owner: owner, state: seedState())
             server.install()
@@ -848,6 +861,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                     createStore: PendingDocumentCreateStore(userDefaults: env.defaults),
                     deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
                     listCache: env.model.listCache,
+                    serverOrigin: env.model.client.serverOrigin,
                     backgroundTasks: .noop),
                 signedInUser: env.model.signedInUser,
                 contentCache: env.model.contentCache,
@@ -860,7 +874,10 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                 documentID: relaunchedModel.documentID)
             let open = NativeEditorOpen(preference: { true })
             defer { open.close() }
-            await open.open(viewModel: relaunchedModel, isOffline: false, canUpdate: true)
+            await open.open(viewModel: relaunchedModel, isOffline: true, canUpdate: true)
+            guard case .waitingClassicEdits = open.route else {
+                return XCTFail("checkpointed serverID without server replica must route to .waitingClassicEdits")
+            }
             XCTAssertNil(try env.replicaStore.manifest(for: scope))
             XCTAssertEqual(relaunchedModel.saveCoordinator.nativeOwnership(documentID: scope.documentID), .none)
         }
@@ -1739,11 +1756,11 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         env.creates.save(record)
         let model = env.relaunch()
 
-        let open = NativeEditorOpen(preference: { true })
+        let open = NativeEditorOpen(preference: { false })
         defer { open.close() }
         await open.open(viewModel: model, isOffline: false, canUpdate: true)
         guard case .classic = open.route else {
-            return XCTFail("checkpointed serverID without server replica must fall back to classic")
+            return XCTFail("checkpointed serverID with switch off must fall back to classic")
         }
 
         await model.load()

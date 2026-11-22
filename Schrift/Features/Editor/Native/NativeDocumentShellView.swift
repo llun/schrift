@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Shared banner stack above the document surface across classic and native routes.
 struct EditorBannerStack: View {
@@ -253,7 +254,7 @@ struct EditorSubpagesSection: View {
 
 /// Hosts the unified document shell (toolbar, banners, conflict resolution, Pages drawer,
 /// Options, Share, header, and subpages) around the `.loading`, `.native`,
-/// `.preservedUnavailable` and `.unavailable` routes.
+/// `.waitingClassicEdits`, `.preservedUnavailable` and `.unavailable` routes.
 struct NativeDocumentShellView: View {
     @Environment(\.docsTheme) private var theme
     @Environment(LocalizationStore.self) private var loc
@@ -272,6 +273,7 @@ struct NativeDocumentShellView: View {
     let onCreatedDocument: ((Document) -> Void)?
     let makeInlinePickerSource: () -> NativeInlinePickerSource
     let onReopenAfterUndo: () async -> Void
+    let copyTextToPasteboard: (String) -> Void
 
     @State private var offlineBannerStatus = DebouncedStatus()
     @State private var isPresentingShareSheet = false
@@ -283,6 +285,7 @@ struct NativeDocumentShellView: View {
     @State private var outlineHeldNavigation = OutlineHeldNavigation<EditorNavigation>()
     @State private var outlineFocusesFind = false
     @State private var conflictToResolve: IdentifiedSyncConflict?
+    @State private var isConfirmingDiscardWaitingEdits = false
     @State private var toastMessage: ToastMessage?
     @State private var isPresentingPagesTree = false
     @State private var documentPendingUndo: Document?
@@ -300,6 +303,11 @@ struct NativeDocumentShellView: View {
     private var showsOfflineStatus: Bool { offlineOverride || viewModel.availability.showsOfflineStatus }
     private var showsOfflineBanner: Bool {
         offlineOverride || viewModel.availability.isWorkOffline || offlineBannerStatus.value
+    }
+
+    private var isWaitingClassicRoute: Bool {
+        if case .waitingClassicEdits = route { return true }
+        return false
     }
 
     private var canEditNative: Bool {
@@ -371,7 +379,8 @@ struct NativeDocumentShellView: View {
         onOpenDocument: ((Document) -> Void)?,
         onCreatedDocument: ((Document) -> Void)?,
         makeInlinePickerSource: @escaping () -> NativeInlinePickerSource,
-        onReopenAfterUndo: @escaping () async -> Void
+        onReopenAfterUndo: @escaping () async -> Void,
+        copyTextToPasteboard: @escaping (String) -> Void = { UIPasteboard.general.string = $0 }
     ) {
         self.route = route
         self.nativeOpen = nativeOpen
@@ -387,6 +396,7 @@ struct NativeDocumentShellView: View {
         self.onCreatedDocument = onCreatedDocument
         self.makeInlinePickerSource = makeInlinePickerSource
         self.onReopenAfterUndo = onReopenAfterUndo
+        self.copyTextToPasteboard = copyTextToPasteboard
         _optionsViewModel = State(
             initialValue: OptionsViewModel(
                 client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite,
@@ -467,6 +477,23 @@ struct NativeDocumentShellView: View {
             ) {
                 optionsSheet
             }
+            .alert(
+                loc[.native_editor_waiting_classic_discard_title],
+                isPresented: heldForOutline($isConfirmingDiscardWaitingEdits)
+            ) {
+                Button(loc[.common_cancel], role: .cancel) {}
+                Button(loc[.native_editor_recovery_discard], role: .destructive) {
+                    Task {
+                        await nativeOpen.discardWaitingClassicEdits(
+                            viewModel: viewModel,
+                            isOffline: isOffline,
+                            canUpdate: pinRow?.abilities.update == true,
+                            canMention: pinRow?.abilities.mention == true)
+                    }
+                }
+            } message: {
+                Text(loc[.native_editor_waiting_classic_discard_message])
+            }
             .sheet(item: heldForOutline($conflictToResolve)) { conflict in
                 ConflictSheetView(
                     conflict: conflict.value,
@@ -491,6 +518,7 @@ struct NativeDocumentShellView: View {
             EditorBannerStack(
                 showsOfflineBanner: showsOfflineBanner,
                 hasLocalCopy: viewModel.hasLocalCopy,
+                limitedNativeOfflineRead: isWaitingClassicRoute,
                 hasConflict: viewModel.visibleNativeSyncConflict != nil,
                 showUpdateAvailable: false,
                 isDocumentPendingDelete: viewModel.isDocumentPendingDelete,
@@ -541,6 +569,8 @@ struct NativeDocumentShellView: View {
                     onRequestEdit: enterNativeEditing,
                     onExitEditing: exitNativeEditing
                 )
+            case .waitingClassicEdits:
+                waitingClassicEditsContent
             case .preservedUnavailable:
                 preservedUnavailableContent
             case .unavailable(let reason):
@@ -553,6 +583,95 @@ struct NativeDocumentShellView: View {
             offlineBannerStatus.update(raw)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    /// Copies the currently owned waiting classic draft (title + blank line + Markdown) to the
+    /// pasteboard. Refuses when `waitingClassicContent` is nil (e.g. an unowned checkpointed create).
+    @discardableResult
+    func copyWaitingClassicPayload() -> Bool {
+        guard let waiting = viewModel.waitingClassicContent else { return false }
+        copyTextToPasteboard(waitingClassicCopyText(title: waiting.title, markdown: waiting.markdown))
+        return true
+    }
+
+    private var waitingClassicEditsContent: some View {
+        let waiting = viewModel.waitingClassicContent
+        let displayTitle = waiting?.title ?? viewModel.title
+        let markdown = waiting?.markdown ?? ""
+        let blocks = parseEditorBlocks(markdown)
+        let numbering = numberedIndices(in: blocks)
+        let noticeState = waitingClassicNoticeState(
+            hasConflict: viewModel.visibleNativeSyncConflict != nil,
+            isSyncing: nativeOpen.isWaitingClassicSyncing || viewModel.isWaitingClassicInFlight,
+            isFailed: viewModel.isWaitingClassicFailed,
+            isStalledOnline: !isOffline && !viewModel.availability.showsOfflineStatus && waiting != nil)
+
+        return ScrollView {
+            VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+                VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+                    EditorDocumentHeader(
+                        title: displayTitle, onEditTitle: nil, reach: reach, peers: []
+                    ) {
+                        nativeHeaderStatus(session: nil)
+                    }
+                    if noticeState != .hidden {
+                        WaitingClassicEditsNotice(
+                            state: noticeState,
+                            onRetry: {
+                                Task { await nativeOpen.retryWaitingClassicEdits(viewModel: viewModel) }
+                            },
+                            onCopyText: {
+                                if copyWaitingClassicPayload() {
+                                    toastMessage = ToastMessage(loc[.toast_text_copied])
+                                }
+                            },
+                            onDiscard: {
+                                isConfirmingDiscardWaitingEdits = true
+                            })
+                    }
+                }
+                .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+
+                VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+                    ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
+                        if case .image(let alt, let url) = block.kind,
+                            let display = viewModel.pendingAttachmentDisplay(forPlaceholderURL: url)
+                        {
+                            PendingAttachmentImageView(
+                                alt: alt,
+                                display: display,
+                                showsActions: false,
+                                onRetry: {},
+                                onRemove: {}
+                            )
+                            .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
+                        } else {
+                            MarkdownBlockView(
+                                block: block,
+                                serverOrigin: serverOrigin,
+                                numberedIndex: numbering[index],
+                                isOffline: isOffline,
+                                onToggleChecklist: nil,
+                                onTapText: nil
+                            )
+                        }
+                    }
+                }
+                .textSelection(.enabled)
+
+                subpagesSection
+                    .padding(.top, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+            }
+            .padding(.horizontal, EditorBlockMetrics.gutter)
+            .padding(.top, DocsSpacing.spaceSM)
+            .padding(.bottom, DocsSpacing.spaceLG)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .onScrollPhaseChange { _, phase in
+            if phase == .interacting {
+                subpageSwipe = swipeRevealAfterScrollInteraction(subpageSwipe)
+            }
+        }
     }
 
     private var preservedUnavailableContent: some View {
@@ -702,13 +821,19 @@ struct NativeDocumentShellView: View {
             }
         } else {
             EditorSyncCaptionLabel(
-                hasUnsavedLocalContent: hasUnsaved,
+                hasUnsavedLocalContent: isWaitingClassicRoute ? viewModel.hasWaitingClassicWork : hasUnsaved,
                 hasConflict: viewModel.visibleNativeSyncConflict != nil,
                 showsOfflineStatus: showsOfflineStatus,
                 controlsOffline: isOffline,
                 saveState: viewModel.saveState,
                 lastSyncedAt: viewModel.lastSyncedAt,
-                onRetry: { nativeOpen.saveNow(viewModel: viewModel) })
+                onRetry: {
+                    if isWaitingClassicRoute {
+                        Task { await nativeOpen.retryWaitingClassicEdits(viewModel: viewModel) }
+                    } else {
+                        nativeOpen.saveNow(viewModel: viewModel)
+                    }
+                })
         }
     }
 
@@ -815,7 +940,7 @@ struct NativeDocumentShellView: View {
         isPresentingShareSheet || isPresentingOptionsSheet || isPresentingPagesTree
             || documentPendingMove != nil || subpagePendingDeleteConfirmation != nil
             || drawerPendingDeleteConfirmation != nil || documentPendingUndo != nil || conflictToResolve != nil
-            || outlineHeldNavigation.isHolding
+            || isConfirmingDiscardWaitingEdits || outlineHeldNavigation.isHolding
     }
 
     private func heldForOutline(_ binding: Binding<Bool>) -> Binding<Bool> {
@@ -982,5 +1107,165 @@ private struct NativeEditUnavailableNotice: View {
         .background(theme.colors.gray050, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("nativeEditor.editUnavailableNotice")
+    }
+}
+
+/// Pure display state for the notice card shown below the header on `.waitingClassicEdits`.
+enum WaitingClassicNoticeState: Equatable, Sendable {
+    case waitingOffline
+    case syncing
+    case failed
+    case hidden
+
+    /// The recovery buttons the card shows: only a refused draft offers any.
+    var actions: [WaitingClassicNoticeAction] {
+        self == .failed ? [.retry, .copyText, .discard] : []
+    }
+}
+
+enum WaitingClassicNoticeAction: Equatable, Sendable {
+    case retry, copyText, discard
+}
+
+/// Maps coordinator/route flags to the waiting-classic notice card state.
+/// Conflicts surface through the existing red conflict pill + `ConflictSheetView`.
+/// `isStalledOnline`: online, with this account's edits still waiting after the last pass. A
+/// transient refusal (a 401, a proxy's HTML 404) leaves the draft deferred rather than failed,
+/// and "Waiting to sync your offline edits" with no buttons would be untrue online, so the card
+/// offers Couldn't sync's Retry / Copy text / Discard without marking the draft failed.
+func waitingClassicNoticeState(
+    hasConflict: Bool,
+    isSyncing: Bool,
+    isFailed: Bool,
+    isStalledOnline: Bool = false
+) -> WaitingClassicNoticeState {
+    if hasConflict { return .hidden }
+    if isSyncing { return .syncing }
+    if isFailed || isStalledOnline { return .failed }
+    return .waitingOffline
+}
+
+/// Builds the copyable plain-text payload for waiting classic edits: title, a blank line,
+/// and the body Markdown (omitting the blank-line separator when either half is empty).
+func waitingClassicCopyText(title: String, markdown: String) -> String {
+    switch (title.isEmpty, markdown.isEmpty) {
+    case (false, false): return "\(title)\n\n\(markdown)"
+    case (false, true): return title
+    case (true, false): return markdown
+    case (true, true): return ""
+    }
+}
+
+/// Grey notice card under `EditorDocumentHeader` for the `.waitingClassicEdits` route,
+/// matching `NativeEditUnavailableNotice`'s surface and spacing.
+struct WaitingClassicEditsNotice: View {
+    @Environment(\.docsTheme) private var theme
+    @Environment(LocalizationStore.self) private var loc
+
+    let state: WaitingClassicNoticeState
+    let onRetry: () -> Void
+    let onCopyText: () -> Void
+    let onDiscard: () -> Void
+
+    var body: some View {
+        switch state {
+        case .waitingOffline:
+            noticeCard(accessibilityChildren: .combine) {
+                HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
+                    MaterialSymbol(.sync, size: 15, relativeTo: .footnote)
+                    Text(loc[.native_editor_waiting_classic_offline])
+                        .font(DocsFont.footnote)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(theme.colors.textSecondary)
+            }
+        case .syncing:
+            noticeCard(accessibilityChildren: .combine) {
+                HStack(alignment: .center, spacing: DocsSpacing.spaceXS) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(loc[.native_editor_waiting_classic_syncing])
+                        .font(DocsFont.footnote)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(theme.colors.textSecondary)
+            }
+        case .failed:
+            noticeCard(accessibilityChildren: .contain) {
+                VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+                    HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
+                        MaterialSymbol(.error, size: 15, relativeTo: .footnote)
+                            .foregroundStyle(theme.colors.danger)
+                        Text(loc[.native_editor_waiting_classic_failed])
+                            .font(DocsFont.footnote)
+                            .foregroundStyle(theme.colors.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: DocsSpacing.spaceXS) {
+                            failedActionButtons
+                        }
+                        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+                            failedActionButtons
+                        }
+                    }
+                }
+            }
+        case .hidden:
+            EmptyView()
+        }
+    }
+
+    private func noticeCard<Content: View>(
+        accessibilityChildren: AccessibilityChildBehavior,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .padding(.horizontal, DocsSpacing.spaceSM)
+            .padding(.vertical, DocsSpacing.spaceXS)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.colors.gray050, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
+            .accessibilityElement(children: accessibilityChildren)
+            .accessibilityIdentifier("nativeEditor.waitingClassicNotice")
+    }
+
+    @ViewBuilder
+    private var failedActionButtons: some View {
+        ForEach(state.actions, id: \.self) { action in
+            button(for: action)
+        }
+    }
+
+    /// The handler each recovery button runs; the view and its tests share it.
+    func perform(_ action: WaitingClassicNoticeAction) {
+        switch action {
+        case .retry: onRetry()
+        case .copyText: onCopyText()
+        case .discard: onDiscard()
+        }
+    }
+
+    @ViewBuilder
+    private func button(for action: WaitingClassicNoticeAction) -> some View {
+        switch action {
+        case .retry:
+            DocsButton(
+                title: loc[.common_retry], variant: .primary, color: .brand, size: .small,
+                action: { perform(.retry) }
+            )
+            .accessibilityIdentifier("nativeEditor.waitingClassic.retry")
+        case .copyText:
+            DocsButton(
+                title: loc[.native_editor_waiting_classic_copy_text], variant: .outline, color: .neutral,
+                size: .small, action: { perform(.copyText) }
+            )
+            .accessibilityIdentifier("nativeEditor.waitingClassic.copy")
+        case .discard:
+            DocsButton(
+                title: loc[.native_editor_recovery_discard], variant: .secondary, color: .danger, size: .small,
+                action: { perform(.discard) }
+            )
+            .accessibilityIdentifier("nativeEditor.waitingClassic.discard")
+        }
     }
 }

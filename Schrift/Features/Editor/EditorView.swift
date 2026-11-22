@@ -320,7 +320,7 @@ struct EditorView: View {
                     childrenCache: childrenCache, linkRole: linkRole, initialIsFavorite: initialIsFavorite,
                     pinRow: pinRow, isOffline: isOffline, onDeleted: onDeleted,
                     onOpenDocument: onOpenDocument, onCreatedDocument: onCreatedDocument)
-            case .loading, .native, .preservedUnavailable, .unavailable:
+            case .loading, .native, .waitingClassicEdits, .preservedUnavailable, .unavailable:
                 NativeDocumentShellView(
                     route: nativeOpen.route,
                     nativeOpen: nativeOpen,
@@ -363,6 +363,12 @@ struct EditorView: View {
             if case .native(let session) = nativeOpen.route {
                 session.input?.refreshInlinePicker()
             }
+            switch nativeOpen.route {
+            case .loading, .waitingClassicEdits:
+                nativeOpen.handleConnectivityChange(viewModel: viewModel, isOffline: offline)
+            case .classic, .native, .preservedUnavailable, .unavailable:
+                break
+            }
             guard !offline else { return }
             nativeOpen.refreshInBackground(viewModel: viewModel, isOffline: showsOffline)
             switch nativeOpen.route {
@@ -379,10 +385,16 @@ struct EditorView: View {
                 nativeOpen.close()
                 reconnectOpenTask?.cancel()
                 reconnectOpenTask = Task { await openNative() }
-            case .loading, .native, .preservedUnavailable:
+            case .loading, .native, .waitingClassicEdits, .preservedUnavailable:
                 childrenLoadTask?.cancel()
                 childrenLoadTask = Task { await viewModel.loadChildren() }
             }
+        }
+        .onChange(of: nativeOpen.isNativeSessionRoute) { wasNative, isNative in
+            guard !wasNative && isNative else { return }
+            syncMentionLoader()
+            childrenLoadTask?.cancel()
+            childrenLoadTask = Task { await viewModel.loadChildren() }
         }
         .onChange(of: liveCollaboration) { _, _ in
             nativeOpen.liveSettingChanged(viewModel: viewModel, isOffline: showsOffline)
@@ -402,10 +414,18 @@ struct EditorView: View {
                 session.input?.refreshInlinePicker()
             }
         }
-        .onChange(of: viewModel.signedInUser.userID) { _, _ in
+        .onChange(of: viewModel.signedInUserID) { _, _ in
             syncMentionLoader()
-            if case .native(let session) = nativeOpen.route {
+            switch nativeOpen.route {
+            case .native(let session):
                 session.input?.refreshInlinePicker()
+            case .waitingClassicEdits:
+                nativeOpen.reopen(
+                    viewModel: viewModel, isOffline: showsOffline,
+                    canUpdate: pinRow?.abilities.update == true,
+                    canMention: pinRow?.abilities.mention == true)
+            case .loading, .classic, .preservedUnavailable, .unavailable:
+                break
             }
         }
         .onChange(of: viewModel.isLocalDocument) { _, _ in
