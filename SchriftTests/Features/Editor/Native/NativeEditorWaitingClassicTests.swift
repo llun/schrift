@@ -747,7 +747,7 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         XCTAssertEqual(env.drafts.draft(for: local.id)?.markdown, "Private other account draft")
     }
 
-    func testSessionExpiredDefersClassicDraftAndRouteNotFoundMarksItFailed() async {
+    func testSessionExpiredAndRouteNotFoundLeaveClassicDraftWaiting() async {
         let env = makeEnvironment()
         defer { env.clean() }
         let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState("Server"))
@@ -765,14 +765,19 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
             "401 (.sessionExpired) on formattedContent must not mark a classic draft .failed")
         XCTAssertNotNil(env.drafts.draft(for: env.documentID))
 
-        // HTML 404 maps to `.routeNotFound`, which is not a transient deferral and must mark the draft `.failed`.
+        // An HTML 404 maps to `.routeNotFound`: a fact about the route (often a proxy mid-deploy),
+        // deferred like create and delete replay defer it.
         server.formattedStatus = 404
         server.formattedContentType = "text/html"
         await env.coordinator.syncPendingDrafts()
-        XCTAssertTrue(
+        XCTAssertFalse(
             env.coordinator.isWaitingClassicFailed(documentID: env.documentID),
-            ".routeNotFound on formattedContent must mark a classic draft .failed")
-        XCTAssertNotNil(env.drafts.draft(for: env.documentID), "failed draft must stay intact for Retry/Copy/Discard")
+            ".routeNotFound on formattedContent must leave a classic draft waiting, not failed")
+        XCTAssertNotNil(env.drafts.draft(for: env.documentID))
+        // Online and still waiting, the card offers Couldn't sync's buttons all the same.
+        XCTAssertEqual(
+            waitingClassicNoticeState(hasConflict: false, isSyncing: false, isFailed: false, isStalledOnline: true),
+            .failed)
     }
 
     func testPostDiscardReopenGoingOfflineMidFetchWithCachedCopyNeverFallsBackToClassic() async {
@@ -1051,6 +1056,12 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         XCTAssertEqual(
             waitingClassicNoticeState(hasConflict: true, isSyncing: false, isFailed: true),
             .hidden, "conflicts are surfaced by the conflict pill and sheet")
+        XCTAssertEqual(
+            waitingClassicNoticeState(hasConflict: false, isSyncing: false, isFailed: false, isStalledOnline: true),
+            .failed, "online with edits still waiting offers Retry / Copy text / Discard")
+        XCTAssertEqual(
+            waitingClassicNoticeState(hasConflict: false, isSyncing: true, isFailed: false, isStalledOnline: true),
+            .syncing)
 
         XCTAssertEqual(
             waitingClassicCopyText(title: "My Page", markdown: "Line 1\n\nLine 2"),

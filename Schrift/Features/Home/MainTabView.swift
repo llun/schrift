@@ -66,7 +66,12 @@ struct MainTabView: View {
             initialValue: SharedViewModel(
                 client: viewModel.client, saveCoordinator: viewModel.saveCoordinator,
                 availability: viewModel.availability))
-        _profileViewModel = State(initialValue: ProfileViewModel(client: viewModel.client))
+        _profileViewModel = State(
+            initialValue: ProfileViewModel(
+                client: viewModel.client,
+                onSignedInUserChanged: { [saveCoordinator = viewModel.saveCoordinator] in
+                    saveCoordinator.pins.sessionIdentityDidChange()
+                }))
         _attachmentsViewModel = State(
             initialValue: AttachmentsViewModel(
                 serverOrigin: serverOrigin,

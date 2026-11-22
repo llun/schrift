@@ -603,7 +603,8 @@ struct NativeDocumentShellView: View {
         let noticeState = waitingClassicNoticeState(
             hasConflict: viewModel.visibleNativeSyncConflict != nil,
             isSyncing: nativeOpen.isWaitingClassicSyncing || viewModel.isWaitingClassicInFlight,
-            isFailed: viewModel.isWaitingClassicFailed)
+            isFailed: viewModel.isWaitingClassicFailed,
+            isStalledOnline: !isOffline && !viewModel.availability.showsOfflineStatus && waiting != nil)
 
         return ScrollView {
             VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
@@ -1128,14 +1129,19 @@ enum WaitingClassicNoticeAction: Equatable, Sendable {
 
 /// Maps coordinator/route flags to the waiting-classic notice card state.
 /// Conflicts surface through the existing red conflict pill + `ConflictSheetView`.
+/// `isStalledOnline`: online, with this account's edits still waiting after the last pass. A
+/// transient refusal (a 401, a proxy's HTML 404) leaves the draft deferred rather than failed,
+/// and "Waiting to sync your offline edits" with no buttons would be untrue online, so the card
+/// offers Couldn't sync's Retry / Copy text / Discard without marking the draft failed.
 func waitingClassicNoticeState(
     hasConflict: Bool,
     isSyncing: Bool,
-    isFailed: Bool
+    isFailed: Bool,
+    isStalledOnline: Bool = false
 ) -> WaitingClassicNoticeState {
     if hasConflict { return .hidden }
     if isSyncing { return .syncing }
-    if isFailed { return .failed }
+    if isFailed || isStalledOnline { return .failed }
     return .waitingOffline
 }
 

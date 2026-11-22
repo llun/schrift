@@ -4639,7 +4639,8 @@ final class DocumentSaveCoordinator {
                 // via Retry or Discard.
                 markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
             } catch {
-                // Leave the draft for a later sync (e.g. offline, expired session, or cancellation).
+                // Leave the draft for a later sync (offline, expired session, missing route, or
+                // cancellation).
                 if isDeferredReplayFailure(error) {
                     if draft.replica != nil {
                         states[draft.documentID] = .pendingSync
@@ -4665,11 +4666,13 @@ final class DocumentSaveCoordinator {
 
     /// Errors during a background sync pass that leave the draft waiting for a later pass rather
     /// than marking it `.failed`: transient transport/5xx/rate-limit failures, `.sessionExpired`
-    /// (the shared client already raised re-login), and `CancellationError`.
+    /// (the shared client already raised re-login), `.routeNotFound` (a fact about the route, not
+    /// about this document — create and delete replay treat it as transient too), and
+    /// `CancellationError`. The waiting page still offers Retry / Copy text / Discard online.
     private func isDeferredReplayFailure(_ error: Error) -> Bool {
         if error is CancellationError { return true }
         guard let docsError = error as? DocsAPIError else { return false }
-        return retryableSaveFailure(docsError) || docsError == .sessionExpired
+        return retryableSaveFailure(docsError) || docsError == .sessionExpired || docsError == .routeNotFound
     }
 
     /// Record a conflict the editor's own revalidation (`reconcileDraft`, or `apply`'s dirty
