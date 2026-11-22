@@ -27,6 +27,9 @@ struct NativeEditCommand: Equatable, Sendable {
         /// One mark change over a range that may span blocks. `blockID` is the
         /// range's first block; the text is untouched.
         case marks(NativeMarkCommand)
+        /// An inline markdown mark typing shortcut within one block or table
+        /// cell: formats the body and removes its delimiters in one transaction.
+        case markShortcut(NativeMarkShortcutCommand)
         /// A prop edit on the block's own content element, never a type change:
         /// a checkbox's `checked`, a numbered item's `start`, a code block's
         /// `language`, a callout's `emoji` or a heading's `level`.
@@ -137,7 +140,8 @@ struct NativeEditCommand: Equatable, Sendable {
         switch kind {
         case .replace(_, let replacement, _): return replacement
         case .range(let range): return range.replacement
-        case .split, .join, .marks, .props, .blockType, .indent, .outdent, .moveUp, .moveDown, .duplicate,
+        case .split, .join, .marks, .markShortcut, .props, .blockType, .indent, .outdent, .moveUp, .moveDown,
+            .duplicate,
             .deleteBlock, .insertBlock, .insertSubtrees, .lineBreak, .table, .columns, .insertColumns, .insertMedia,
             .insertMediaBatch, .insertSourceBlock, .insertDivider, .mediaProps, .insertInlineObject,
             .insertInlineMath, .pasteInline, .undo, .redo:
