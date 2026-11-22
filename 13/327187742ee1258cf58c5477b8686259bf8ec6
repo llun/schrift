@@ -1,0 +1,62 @@
+docs/native-editor-acceptance.md
+  s_4fb28ab57323fe::t_999e890585023f 181-186
+  h_580a04e334fef4 187-191
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_4fb28ab57323fe::t_999e890585023f 646-650,652
+  s_4fb28ab57323fe::t_ce7235a5ce71e3 2164
+  h_580a04e334fef4 411-413,672,718-719,725-797,2140
+SchriftTests/Features/Editor/Native/NativeMarkdownShortcutTests.swift
+  s_4fb28ab57323fe::t_999e890585023f 1-55,66-229,241-287,421
+  s_4fb28ab57323fe::t_9b8b157843098f 56-65,288-415,420
+  s_4fb28ab57323fe::t_7fbf3c10b65fa0 230-240
+  s_4fb28ab57323fe::t_ce7235a5ce71e3 416-419
+docs/standards/document-engine.md
+  s_4fb28ab57323fe::t_999e890585023f 379-383
+  h_580a04e334fef4 384-390
+Schrift/Features/Editor/MarkdownShortcuts.swift
+  s_4fb28ab57323fe::t_999e890585023f 21
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_4fb28ab57323fe::t_999e890585023f 1117-1118,1618-1619,1626,1629-1639,1641-1649,1660-1665,1671-1676,1679-1701
+  s_4fb28ab57323fe::t_9363ec8a49fb82 1246-1247,1620,1623,1666-1670,1677-1678,3405-3407
+  s_4fb28ab57323fe::t_d2cd8f58aaab73 812-813,871,903,905-906,911,931,944,1114-1116,1119-1122,1129,1138,1140,1242-1243
+  s_4fb28ab57323fe::t_30b44e7ad0fa3b 1621-1622,1624-1625
+  s_4fb28ab57323fe::t_ac0410fad0bbfd 820,824-825,964-966
+  s_4fb28ab57323fe::t_ce7235a5ce71e3 1640
+  s_4fb28ab57323fe::t_7c52c59ea15d4f 917
+  h_580a04e334fef4 126-133,821-823,862-864,904,907-910,918,1123-1128,1130-1137,1139,1141-1149,1702-1762
+Schrift/Core/Yjs/CodeBlockLanguage.swift
+  s_4fb28ab57323fe::t_ce7235a5ce71e3 1-12
+Schrift/Features/Editor/Native/ColumnEditorViewController.swift
+  s_4fb28ab57323fe::t_addeb6733749e9 677-681,701,725,745-746,804-807,814-815,906-909,937-949,970-979
+SchriftTests/Features/Editor/Native/ColumnLayoutTests.swift
+  s_4fb28ab57323fe::t_ba1b83e322a837 44-65,360-409
+Schrift/Core/Yjs/InlineMarkShortcut.swift
+  h_580a04e334fef4 1-96
+Schrift/Features/Editor/Native/NativeEditCommand.swift
+  h_580a04e334fef4 30-32,143-144
+Schrift/Features/Editor/Native/NativeFormattingCommands.swift
+  h_580a04e334fef4 52-74
+SchriftTests/Features/Editor/Native/NativeInlineMarkShortcutTests.swift
+  h_580a04e334fef4 1-635
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "13327187742ee1258cf58c5477b8686259bf8ec6",
+  "prompts": {},
+  "humans": {
+    "h_580a04e334fef4": {
+      "author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  },
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
