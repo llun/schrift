@@ -5,25 +5,31 @@ import Foundation
 struct InlineMarkShortcutMatch: Equatable, Sendable {
     /// Block-relative UTF-16 range covering opening delimiter + body + closing delimiter.
     let fullRange: Range<Int>
-    /// UTF-16 length of the opening delimiter (1 or 2).
-    let openLength: Int
-    /// UTF-16 length of the closing delimiter (1 or 2).
-    let closeLength: Int
+    /// UTF-16 length of each delimiter (1 or 2).
+    let delimiterLength: Int
     /// BlockNote mark key (`"bold"`, `"italic"`, `"code"`, `"strike"`).
     let markKey: String
     /// The delimiter string itself (`"**"`, `"__"`, `"*"`, `"_"`, `` "`" ``, `"~~"`).
     let delimiter: String
 
     var bodyRange: Range<Int> {
-        (fullRange.lowerBound + openLength)..<(fullRange.upperBound - closeLength)
+        (fullRange.lowerBound + delimiterLength)..<(fullRange.upperBound - delimiterLength)
     }
 
     var openingRange: Range<Int> {
-        fullRange.lowerBound..<(fullRange.lowerBound + openLength)
+        fullRange.lowerBound..<(fullRange.lowerBound + delimiterLength)
     }
 
     var closingRange: Range<Int> {
-        (fullRange.upperBound - closeLength)..<fullRange.upperBound
+        (fullRange.upperBound - delimiterLength)..<fullRange.upperBound
+    }
+
+    /// True when `units` contains at least one visible scalar (neither
+    /// whitespace/newline nor an inline-object placeholder `U+FFFC`).
+    static func hasVisibleBody(_ units: ArraySlice<UInt16>) -> Bool {
+        String(decoding: units, as: UTF16.self).unicodeScalars.contains {
+            !CharacterSet.whitespacesAndNewlines.contains($0) && $0.value != 0xFFFC
+        }
     }
 }
 
@@ -39,7 +45,7 @@ func detectInlineMarkShortcut(text: String, caretOffset: Int) -> InlineMarkShort
     detectInlineMarkShortcut(units: Array(text.utf16), caretOffset: caretOffset)
 }
 
-func detectInlineMarkShortcut(units: [UInt16], caretOffset: Int) -> InlineMarkShortcutMatch? {
+private func detectInlineMarkShortcut(units: [UInt16], caretOffset: Int) -> InlineMarkShortcutMatch? {
     guard caretOffset >= 3, caretOffset <= units.count else { return nil }
     let lastUnit = units[caretOffset - 1]
     let candidates: [(delimiter: String, unit: UInt16, length: Int, markKey: String)]
@@ -78,17 +84,11 @@ func detectInlineMarkShortcut(units: [UInt16], caretOffset: Int) -> InlineMarkSh
                 CharacterSet.whitespacesAndNewlines.contains(scalar)
             else { continue }
         }
-        let bodyString = String(decoding: units[bodyStart..<bodyEnd], as: UTF16.self)
-        guard
-            bodyString.unicodeScalars.contains(where: {
-                !CharacterSet.whitespacesAndNewlines.contains($0) && $0.value != 0xFFFC
-            })
-        else { continue }
+        guard InlineMarkShortcutMatch.hasVisibleBody(units[bodyStart..<bodyEnd]) else { continue }
 
         return InlineMarkShortcutMatch(
             fullRange: openStart..<caretOffset,
-            openLength: len,
-            closeLength: len,
+            delimiterLength: len,
             markKey: candidate.markKey,
             delimiter: candidate.delimiter)
     }

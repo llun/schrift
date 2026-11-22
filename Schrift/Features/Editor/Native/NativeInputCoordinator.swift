@@ -1145,8 +1145,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     private func runShortcutCheck(_ kind: PendingShortcutKind, in blockID: String? = nil) -> Bool {
         switch kind {
-        case .block: convertMarkdownShortcutIfNeeded(in: blockID)
-        case .inlineMark: convertInlineMarkShortcutIfNeeded(in: blockID)
+        case .block: return convertMarkdownShortcutIfNeeded(in: blockID)
+        case .inlineMark: return convertInlineMarkShortcutIfNeeded(in: blockID)
         }
     }
 
@@ -1482,13 +1482,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             canPredict(surface.blocks[position], blockRange, text, typed)
         else {
             // The engine's own validation decides: shown on its result.
-            return postBarrier(
+            let retryMarks = marks ?? pendingTypingMarks
+            let posted = postBarrier(
                 entry.blockID, .replace(range: blockRange, replacement: text, marks: typed),
                 refusal: .native_editor_input_unavailable, placement: .at(caret.location), undoBefore: undoBefore,
                 undoAfter: false,
                 retry: again(at: range) { [weak self] in
-                    self?.replace(range: $0, with: text, marks: marks, holdWhenBusy: holdWhenBusy) ?? false
+                    self?.replace(range: $0, with: text, marks: retryMarks, holdWhenBusy: holdWhenBusy) ?? false
                 })
+            if posted { pendingTypingMarks = nil }
+            return posted
         }
         let command = NativeEditCommand(
             id: UUID(), baseRevision: canonicalRevision, blockID: entry.blockID, range: blockRange,
@@ -1729,6 +1732,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         else { return false }
         var attributes = [TextMark(key: match.markKey, valueJSON: "{}")]
         if match.markKey == "code" {
+            // TipTap's code mark excludes every other mark.
             let excluded = Set(
                 spans.filter { $0.range.overlaps(match.bodyRange) }
                     .flatMap { $0.marks.map(\.key) }
@@ -1736,9 +1740,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             ).sorted()
             attributes += excluded.map { TextMark(key: $0, valueJSON: "null") }
         }
-        let command = NativeMarkShortcutCommand(
-            fullRange: match.fullRange, openLength: match.openLength, closeLength: match.closeLength,
-            delimiter: match.delimiter, attributes: attributes)
+        let command = NativeMarkShortcutCommand(match: match, attributes: attributes)
         let targetBlockID = entry.blockID
         let expectedCaretOffset = match.fullRange.lowerBound + match.bodyRange.count
         let addedMarkKey = match.markKey

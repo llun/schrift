@@ -745,42 +745,34 @@ final class DocumentEngine {
             ).units
             runs = entry.runs
         }
-        let delimiterUnits = Array(shortcut.delimiter.utf16)
+        let match = shortcut.match
+        let delimiterUnits = Array(match.delimiter.utf16)
         guard !shortcut.attributes.isEmpty,
             shortcut.attributes.allSatisfy({ Self.isMarkValue($0) }),
-            shortcut.openLength > 0, shortcut.closeLength > 0,
-            delimiterUnits.count == shortcut.openLength, delimiterUnits.count == shortcut.closeLength,
-            shortcut.fullRange.lowerBound >= 0, shortcut.fullRange.upperBound <= units.count,
-            shortcut.fullRange.count > shortcut.openLength + shortcut.closeLength
+            match.delimiterLength > 0,
+            delimiterUnits.count == match.delimiterLength,
+            match.fullRange.lowerBound >= 0, match.fullRange.upperBound <= units.count,
+            match.fullRange.count > 2 * match.delimiterLength
         else { throw DocumentEngineError.unsupportedNativeInput }
-        let bodyRange = shortcut.bodyRange
-        let openRange = shortcut.openingRange
-        let closeRange = shortcut.closingRange
+        let bodyRange = match.bodyRange
+        let openRange = match.openingRange
+        let closeRange = match.closingRange
         guard Self.isBoundary(openRange.lowerBound, in: units),
             Self.isBoundary(bodyRange.lowerBound, in: units),
             Self.isBoundary(bodyRange.upperBound, in: units),
             Self.isBoundary(closeRange.upperBound, in: units),
             Array(units[openRange]) == delimiterUnits,
-            Array(units[closeRange]) == delimiterUnits
+            Array(units[closeRange]) == delimiterUnits,
+            InlineMarkShortcutMatch.hasVisibleBody(units[bodyRange])
         else { throw DocumentEngineError.unsupportedNativeInput }
-        let bodyString = String(decoding: units[bodyRange], as: UTF16.self)
         guard
-            bodyString.unicodeScalars.contains(where: {
-                !CharacterSet.whitespacesAndNewlines.contains($0) && $0.value != 0xFFFC
+            !NativeMarkSelection.spans(runs).contains(where: {
+                $0.range.overlaps(bodyRange) && $0.marks.contains { $0.key == "code" }
             })
         else { throw DocumentEngineError.unsupportedNativeInput }
-        var offset = 0
-        for run in runs {
-            let length = run.text.utf16.count
-            let runRange = offset..<(offset + length)
-            offset += length
-            if runRange.overlaps(bodyRange), run.marks.contains(where: { $0.key == "code" }) {
-                throw DocumentEngineError.unsupportedNativeInput
-            }
-        }
         let target = try textTarget(entry)
         let attributes = YTextAttributes(shortcut.attributes.map { ($0.key, $0.valueJSON) })
-        let caretOffset = shortcut.fullRange.lowerBound + bodyRange.count
+        let caretOffset = match.fullRange.lowerBound + bodyRange.count
         return (
             write: {
                 try self.writer.transaction { _ in

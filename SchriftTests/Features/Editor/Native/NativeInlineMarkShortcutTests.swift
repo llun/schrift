@@ -77,8 +77,7 @@ final class NativeInlineMarkShortcutTests: NativeEditingTestCase {
             XCTAssertEqual(
                 match,
                 InlineMarkShortcutMatch(
-                    fullRange: 0..<input.utf16.count, openLength: openLen, closeLength: openLen,
-                    markKey: markKey, delimiter: delimiter),
+                    fullRange: 0..<input.utf16.count, delimiterLength: openLen, markKey: markKey, delimiter: delimiter),
                 input)
             if let match {
                 let units = Array(input.utf16)
@@ -197,7 +196,9 @@ final class NativeInlineMarkShortcutTests: NativeEditingTestCase {
                 markShortcutCommands(harness),
                 [
                     NativeMarkShortcutCommand(
-                        fullRange: 0..<typed.utf16.count, openLength: len, closeLength: len, delimiter: delimiter,
+                        match: InlineMarkShortcutMatch(
+                            fullRange: 0..<typed.utf16.count, delimiterLength: len, markKey: markKey,
+                            delimiter: delimiter),
                         attributes: [TextMark(key: markKey, valueJSON: "{}")])
                 ], typed)
             XCTAssertFalse(
@@ -387,6 +388,35 @@ final class NativeInlineMarkShortcutTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: "`fn()`".count + 2)
     }
 
+    func testCodeShortcutReplacesLinkMark() async throws {
+        let link = ("link", NativeMark.linkValue("https://example.com"))
+        let harness = try await makeHarness([
+            BlockNoteBlock(
+                node: "paragraph", props: Self.paragraphProps,
+                runs: [InlineRun("`"), InlineRun("docs", marks: [link])], id: "p")
+        ])
+        let session = harness.session
+        try caret(harness, "p", 5)
+        type(session, "`")
+        await harness.settle()
+
+        let b = try block(session, "p")
+        XCTAssertEqual(text(of: b), "docs")
+        XCTAssertEqual(b.runs.count, 1)
+        XCTAssertEqual(markKeys(of: b.runs[0]), ["code"], "code excludes link")
+        XCTAssertNil(harness.input.noticeKey)
+
+        // One undo restores the literal backticks and the original link mark.
+        let undone = await harness.run { harness.input.undo() }
+        XCTAssertTrue(undone)
+        let restored = try block(session, "p")
+        XCTAssertEqual(text(of: restored), "`docs`")
+        XCTAssertTrue(
+            restored.runs.contains { $0.text == "docs" && $0.marks.contains { $0.key == "link" } },
+            "undo restores the link mark")
+        try await assertConsistent(harness, localCommands: 3)
+    }
+
     // MARK: - Block types, code blocks, code text, tables & opaque blocks
 
     func testShortcutWorksInHeadingsListItemsAndQuotes() async throws {
@@ -427,6 +457,7 @@ final class NativeInlineMarkShortcutTests: NativeEditingTestCase {
         XCTAssertEqual(text(of: b), "**bold** *em* `x` ~~s~~")
         XCTAssertTrue(b.runs.allSatisfy(\.marks.isEmpty))
         XCTAssertTrue(markShortcutCommands(harness).isEmpty)
+        XCTAssertNil(harness.input.noticeKey)
         try await assertConsistent(harness, localCommands: "**bold** *em* `x` ~~s~~".count)
     }
 
@@ -446,6 +477,7 @@ final class NativeInlineMarkShortcutTests: NativeEditingTestCase {
         XCTAssertEqual(b.runs.count, 1)
         XCTAssertEqual(markKeys(of: b.runs[0]), ["code"])
         XCTAssertTrue(markShortcutCommands(harness).isEmpty)
+        XCTAssertNil(harness.input.noticeKey)
         try await assertConsistent(harness, localCommands: "**bold**".count)
     }
 
@@ -463,6 +495,7 @@ final class NativeInlineMarkShortcutTests: NativeEditingTestCase {
         let b = try block(session, "p")
         XCTAssertEqual(text(of: b), "**code**")
         XCTAssertTrue(markShortcutCommands(harness).isEmpty)
+        XCTAssertNil(harness.input.noticeKey)
         try await assertConsistent(harness, localCommands: 1)
     }
 
@@ -586,6 +619,101 @@ final class NativeInlineMarkShortcutTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: " **bold**".count + 1)
     }
 
+    func testBackspaceAfterShortcutOnBarrierPathContinuesMark() async throws {
+        let harness = try await makeHarness(
+            state: try stateWithMention([paragraph("p", "Hi ")], blockID: "p", at: 3))
+        let session = harness.session
+        try caret(harness, "p", 4)
+        type(session, " **bold**")
+        await harness.settle()
+        XCTAssertTrue(harness.input.activeMarks.isEmpty, "bold cleared after shortcut")
+
+        // Backspace clears the post-shortcut pending override on the barrier path so
+        // typing "t" continues the remaining bold run ("bolt" is all bold).
+        session.textView.deleteBackward()
+        await harness.settle()
+        XCTAssertEqual(
+            Set(harness.input.activeMarks.map(\.key)), ["bold"],
+            "activeMarks must reflect bold after Backspace")
+        type(session, "t")
+        await harness.settle()
+
+        let b = try block(session, "p")
+        XCTAssertEqual(text(of: b), "Hi \u{FFFC} bolt")
+        XCTAssertEqual(b.runs.last?.text, "bolt", "t must continue bold rather than splitting into a plain run")
+        XCTAssertEqual(b.runs.last.map(markKeys), ["bold"])
+        try await assertConsistent(harness, localCommands: " **bold**".count + 1 + 2)
+    }
+
+    /// A barrier-path `replace` whose `.at` placement lands on the same caret
+    /// offset (e.g. forward-deleting the character after the caret) does not
+    /// fire `textViewDidChangeSelection`, so `replace` itself must clear
+    /// `pendingTypingMarks` when posting its barrier.
+    func testZeroDeltaBarrierReplaceAfterShortcutClearsPendingOverride() async throws {
+        let harness = try await makeHarness(
+            state: try stateWithMention([paragraph("p", "Hi  tail")], blockID: "p", at: 3))
+        let session = harness.session
+        try caret(harness, "p", 4)
+        type(session, " **bold**")
+        await harness.settle()
+        XCTAssertTrue(harness.input.activeMarks.isEmpty, "bold cleared after shortcut")
+        let caretLoc = try location(session, "p", "Hi \u{FFFC} bold".utf16.count)
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: caretLoc, length: 0))
+
+        // Delete the space right after the caret (caret stays at `caretLoc`).
+        XCTAssertTrue(harness.input.replace(range: NSRange(location: caretLoc, length: 1), with: ""))
+        await harness.settle()
+        XCTAssertEqual(
+            Set(harness.input.activeMarks.map(\.key)), ["bold"],
+            "pending override must clear even when barrier placement does not move the caret")
+
+        type(session, "t")
+        await harness.settle()
+        let b = try block(session, "p")
+        XCTAssertEqual(text(of: b), "Hi \u{FFFC} boldttail")
+        XCTAssertTrue(
+            b.runs.contains { $0.text == "boldt" && markKeys(of: $0) == ["bold"] },
+            "t must continue bold rather than using a stale pending override")
+        try await assertConsistent(harness, localCommands: " **bold**".count + 1 + 2)
+    }
+
+    /// A closing delimiter on the barrier path whose barrier goes `.stale`
+    /// retries with the inline-mark shortcut kind intact and still converts.
+    func testInlineShortcutConvertsAfterStaleBarrierRetry() async throws {
+        let state = try stateWithMention(
+            [paragraph("other", "Other"), paragraph("p", "Hi  **bold*")], blockID: "p", at: 3)
+        let harness = try await makeHarness(state: state)
+        let session = harness.session
+        let revision = await harness.engine(\.revision)
+        let baseRev = try XCTUnwrap(revision)
+        try caret(harness, "p", "Hi \u{FFFC} **bold*".utf16.count)
+
+        let peer = YDoc(clientID: 2, gc: true)
+        defer { peer.destroy() }
+        try peer.applyUpdate(
+            YUpdateDecoder.decode(try XCTUnwrap(harness.store.restore(for: harness.scope)?.checkpoint)))
+        let peerUpdate = try BlockNoteWriter(doc: peer).replaceText(block: "other", range: 0..<0, with: "!")
+        let replica = try XCTUnwrap(session.replica)
+
+        // Post peer edit and closing delimiter synchronously on MainActor so the
+        // delimiter's barrier carries `baseRev`, meets the peer revision and goes `.stale`.
+        replica.mailbox.post(.integrate(peerUpdate, reply: nil))
+        session.textView.insertText("*")
+        await harness.settle()
+
+        XCTAssertEqual(text(of: try block(session, "other")), "!Other")
+        let b = try block(session, "p")
+        XCTAssertEqual(text(of: b), "Hi \u{FFFC} bold")
+        XCTAssertEqual(b.runs.last?.text, "bold")
+        XCTAssertEqual(b.runs.last.map(markKeys), ["bold"])
+        XCTAssertEqual(markShortcutCommands(harness).count, 1)
+        XCTAssertEqual(harness.log.commands.count, 2)
+        XCTAssertGreaterThan(
+            harness.log.commands[0].baseRevision, baseRev,
+            "the first barrier must have gone stale and retried at the post-peer revision")
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
     func testEngineValidationRefusesInvalidMarkShortcuts() async throws {
         let harness = try await makeHarness([
             paragraph("p", "**bold**"),
@@ -600,13 +728,13 @@ final class NativeInlineMarkShortcutTests: NativeEditingTestCase {
         ])
 
         let validBold = NativeMarkShortcutCommand(
-            fullRange: 0..<8, openLength: 2, closeLength: 2, delimiter: "**",
+            match: InlineMarkShortcutMatch(fullRange: 0..<8, delimiterLength: 2, markKey: "bold", delimiter: "**"),
             attributes: [TextMark(key: "bold", valueJSON: "{}")])
         let mismatched = NativeMarkShortcutCommand(
-            fullRange: 0..<8, openLength: 2, closeLength: 2, delimiter: "__",
+            match: InlineMarkShortcutMatch(fullRange: 0..<8, delimiterLength: 2, markKey: "bold", delimiter: "__"),
             attributes: [TextMark(key: "bold", valueJSON: "{}")])
         let emptyBody = NativeMarkShortcutCommand(
-            fullRange: 0..<4, openLength: 2, closeLength: 2, delimiter: "**",
+            match: InlineMarkShortcutMatch(fullRange: 0..<4, delimiterLength: 2, markKey: "bold", delimiter: "**"),
             attributes: [TextMark(key: "bold", valueJSON: "{}")])
 
         let refusedMismatched = await harness.engine { engine in

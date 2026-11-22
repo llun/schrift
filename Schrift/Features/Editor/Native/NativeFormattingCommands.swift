@@ -50,26 +50,11 @@ struct NativeMarkCommand: Equatable, Sendable {
 }
 
 /// One inline markdown mark shortcut conversion within a single block or table
-/// cell: applies `attributes` to `bodyRange` and deletes both delimiters in
-/// `fullRange` in one Yjs transaction.
+/// cell: applies `attributes` to `match.bodyRange` and deletes both delimiters
+/// in `match.fullRange` in one Yjs transaction.
 struct NativeMarkShortcutCommand: Equatable, Sendable {
-    let fullRange: Range<Int>
-    let openLength: Int
-    let closeLength: Int
-    let delimiter: String
+    let match: InlineMarkShortcutMatch
     let attributes: [TextMark]
-
-    var bodyRange: Range<Int> {
-        (fullRange.lowerBound + openLength)..<(fullRange.upperBound - closeLength)
-    }
-
-    var openingRange: Range<Int> {
-        fullRange.lowerBound..<(fullRange.lowerBound + openLength)
-    }
-
-    var closingRange: Range<Int> {
-        (fullRange.upperBound - closeLength)..<fullRange.upperBound
-    }
 }
 
 /// The marks at a selection, read from the surface's runs with ProseMirror's
