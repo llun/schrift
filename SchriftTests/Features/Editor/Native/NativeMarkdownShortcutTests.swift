@@ -227,6 +227,17 @@ final class NativeMarkdownShortcutTests: NativeEditingTestCase {
         }
     }
 
+    /// Return with the caret inside a fence splits there: only Return at the end converts.
+    func testReturnInsideAFenceSplitsInsteadOfConverting() async throws {
+        let harness = try await makeHarness([paragraph("p", "```swift"), paragraph("after", "Next")])
+        let session = harness.session
+        try caret(harness, "p", 3)
+        _ = await harness.run { harness.input.insertNewline() }
+        XCTAssertEqual(try block(session, "p").node, "paragraph", "the fence stays a paragraph")
+        XCTAssertEqual(text(of: try block(session, "p")), "```", "split at the caret")
+        await harness.close()
+    }
+
     func testDividerOnReturnStillConverts() async throws {
         let harness = try await makeHarness([paragraph("p", "---"), paragraph("after", "Next")])
         let session = harness.session

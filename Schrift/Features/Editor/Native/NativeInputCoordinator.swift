@@ -1581,8 +1581,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // Plain `---`, `***`, `___` + Return converts the paragraph into a
         // divider; a ``` fence (with an optional language) becomes a code block.
         // A paragraph with inline objects is never a fence: its text carries
-        // their placeholders, which no language accepts.
+        // their placeholders, which no language accepts. Only Return at the
+        // end converts; with the caret inside the text it splits there.
         if block.node == "paragraph", tableMove == nil, sourceKind == nil, !block.hasInlineObjects,
+            effectiveSelection.length == 0,
+            effectiveSelection.location == entry.textRange.location + text(of: block).utf16.count,
             let match = detectEnterShortcut(text: text(of: block))
         {
             let length = text(of: block).utf16.count
