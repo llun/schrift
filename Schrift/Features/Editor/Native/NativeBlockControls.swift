@@ -264,6 +264,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         else { return }
 
         let minOffsetY = -textView.adjustedContentInset.top
+        var measuredOffset = anchor.offsetBefore
         for _ in 0..<4 {
             layout.textViewportLayoutController.layoutViewport()
             var fragment = layout.textLayoutFragment(for: location)
@@ -283,13 +284,14 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
                 fragment.state != .none,
                 fragment.layoutFragmentFrame.height > 0
             else {
-                // The anchor never laid out: leave the offset where the user had it.
-                textView.contentOffset.y = anchor.offsetBefore
+                // The anchor never laid out: keep the last measured offset, not the relocation's guess.
+                textView.contentOffset.y = measuredOffset
                 layout.textViewportLayoutController.layoutViewport()
                 return
             }
             let measuredDelta = fragment.layoutFragmentFrame.minY - anchor.minY
             let targetOffset = max(minOffsetY, anchor.offsetBefore + measuredDelta)
+            measuredOffset = targetOffset
             if fragment.state == .layoutAvailable, abs(textView.contentOffset.y - targetOffset) < 0.25 {
                 if textView.contentOffset.y != targetOffset {
                     textView.contentOffset.y = targetOffset
