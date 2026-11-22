@@ -284,7 +284,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
                 fragment.state != .none,
                 fragment.layoutFragmentFrame.height > 0
             else {
-                // The anchor never laid out: keep the last measured offset, not the relocation's guess.
+                // The anchor is not laid out: keep the last measured offset (or the user's), not the relocation's guess.
                 textView.contentOffset.y = measuredOffset
                 layout.textViewportLayoutController.layoutViewport()
                 return
