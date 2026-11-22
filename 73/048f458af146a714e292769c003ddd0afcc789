@@ -1,0 +1,19 @@
+Schrift/Features/Editor/Native/NativeBlockControls.swift
+  s_4fb28ab57323fe::t_82f6c9b8a6c6dd 267,287-288,294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "73048f458af146a714e292769c003ddd0afcc789",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
