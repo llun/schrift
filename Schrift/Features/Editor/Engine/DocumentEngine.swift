@@ -640,13 +640,13 @@ final class DocumentEngine {
             }
             caret = { start(command.blockID) }
         case .blockType(let type, let props, let removing):
-            // The slash menu: a paragraph becomes one of its block types, the
-            // "/query" removed in the same transaction (BlockNote clears the
-            // query, then `updateBlock`s the now-empty block).
+            // The slash menu and a markdown typing shortcut: a paragraph becomes
+            // one of its block types, the "/query" or markdown prefix removed in
+            // the same transaction (BlockNote clears the query, then
+            // `updateBlock`s the now-empty block). `props` are the new type's
+            // own overrides (a heading's level, a code block's language).
             guard node == "paragraph", Self.slashTypes.contains(type),
-                props.allSatisfy({
-                    ["level", "isToggleable"].contains($0.key) && type == "heading" && Self.isPropEdit($0, on: type)
-                }),
+                props.allSatisfy({ Self.isPropEdit($0, on: type) }),
                 Self.isBoundary(removing.lowerBound, in: units), Self.isBoundary(removing.upperBound, in: units),
                 let item = builder.index.entries[command.blockID]?.containerItem
             else { throw DocumentEngineError.unsupportedNativeInput }
@@ -2083,9 +2083,7 @@ final class DocumentEngine {
         case ("heading", "level", .int(let level)): return (1...6).contains(level)
         case ("heading", "isToggleable", .bool): return true
         case ("codeBlock", "language", .string(let language)):
-            return (1...64).contains(language.count)
-                && !language.unicodeScalars.contains { CharacterSet.whitespacesAndNewlines.contains($0) }
-                && !language.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+            return isValidCodeBlockLanguage(language)
         case ("callout", "emoji", .string(let emoji)):
             return emoji.count == 1 && emoji.unicodeScalars.count <= 16
                 && emoji.unicodeScalars.contains { $0.properties.isEmoji && $0.value > 0x7f }

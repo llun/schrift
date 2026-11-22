@@ -178,6 +178,12 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
      `/divider` and `---` + Return, `/table` + `TableEditorViewController`, `/columns` +
      `ColumnEditorViewController`, `mathBlock`/`diagram`/`inlineMath` + `NativeSourceEditor`,
      and `[[` / `@` pickers; verify hardware keyboard undo/redo.
+   - Type a markdown prefix at a paragraph's start (`# `, `## `, `### `, `- `, `* `, `+ `, `1. `,
+     `1) `, `[] `, `[ ] `, `[x] `, `> `) and verify the block converts with the prefix removed and
+     the caret at the start; `#### ` and a prefix typed mid-line stay literal. Type a
+     triple-backtick fence (optionally with a language) and press Return for a code block. Verify
+     one undo restores the paragraph with the typed prefix, and that pasting `# Title` does not
+     convert.
 4. **IME, system text tools & Pencil:**
    - Test Chinese, Japanese, and Korean IME composition around Return, block join/split, and
      concurrent peer edits (including `provisional.json` recovery if a peer deletes the active

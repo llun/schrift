@@ -674,6 +674,11 @@ final class ColumnTextContainer: UIScrollView {
     private var revealing = false
     /// A column whose caret moved or which scrolled itself: shown after the next layout.
     private var pendingReveal: NativeTextView?
+    /// The first responder whose caret was revealed: a later layout that moves
+    /// it out of sight (TextKit re-estimating the heights above it) reveals it
+    /// again, as UITextView keeps the caret in view while typing. Cleared when
+    /// anything but a reveal or the layout's own scroll moves the container.
+    private var pinnedCaret: NativeTextView?
     /// The text size the columns are drawn at (the host's Dynamic Type).
     var contentSizeCategory: UIContentSizeCategory = .large {
         didSet { if contentSizeCategory != oldValue { setNeedsLayout() } }
@@ -693,6 +698,7 @@ final class ColumnTextContainer: UIScrollView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         alwaysBounceVertical = true
+        delegate = self
         accessibilityCustomRotors = [columnRotor]
         registerForTraitChanges([UITraitHorizontalSizeClass.self]) { (view: ColumnTextContainer, _) in
             view.setNeedsLayout()
@@ -716,6 +722,7 @@ final class ColumnTextContainer: UIScrollView {
         }
         // A removed column's view leaves, or it would sit on top and take every touch (PR12b review).
         for frame in frames where !next.contains(where: { $0 === frame }) {
+            if pinnedCaret === frame.textView { pinnedCaret = nil }
             frame.textView.onGeometry = nil
             frame.textView.onFocus = nil
             frame.removeFromSuperview()
@@ -735,6 +742,8 @@ final class ColumnTextContainer: UIScrollView {
         guard target !== shown else { return }
         let previous = shown
         shown = target
+        // The caret that was pinned belongs to the column being left.
+        pinnedCaret = nil
         // First responder moves with the column: the keyboard stays.
         if previous?.isFirstResponder == true || (previous == nil && takesFocusOnOpen), target.isEditable,
             !target.isFirstResponder
@@ -792,12 +801,18 @@ final class ColumnTextContainer: UIScrollView {
         if let view = pendingReveal {
             pendingReveal = nil
             reveal(view)
+        } else if let view = pinnedCaret, view.isFirstResponder, !caretIsVisible(view) {
+            // TextKit re-estimated the heights above the caret (the replica's
+            // echo, a peer's edit): it moved without the selection moving.
+            reveal(view)
         }
     }
 
     /// Lays the columns out and frames each text view to its column's part of the screen.
     private func place() {
         guard !frames.isEmpty, bounds.width > 0, bounds.height > 0 else { return }
+        placing = true
+        defer { placing = false }
         layout = Self.layout(
             width: bounds.width, widths: widths, sizeClass: traitCollection.horizontalSizeClass,
             contentSize: contentSizeCategory)
@@ -839,8 +854,6 @@ final class ColumnTextContainer: UIScrollView {
             if abs(shift) > 0.5 { contentOffset.y = max(contentOffset.y + shift, -adjustedContentInset.top) }
         }
         let visible = CGRect(x: 0, y: contentOffset.y, width: bounds.width, height: bounds.height)
-        placing = true
-        defer { placing = false }
         for (frame, region) in zip(frames, rects) {
             let id = ObjectIdentifier(frame.textView)
             regions[id] = region
@@ -890,6 +903,10 @@ final class ColumnTextContainer: UIScrollView {
     /// caret off screen is where TextKit estimates it: place, lay out, place again.
     func reveal(_ view: NativeTextView) {
         let id = ObjectIdentifier(view)
+        // A caret revealed for the first responder stays pinned: a later layout
+        // that moves it (TextKit re-estimating the heights above it) reveals it
+        // again, as UITextView keeps the caret in view while typing.
+        if view.isFirstResponder { pinnedCaret = view }
         revealing = true
         defer {
             revealing = false
@@ -917,6 +934,19 @@ final class ColumnTextContainer: UIScrollView {
         }
     }
 
+    /// Whether `view`'s caret (or the selection's end) is inside the visible
+    /// part of the container, with the margin `reveal` keeps.
+    private func caretIsVisible(_ view: NativeTextView) -> Bool {
+        let id = ObjectIdentifier(view)
+        guard let region = regions[id], let end = view.selectedTextRange?.end else { return true }
+        let caret = view.caretRect(for: end)
+        guard caret.minY.isFinite, caret.height.isFinite else { return true }
+        let target = caret.offsetBy(dx: region.minX, dy: region.minY).insetBy(dx: 0, dy: -DocsSpacing.spaceBase)
+        let top = contentOffset.y + adjustedContentInset.top
+        let bottom = contentOffset.y + bounds.height - adjustedContentInset.bottom
+        return target.minY >= top && target.maxY <= bottom
+    }
+
     /// VoiceOver's Columns rotor: the next or previous column's text.
     private lazy var columnRotor = UIAccessibilityCustomRotor(name: labels.columnsRotor) { [weak self] predicate in
         guard let self else { return nil }
@@ -934,6 +964,16 @@ final class ColumnTextContainer: UIScrollView {
         }
         guard views.indices.contains(next) else { return nil }
         return UIAccessibilityCustomRotorItemResult(targetElement: views[next], targetRange: nil)
+    }
+}
+
+extension ColumnTextContainer: UIScrollViewDelegate {
+    /// Anything but a reveal or the layout's own scroll (a column above
+    /// changing height) moves the caret out of the user's way: the pin goes,
+    /// so the next layout does not pull the caret back.
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard !placing, !revealing else { return }
+        pinnedCaret = nil
     }
 }
 
