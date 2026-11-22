@@ -896,17 +896,20 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 retried = barrier.retry?() == true
             }
             // The retry posts a new barrier: the shortcut check follows it.
+            var shortcutNow: String?
             if let pending = pendingShortcutCheck, pending.barrierID == id {
                 pendingShortcutCheck =
                     retried ? self.barrier.map { (blockID: pending.blockID, barrierID: $0.id) } : nil
                 // A retry that predicted instead of posting shows the space now.
-                if retried, self.barrier == nil { convertMarkdownShortcutIfNeeded(in: pending.blockID) }
+                if retried, self.barrier == nil { shortcutNow = pending.blockID }
             }
             if let carried {
                 // The view shows the user's selection; the retry keeps it as theirs.
                 if self.barrier != nil { userSelection = blockRange(carried).map { ($0, 0) } }
                 show(carried)
             }
+            // After the user's selection is back: a caret they moved away keeps the text literal.
+            if let shortcutNow { convertMarkdownShortcutIfNeeded(in: shortcutNow) }
             if retried, let next = lastCommandID, next != id {
                 // A cut's copy follows its retried delete.
                 for (copy, pending) in pendingCopies where pending.after == id { pendingCopies[copy]?.after = next }
