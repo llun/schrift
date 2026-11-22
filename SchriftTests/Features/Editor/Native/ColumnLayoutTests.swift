@@ -41,6 +41,28 @@ final class ColumnLayoutTests: NativeEditingTestCase {
         return (harness, model)
     }
 
+    /// A peer's update from `state`: `body` edits the peer's copy of the group.
+    private func peerUpdate(_ state: Data, _ body: (YTransaction, YType) throws -> Void) throws -> Data {
+        let peer = YDoc(clientID: 77, gc: true)
+        defer { peer.destroy() }
+        try peer.applyUpdate(YUpdateDecoder.decode(state))
+        let before = YStateEncoder.encodeStateVector(peer)
+        let root = try XCTUnwrap(peer.share[BlockNoteYjs.fragmentField])
+        guard case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content
+        else { throw XCTSkip("no root group") }
+        let list = try XCTUnwrap(
+            YBlockProjection.children(of: group, includeFormats: false).compactMap { item -> YType? in
+                guard case .type(let type) = item.content, type.typeRef == .xmlElement(nodeName: "columnList") else {
+                    return nil
+                }
+                return type
+            }.first)
+        try peer.transact { tx in try body(tx, list) }
+        let vector = try YUpdateDecoder.decodeStateVector(before)
+        return try YStateEncoder.encodeStateAsUpdate(
+            peer, since: Dictionary(vector.map { ($0.client, $0.clock) }, uniquingKeysWith: { $1 }))
+    }
+
     /// A container in a key window of `size`, regular or compact, showing the model's columns.
     private func container(
         _ model: ColumnEditorModel, size: CGSize, regular: Bool, contentSize: UIContentSizeCategory = .large
@@ -333,6 +355,56 @@ final class ColumnLayoutTests: NativeEditingTestCase {
         let caret = second.textView.caretRect(for: try XCTUnwrap(second.textView.selectedTextRange).end)
         let shown = second.textView.convert(caret, to: container)
         XCTAssertTrue(container.bounds.intersects(shown), "the caret is on screen: \(shown) in \(container.bounds)")
+    }
+
+    /// A caret revealed while typing stays in view when a later layout moves
+    /// it without the selection moving: TextKit re-estimating the heights
+    /// above it (the replica's echo, a peer's edit) must not leave it below
+    /// the screen.
+    func testALaterLayoutKeepsARevealedCaretInView() async throws {
+        let (harness, model) = try await editor(try Self.groupState(columns: 2, perColumn: 40))
+        let container = container(model, size: CGSize(width: 390, height: 400), regular: false)
+        let second = model.columns[1]
+        XCTAssertTrue(second.textView.becomeFirstResponder())
+        container.contentOffset.y = 0
+        container.layoutIfNeeded()
+        setSelection(second, NSRange(location: try location(second, "c1p30", 0), length: 0))
+        second.textView.insertText("x")
+        for _ in 0..<3 { container.layoutIfNeeded() }
+        await harness.settle()
+        let end = try XCTUnwrap(second.textView.selectedTextRange).end
+        XCTAssertTrue(
+            container.bounds.intersects(second.textView.convert(second.textView.caretRect(for: end), to: container)),
+            "the caret is revealed")
+        // The heights above the caret grow (TextKit re-estimating them, as the
+        // replica's echo makes it): the caret moves down, the selection does
+        // not move, and the text view does not scroll itself.
+        second.textView.textContainerInset.top += 400
+        container.layoutIfNeeded()
+        let caret = second.textView.caretRect(for: end)
+        let shown = second.textView.convert(caret, to: container)
+        XCTAssertTrue(container.bounds.intersects(shown), "the caret stays on screen: \(shown) in \(container.bounds)")
+    }
+
+    /// A user who scrolls away from a revealed caret is not pulled back by the
+    /// next layout: only typing and selection moves pin the caret.
+    func testAUserScrollAwayFromARevealedCaretIsNotUndone() async throws {
+        let (harness, model) = try await editor(try Self.groupState(columns: 2, perColumn: 40))
+        let container = container(model, size: CGSize(width: 390, height: 400), regular: false)
+        let second = model.columns[1]
+        XCTAssertTrue(second.textView.becomeFirstResponder())
+        container.contentOffset.y = 0
+        container.layoutIfNeeded()
+        setSelection(second, NSRange(location: try location(second, "c1p30", 0), length: 0))
+        second.textView.insertText("x")
+        for _ in 0..<3 { container.layoutIfNeeded() }
+        await harness.settle()
+        // The user scrolls back to the top: the container's own scroll, as a drag is.
+        container.contentOffset.y = 0
+        for _ in 0..<3 { container.layoutIfNeeded() }
+        let caret = second.textView.caretRect(for: try XCTUnwrap(second.textView.selectedTextRange).end)
+        let shown = second.textView.convert(caret, to: container)
+        XCTAssertFalse(container.bounds.intersects(shown), "the caret stays where the user left it: \(shown)")
     }
 
     // MARK: - VoiceOver

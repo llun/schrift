@@ -1610,7 +1610,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             case .codeBlock(let language):
                 // A language the engine's `language` prop refuses would turn
                 // Return into a refusal; such a fence splits as ordinary text.
-                guard language.isEmpty || DocumentEngine.isValidCodeLanguage(language) else { break }
+                guard language.isEmpty || isValidCodeBlockLanguage(language) else { break }
                 let props = language.isEmpty ? [] : [ProjectedProp(key: "language", value: .string(language))]
                 return applyStructural(
                     entry.blockID, .blockType(node: "codeBlock", props: props, removing: 0..<length),

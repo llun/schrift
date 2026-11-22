@@ -413,9 +413,9 @@ final class NativeMarkdownShortcutTests: NativeEditingTestCase {
     /// The engine and the fence shortcut share one language rule, and it
     /// refuses an inline object's placeholder.
     func testTheSharedLanguageRuleRefusesAnInlineObjectPlaceholder() {
-        XCTAssertFalse(DocumentEngine.isValidCodeLanguage("\u{FFFC}"))
-        XCTAssertFalse(DocumentEngine.isValidCodeLanguage("foo bar"))
-        XCTAssertFalse(DocumentEngine.isValidCodeLanguage(""))
-        XCTAssertTrue(DocumentEngine.isValidCodeLanguage("swift"))
+        XCTAssertFalse(isValidCodeBlockLanguage("\u{FFFC}"))
+        XCTAssertFalse(isValidCodeBlockLanguage("foo bar"))
+        XCTAssertFalse(isValidCodeBlockLanguage(""))
+        XCTAssertTrue(isValidCodeBlockLanguage("swift"))
     }
 }
