@@ -71,13 +71,9 @@ final class NativeSourcePreviewTests: NativeEditingTestCase {
     }
 
     private func ensureInlineChipFrame(in textView: NativeTextView, utf16Offset: Int) async throws -> CGRect {
-        textView.layoutIfNeeded()
-        for _ in 0..<20 {
-            if let frame = textView.inlineChipFrame(atUTF16: utf16Offset) {
-                return frame
-            }
+        await waitUntil {
             textView.layoutIfNeeded()
-            try await Task.sleep(for: .milliseconds(10))
+            return textView.inlineChipFrame(atUTF16: utf16Offset) != nil
         }
         return try XCTUnwrap(textView.inlineChipFrame(atUTF16: utf16Offset))
     }
@@ -540,7 +536,12 @@ final class NativeSourcePreviewTests: NativeEditingTestCase {
             ).environment(LocalizationStore()))
         let colWindow = hostController(colHost)
         defer { colWindow.isHidden = true }
-        for _ in 0..<300 where colModel.columns.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        await waitUntil {
+            colHost.view.layoutIfNeeded()
+            return colModel.isLoaded
+                && !colModel.columns.isEmpty
+                && colModel.columns.allSatisfy { $0.textView.window != nil }
+        }
         let leftSession = try XCTUnwrap(colModel.columns.first)
         let colChipOffset = try XCTUnwrap(
             inlineAttachments(in: leftSession.textView.textStorage).first { $0.1.content.kind == .math }?.0.location)
@@ -597,7 +598,10 @@ final class NativeSourcePreviewTests: NativeEditingTestCase {
         let tblWindow = hostController(tableEditor)
         defer { tblWindow.isHidden = true }
         await tableEditor.load()
-        for _ in 0..<300 where !tableEditor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
+        await waitUntil {
+            tableEditor.view.layoutIfNeeded()
+            return tableEditor.isLoaded && tableEditor.cellSession?.textView.window != nil
+        }
         let cellSession = try XCTUnwrap(tableEditor.cellSession)
         addTeardownBlock { await cellSession.close().value }
         let cellMathOffset = try XCTUnwrap(
