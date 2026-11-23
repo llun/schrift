@@ -284,7 +284,7 @@ final class NativeClipboardTests: NativeEditingTestCase {
 
         try caret(harness, "c", 2)
         let newIDs = try await pastedIDs(harness)
-        guard case .insertSubtrees(let payload)? = harness.log.commands.last?.kind else {
+        guard case .insertSubtrees(let payload, nil)? = harness.log.commands.last?.kind else {
             return XCTFail("not a lossless paste")
         }
         XCTAssertEqual(payload, copied)

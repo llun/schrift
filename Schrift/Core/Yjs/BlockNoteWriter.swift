@@ -605,6 +605,322 @@ struct BlockNoteWriter {
         }
     }
 
+    /// Block types whose inline content merges with a target block during
+    /// ProseMirror-style slice paste. Non-textblocks (`codeBlock`, `image`,
+    /// `table`, `divider`, `pageBreak`, media, source blocks, `columnList`)
+    /// split around the caret instead.
+    static let mergeableTextblockNodes: Set<String> = [
+        "paragraph", "heading", "bulletListItem", "numberedListItem", "checkListItem",
+        "toggleListItem", "quote", "callout",
+    ]
+
+    struct BlockPasteResult {
+        let update: Data
+        let caretBlockID: String
+        /// Exact UTF-16 offset in `caretBlockID`, or `nil` for the block's text end.
+        let caretOffset: Int?
+    }
+
+    static func isMergeableTextblock(_ copy: Copy) -> Bool {
+        guard case .element("blockContainer", _, let children) = copy,
+            case .element(let node, _, _)? = children.first
+        else { return false }
+        return mergeableTextblockNodes.contains(node)
+    }
+
+    static func contentOfTextblock(_ copy: Copy) -> [Copy] {
+        guard case .element("blockContainer", _, let children) = copy,
+            case .element(_, _, let content)? = children.first
+        else { return [] }
+        return content
+    }
+
+    static func nestedGroupOfContainer(_ copy: Copy) -> Copy? {
+        guard case .element("blockContainer", _, let children) = copy, children.count == 2 else { return nil }
+        return children[1]
+    }
+
+    static func containerID(of copy: Copy) -> String? {
+        guard case .element(let node, let props, _) = copy,
+            node == "blockContainer" || node == "columnList",
+            case .string(let id)? = props.first(where: { $0.key == "id" })?.value
+        else { return nil }
+        return id
+    }
+
+    static func lastPreorderID(of copy: Copy) -> String? {
+        guard case .element(let node, let props, let children) = copy else { return nil }
+        if node == "blockContainer", children.count == 2,
+            case .element("blockGroup", _, let kids) = children[1],
+            let lastKid = kids.last, let deepID = lastPreorderID(of: lastKid)
+        {
+            return deepID
+        }
+        if node == "blockContainer" || node == "columnList",
+            case .string(let id)? = props.first(where: { $0.key == "id" })?.value
+        {
+            return id
+        }
+        return nil
+    }
+
+    /// ProseMirror-style slice merge over `start..end` in one transaction:
+    /// deletes the selection, joins the first pasted textblock into `start`
+    /// (keeping `start`'s type/props), inserts middle blocks, and joins `end`'s
+    /// trailing suffix onto the last pasted textblock. Non-textblocks (`image`,
+    /// `table`, `codeBlock`, `divider`, ...) split around prefix/suffix. When
+    /// `replaceStartWhenEmpty` is true and both prefix and suffix are empty,
+    /// `start` (an empty plain paragraph) is replaced whole by `copies`.
+    @discardableResult
+    func replaceRangeWithBlocks(
+        from start: Target, at startOffset: Int, to end: Target, at endOffset: Int,
+        blocks copies: [Copy], replaceStartWhenEmpty: Bool, trailingBlockID: String
+    ) throws -> BlockPasteResult {
+        let same = start.item === end.item
+        for target in [start, end] {
+            if try target.node == "codeBlock"
+                || Self.isToggle(node: target.node, props: properties(target.element, block: target.id))
+            {
+                throw Error.unsupportedBlockType(target.node)
+            }
+        }
+        guard !copies.isEmpty, !trailingBlockID.isEmpty, start.group === end.group,
+            !Self.containsUnsupportedProseInline(in: copies)
+        else {
+            throw Error.malformedBlock(start.id)
+        }
+        var middle: [YItem] = []
+        if !same {
+            var item = start.item.right
+            while let current = item, current !== end.item {
+                if !current.deleted { middle.append(current) }
+                item = current.right
+            }
+            guard item === end.item else { throw Error.malformedBlock(end.id) }
+        }
+        let startParts = try inline(start.element, block: start.id)
+        let startLength = try length(startParts)
+        let endParts = same ? startParts : try inline(end.element, block: end.id)
+        let endLength = try length(endParts)
+        let lower = snap(startParts, min(max(0, startOffset), startLength))
+        let upper = snap(endParts, min(max(0, endOffset), endLength), forward: true)
+        guard !same || lower <= upper else { throw Error.malformedBlock(start.id) }
+
+        let hasPrefix = lower > 0
+        let hasSuffix = upper < endLength
+        let replaceAll = replaceStartWhenEmpty && !hasPrefix && !hasSuffix
+        let firstIsText = Self.isMergeableTextblock(copies[0])
+        let firstHasNested = Self.nestedGroupOfContainer(copies[0]) != nil
+        let isSingleInlineMerge = !replaceAll && copies.count == 1 && firstIsText && !firstHasNested
+
+        if (!same && end.nested != nil) || (!isSingleInlineMerge && start.nested != nil) {
+            throw Error.unsupportedBlockType(start.nested != nil ? start.node : end.node)
+        }
+
+        let suffix = hasSuffix ? try snapshots(endParts, range: upper..<endLength, block: end.id) : []
+        let splitNode = Self.splitKeepsType.contains(start.node) ? start.node : "paragraph"
+        let splitDefaults = schemas[splitNode] ?? []
+
+        func makeTrailingBlock(_ tx: YTransaction, after left: YItem?) throws -> YItem {
+            let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            guard let item = try YWrite.insertAfter(tx, into: start.group, after: left, [.type(container)]) else {
+                throw Error.malformedBlock(trailingBlockID)
+            }
+            try buildElement(tx, into: container, after: nil, node: splitNode, props: splitDefaults, children: suffix)
+            try YWrite.mapSet(tx, on: container, key: "id", .any([.string(trailingBlockID)]))
+            return item
+        }
+
+        func appending(_ extra: [Copy], to container: Copy) -> Copy {
+            guard !extra.isEmpty, case .element("blockContainer", let containerProps, var children) = container,
+                case .element(let node, let props, let content)? = children.first
+            else { return container }
+            children[0] = .element(node, props, content + extra)
+            return .element("blockContainer", containerProps, children)
+        }
+
+        let last = copies[copies.count - 1]
+        let lastCanAbsorbSuffix = Self.isMergeableTextblock(last) && Self.nestedGroupOfContainer(last) == nil
+        let lastFallbackID = Self.lastPreorderID(of: last) ?? start.id
+
+        var caretBlockID = start.id
+        var caretOffset: Int?
+
+        let update = try transaction { tx in
+            if replaceAll {
+                var cursor: YItem? = start.item
+                for copy in copies { cursor = try insertCopy(tx, copy, into: start.group, after: cursor) }
+                for item in middle { item.delete(tx) }
+                if !same { end.item.delete(tx) }
+                start.item.delete(tx)
+                caretBlockID = lastFallbackID
+                caretOffset = nil
+                return
+            }
+
+            if isSingleInlineMerge {
+                let firstContent = Self.contentOfTextblock(copies[0])
+                try remove(
+                    tx, parts: startParts, range: lower..<(same ? upper : startLength),
+                    element: start.element, block: start.id)
+                try insertCopies(
+                    tx, firstContent + (same ? [] : suffix), into: start.element, at: lower, block: start.id)
+                for item in middle { item.delete(tx) }
+                if !same { end.item.delete(tx) }
+                caretBlockID = start.id
+                caretOffset = lower + Self.inlineWidth(of: firstContent)
+                return
+            }
+
+            if firstIsText {
+                let firstContent = Self.contentOfTextblock(copies[0])
+                try remove(tx, parts: startParts, range: lower..<startLength, element: start.element, block: start.id)
+                try insertCopies(tx, firstContent, into: start.element, at: lower, block: start.id)
+                if let firstNested = Self.nestedGroupOfContainer(copies[0]) {
+                    _ = try insertCopy(tx, firstNested, into: start.container, after: start.elementItem)
+                }
+                var cursor: YItem? = start.item
+                if copies.count >= 2 {
+                    for copy in copies.dropFirst().dropLast() {
+                        cursor = try insertCopy(tx, copy, into: start.group, after: cursor)
+                    }
+                    if hasSuffix && lastCanAbsorbSuffix {
+                        _ = try insertCopy(tx, appending(suffix, to: last), into: start.group, after: cursor)
+                        caretBlockID = Self.containerID(of: last) ?? lastFallbackID
+                        caretOffset = Self.inlineWidth(of: Self.contentOfTextblock(last))
+                    } else {
+                        cursor = try insertCopy(tx, last, into: start.group, after: cursor)
+                        if hasSuffix {
+                            _ = try makeTrailingBlock(tx, after: cursor)
+                            caretBlockID = trailingBlockID
+                            caretOffset = 0
+                        } else {
+                            caretBlockID = lastFallbackID
+                            caretOffset = nil
+                        }
+                    }
+                } else if hasSuffix {
+                    _ = try makeTrailingBlock(tx, after: cursor)
+                    caretBlockID = trailingBlockID
+                    caretOffset = 0
+                } else {
+                    caretBlockID = lastFallbackID
+                    caretOffset = nil
+                }
+                for item in middle { item.delete(tx) }
+                if !same { end.item.delete(tx) }
+                return
+            }
+
+            // First pasted block is a non-textblock (image, table, codeBlock, divider, ...).
+            if !hasPrefix {
+                var cursor: YItem? = start.item.left
+                for copy in copies.dropLast() {
+                    cursor = try insertCopy(tx, copy, into: start.group, after: cursor)
+                }
+                if hasSuffix && lastCanAbsorbSuffix {
+                    _ = try insertCopy(tx, appending(suffix, to: last), into: start.group, after: cursor)
+                    for item in middle { item.delete(tx) }
+                    if !same { end.item.delete(tx) }
+                    start.item.delete(tx)
+                    caretBlockID = Self.containerID(of: last) ?? lastFallbackID
+                    caretOffset = Self.inlineWidth(of: Self.contentOfTextblock(last))
+                } else if hasSuffix {
+                    _ = try insertCopy(tx, last, into: start.group, after: cursor)
+                    if upper > 0 {
+                        try remove(tx, parts: endParts, range: 0..<upper, element: end.element, block: end.id)
+                    }
+                    if !same {
+                        start.item.delete(tx)
+                        for item in middle { item.delete(tx) }
+                    }
+                    caretBlockID = end.id
+                    caretOffset = 0
+                } else {
+                    _ = try insertCopy(tx, last, into: start.group, after: cursor)
+                    for item in middle { item.delete(tx) }
+                    if !same { end.item.delete(tx) }
+                    start.item.delete(tx)
+                    caretBlockID = lastFallbackID
+                    caretOffset = nil
+                }
+                return
+            }
+
+            // Non-textblock pasted mid-block (`hasPrefix == true`): split around it.
+            try remove(tx, parts: startParts, range: lower..<startLength, element: start.element, block: start.id)
+            var cursor: YItem? = start.item
+            for copy in copies.dropLast() {
+                cursor = try insertCopy(tx, copy, into: start.group, after: cursor)
+            }
+            if hasSuffix && lastCanAbsorbSuffix {
+                _ = try insertCopy(tx, appending(suffix, to: last), into: start.group, after: cursor)
+                caretBlockID = Self.containerID(of: last) ?? lastFallbackID
+                caretOffset = Self.inlineWidth(of: Self.contentOfTextblock(last))
+            } else {
+                cursor = try insertCopy(tx, last, into: start.group, after: cursor)
+                if hasSuffix {
+                    _ = try makeTrailingBlock(tx, after: cursor)
+                    caretBlockID = trailingBlockID
+                    caretOffset = 0
+                } else {
+                    caretBlockID = lastFallbackID
+                    caretOffset = nil
+                }
+            }
+            for item in middle { item.delete(tx) }
+            if !same { end.item.delete(tx) }
+        }
+        return BlockPasteResult(update: update, caretBlockID: caretBlockID, caretOffset: caretOffset)
+    }
+
+    private static func containsUnsupportedProseInline(in copies: [Copy]) -> Bool {
+        for copy in copies {
+            switch copy {
+            case .element("columnList", _, let columns):
+                for case .element("column", _, let kids) in columns {
+                    if containsUnsupportedProseInline(in: kids) { return true }
+                }
+            case .element("blockContainer", _, let children):
+                if case .element(let node, _, let content)? = children.first,
+                    mergeableTextblockNodes.contains(node)
+                {
+                    for item in content {
+                        if case .element(let inlineNode, _, _) = item,
+                            !NativeInlineObject.nodeNames.contains(inlineNode)
+                        {
+                            return true
+                        }
+                    }
+                }
+                if children.count == 2, case .element("blockGroup", _, let kids) = children[1],
+                    containsUnsupportedProseInline(in: kids)
+                {
+                    return true
+                }
+            default: break
+            }
+        }
+        return false
+    }
+
+    private static func inlineWidth(of copies: [Copy]) -> Int {
+        var total = 0
+        for copy in copies {
+            switch copy {
+            case .text(let values):
+                for value in values {
+                    switch value {
+                    case .run(let run): total += run.text.utf16.count
+                    case .embed: total += 1
+                    }
+                }
+            case .element: total += 1
+            }
+        }
+        return total
+    }
+
     /// BlockNote's `updateBlock` type change: replaces only the content element,
     /// keeping the container/id and any nested group. `props` override; every
     /// other prop of the new type keeps the block's existing value or takes its
@@ -988,6 +1304,198 @@ struct BlockNoteWriter {
         lines.map { plainText(of: $0) }.joined(separator: "\n")
     }
 
+    /// Flattens a list of BlockNote block copies into plain text (blocks joined
+    /// by `"\n"`, `hardBreak` as `"\n"`, all marks dropped) for pasting into a
+    /// `codeBlock`.
+    static func plainText(ofBlocks blocks: [Copy]) -> String {
+        var parts: [String] = []
+        func walk(_ list: [Copy]) {
+            for copy in list {
+                switch copy {
+                case .element("columnList", _, let columns):
+                    for case .element("column", _, let kids) in columns { walk(kids) }
+                case .element("blockContainer", _, let children):
+                    if case .element(let node, _, let content)? = children.first {
+                        if node == "table" {
+                            for case .element("tableRow", _, let cells) in content {
+                                var rowCells: [String] = []
+                                for case .element(let cellNode, _, let paragraphs) in cells
+                                where cellNode == "tableCell" || cellNode == "tableHeader" {
+                                    let cellText = paragraphs.map { plainText(of: [$0]) }.joined(separator: "\n")
+                                    rowCells.append(cellText)
+                                }
+                                if !rowCells.isEmpty { parts.append(rowCells.joined(separator: "\t")) }
+                            }
+                        } else if !MediaBlock.isMediaLike(node), node != "divider", node != "pageBreak" {
+                            let text = plainText(of: content)
+                            if !text.isEmpty { parts.append(text) }
+                        }
+                    }
+                    if children.count == 2, case .element("blockGroup", _, let kids) = children[1] {
+                        walk(kids)
+                    }
+                default: break
+                }
+            }
+        }
+        walk(blocks)
+        return NativeClipboard.normalizingLineBreaks(
+            NativeClipboard.strippingObjectReplacementCharacters(parts.joined(separator: "\n")))
+    }
+
+    /// Flattens BlockNote block copies into a single inline `[Copy]` sequence
+    /// (preserving supported marks and separating blocks with `hardBreak`) for
+    /// pasting into a single table cell paragraph.
+    static func flattenForTableCell(_ blocks: [Copy]) throws -> [Copy] {
+        enum PendingSeparator { case none, space, hardBreak }
+
+        var result: [Copy] = []
+        var utf16 = 0
+        var breaks = 0
+        var pending: PendingSeparator = .none
+
+        func addUnits(_ count: Int) throws {
+            let (sum, overflow) = utf16.addingReportingOverflow(count)
+            guard !overflow, sum <= NativeClipboard.maxPasteUTF16 else {
+                throw BlockNoteSubtreePayload.Error.tooLarge
+            }
+            utf16 = sum
+        }
+
+        func appendTextValue(_ value: TextValue) {
+            let lastIsText: Bool =
+                if case .text? = result.last { true } else { false }
+            if lastIsText, case .text(var existing)? = result.popLast() {
+                existing.append(value)
+                result.append(.text(existing))
+            } else {
+                result.append(.text([value]))
+            }
+        }
+
+        func emitBreak() throws {
+            breaks += 1
+            guard breaks < NativeClipboard.maxPasteLines else {
+                throw BlockNoteSubtreePayload.Error.tooLarge
+            }
+            try addUnits(1)
+            result.append(.element("hardBreak", [], []))
+        }
+
+        func flushPendingSeparator() throws {
+            let sep = pending
+            pending = .none
+            switch sep {
+            case .none:
+                break
+            case .space:
+                try addUnits(1)
+                appendTextValue(.run(InlineRun(" ")))
+            case .hardBreak:
+                try emitBreak()
+            }
+        }
+
+        func appendBreak() throws {
+            try flushPendingSeparator()
+            try emitBreak()
+        }
+
+        func appendRun(_ run: InlineRun) throws {
+            let clean = NativeClipboard.normalizingLineBreaks(
+                NativeClipboard.strippingObjectReplacementCharacters(run.text))
+            guard !clean.isEmpty else { return }
+            let supportedMarks = run.marks.filter { BlockNoteSubtreePayload.knownMarks.contains($0.key) }
+            let pieces = clean.components(separatedBy: "\n")
+            for (index, piece) in pieces.enumerated() {
+                if index > 0 { try appendBreak() }
+                guard !piece.isEmpty else { continue }
+                try flushPendingSeparator()
+                try addUnits(piece.utf16.count)
+                appendTextValue(.run(InlineRun(piece, marks: supportedMarks)))
+            }
+        }
+
+        func appendInline(_ content: [Copy], plainOnly: Bool) throws -> Bool {
+            let beforeUTF16 = utf16
+            for item in content {
+                switch item {
+                case .text(let values):
+                    for value in values {
+                        guard case .run(let run) = value else { continue }
+                        try appendRun(plainOnly ? InlineRun(run.text) : run)
+                    }
+                case .element("hardBreak", _, _):
+                    try appendBreak()
+                case .element(let node, let props, let children):
+                    if !plainOnly, NativeInlineObject.nodeNames.contains(node) {
+                        let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
+                        if let inline = NativeInlineObject.pastable(node: node, props: projected, children: children) {
+                            try flushPendingSeparator()
+                            try addUnits(1)
+                            result.append(.element(inline.nodeName, inline.canonicalProps, inline.canonicalChildren))
+                        }
+                    } else {
+                        _ = try appendInline(children, plainOnly: plainOnly)
+                    }
+                }
+            }
+            return utf16 > beforeUTF16
+        }
+
+        var hasEmittedBlock = false
+
+        func walk(_ list: [Copy]) throws {
+            for copy in list {
+                switch copy {
+                case .element("columnList", _, let columns):
+                    for case .element("column", _, let kids) in columns { try walk(kids) }
+                case .element("blockContainer", _, let children):
+                    if case .element(let node, _, let content)? = children.first {
+                        if node == "table" {
+                            for case .element("tableRow", _, let cells) in content {
+                                var rowHasContent = false
+                                for case .element(let cellNode, _, let paragraphs) in cells
+                                where cellNode == "tableCell" || cellNode == "tableHeader" {
+                                    let cellCopies = paragraphs.flatMap { para -> [Copy] in
+                                        if case .element("tableParagraph", _, let inner) = para { return inner }
+                                        return []
+                                    }
+                                    guard !cellCopies.isEmpty else { continue }
+                                    if rowHasContent {
+                                        pending = .space
+                                    } else if hasEmittedBlock {
+                                        pending = .hardBreak
+                                    }
+                                    if try appendInline(cellCopies, plainOnly: false) {
+                                        rowHasContent = true
+                                        hasEmittedBlock = true
+                                    }
+                                    pending = .none
+                                }
+                            }
+                        } else if !MediaBlock.isMediaLike(node), node != "divider", node != "pageBreak" {
+                            let plainOnly = node == "codeBlock" || SourceBlock.isSource(node)
+                            if !content.isEmpty {
+                                if hasEmittedBlock { pending = .hardBreak }
+                                if try appendInline(content, plainOnly: plainOnly) {
+                                    hasEmittedBlock = true
+                                }
+                                pending = .none
+                            }
+                        }
+                    }
+                    if children.count == 2, case .element("blockGroup", _, let kids) = children[1] {
+                        try walk(kids)
+                    }
+                default: break
+                }
+            }
+        }
+        try walk(blocks)
+        return result
+    }
+
     private static func plainText(of copies: [Copy]) -> String {
         var result = ""
         for copy in copies {
@@ -997,6 +1505,10 @@ struct BlockNoteWriter {
                     if case .run(let run) = value { result += run.text }
                 }
             case .element(let node, let props, let nested):
+                if node == "hardBreak" {
+                    result += "\n"
+                    continue
+                }
                 let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
                 if let inline = NativeInlineObject.read(node: node, props: projected, children: nested) {
                     switch inline {

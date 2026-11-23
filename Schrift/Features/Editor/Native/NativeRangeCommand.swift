@@ -21,3 +21,12 @@ struct NativeRangeCommand: Equatable, Sendable {
         text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     }
 }
+
+/// A document-ordered replica UTF-16 selection replaced by a block paste
+/// (`.insertSubtrees(payload:replacing:)`). Starts in the command's `blockID`
+/// at `startOffset` and ends in `endBlockID` at `endOffset`.
+struct NativePasteRange: Equatable, Sendable {
+    let startOffset: Int
+    let endBlockID: String
+    let endOffset: Int
+}

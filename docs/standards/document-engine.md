@@ -680,7 +680,19 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   it would break pasting across launches. The engine decodes it in
   `prepareBlockCommand` (PR08a), mints a fresh id per container, checks the landing depth,
   and refuses an oversized payload with `DocumentEngineError.payloadTooLarge`. Pasted media is a
-  placeholder like any other, so nothing is fetched. **Links render tappable only for
+  placeholder like any other, so nothing is fetched.
+  **HTML/Markdown paste parsers and slice-merge paste:** `BlockNoteHTMLParser` and
+  `BlockNoteMarkdownPaste` parse untrusted HTML and Markdown into bounded, validated
+  `BlockNoteSubtreePayload` blocks (headings clamped to 1–3, `https://` images only,
+  unsupported markup dropped, prose line breaks split into separate blocks rather than
+  writing `hardBreak` into prose, and Markdown-free plain text kept line-for-line as
+  plain paragraphs). `.insertSubtrees(payload:replacing:)` applies a paste in one
+  undoable transaction: in prose it deletes the selection, replaces an empty plain
+  paragraph whole, merges leading/trailing textblocks into the surrounding blocks and
+  splits around non-textblocks (keeping the end block when a non-textblock paste starts
+  at offset 0); in a table cell it flattens to inline runs and `hardBreak`s; in a code
+  block it inserts unmarked plain text; source editors, toggles, locked/opaque blocks,
+  invalid nesting and oversized payloads are refused before arming. **Links render tappable only for
   `isOpenableLink`** (the classic writer's schemes: http(s) with a host, mailto, tel), so a
   collaborator's `javascript:` or deep link is plain text in the native view; the mark stays.
   The menu's Indent/Outdent go through `applyStructural` on the menu's target (keeping the

@@ -75,6 +75,9 @@ final class DocumentEngineBoundaryTests: XCTestCase {
             "YBlockProjection.swift",
             "NativeExportMarkdown.swift",
             "BlockNoteSubtreePayload.swift",
+            "HTMLNode.swift",
+            "BlockNoteHTMLParser.swift",
+            "BlockNoteMarkdownPaste.swift",
         ]
         for fileName in coreFiles {
             let source = try String(contentsOf: coreYjs.appendingPathComponent(fileName), encoding: .utf8)
