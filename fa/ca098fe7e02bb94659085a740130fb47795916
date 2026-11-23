@@ -1,0 +1,47 @@
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAttachmentHoldTests.swift
+  s_4fb28ab57323fe::t_84665831b1588e 68,77,172-173,177,183,191-192,197,202,204,212-213,217,219
+SchriftTests/Features/Editor/DocumentSaveCoordinatorConflictResolutionTests.swift
+  s_4fb28ab57323fe::t_59b0f407198361 168,175-176,178,181,194-215,219,228-229,234
+SchriftTests/Features/Editor/DocumentSaveCoordinatorConflictTests.swift
+  s_4fb28ab57323fe::t_40d9a5f08de5b9 57-58,69,74,236,240-241,245-249,252,268-269,273,279,326,329,333-336,338,525,531-532,540,552,572,578-579,586,593,621,627-628,636,641,656-657,660,665
+SchriftTests/Features/Editor/DocumentSaveCoordinatorDeleteTests.swift
+  s_4fb28ab57323fe::t_b1acc460dbe3e1 115-116,138,149,170,728-729,735,737,759-760,764,766,793-794,798,800,932-933,937,939,1129-1130,1134,1136,1159-1160,1166,1169
+SchriftTests/Features/Editor/DocumentSaveCoordinatorLiveSnapshotTests.swift
+  s_4fb28ab57323fe::t_6fd105f90fd0aa 89-90,97,103,146-147,152,160,370,376,384,390
+SchriftTests/Features/Editor/DocumentSaveCoordinatorRenameTests.swift
+  s_4fb28ab57323fe::t_f062015e89dd54 107-108,111,118
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayMigrationTests.swift
+  s_4fb28ab57323fe::t_b7cf08b87bf990 98-99,109,112,119-123,125-128,131-132,143-144,972,982,989-992,995
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayMultiRecordTests.swift
+  s_4fb28ab57323fe::t_fb27acb849ebad 37-38,48,50,119-124,127-130,132
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayStartOverTests.swift
+  s_4fb28ab57323fe::t_cb5b6cb3b20102 56,71,78-81,85,122,136,143-146,151,259,262,268,280,332-333,342,345,355-357,359-362,365-366,381-382
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplaySubpageTests.swift
+  s_4fb28ab57323fe::t_3f2a950b4d0ba0 61,66,71-74,76
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayTestCase.swift
+  s_4fb28ab57323fe::t_85eb8609cb3cf2 79,110
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayTests.swift
+  s_4fb28ab57323fe::t_05c4c5de0b6597 406-407,412,414,433-434,438,440
+SchriftTests/Features/Editor/DocumentSaveCoordinatorSaveMarkerTests.swift
+  s_4fb28ab57323fe::t_30a618bdcc4895 18-19,21,26
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTestCase.swift
+  s_4fb28ab57323fe::t_e1e976ad097737 92-96,105
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_4fb28ab57323fe::t_9c40a1cf672ae7 31-32,36,42,55-56,60,63,289-290,302,307,377,380-381,385-388,390,449,454-455,461-467,555-556,558,563,579-580,582,587,601-602,604,608
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "faca098fe7e02bb94659085a740130fb47795916",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
