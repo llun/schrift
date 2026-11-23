@@ -522,4 +522,118 @@ final class BlockNoteHTMLParserTests: XCTestCase {
             elapsedAmplified, .milliseconds(250),
             "mark-byte amplification must fail fast during parse, took \(elapsedAmplified)")
     }
+
+    func testTransparentInlineWrappersPropagateMarksToBlockDescendants() throws {
+        // 1. <b><p>Important</p></b> keeps bold.
+        let boldCopies = try BlockNoteHTMLParser.parse("<b><p>Important</p></b>")
+        let (boldDoc, boldBlocks) = try project(boldCopies)
+        defer { boldDoc.destroy() }
+        XCTAssertEqual(boldBlocks.map(\.block.node), ["paragraph"])
+        XCTAssertEqual(boldBlocks.first?.block.runs.map(\.text), ["Important"])
+        XCTAssertEqual(boldBlocks.first?.block.runs.first?.marks.map(\.key), ["bold"])
+
+        // 2. <a href="https://example.com"><div><h3>Card</h3><p>Summary</p></div></a> keeps link on both.
+        let cardHTML = "<a href=\"https://example.com\"><div><h3>Card</h3><p>Summary</p></div></a>"
+        let cardCopies = try BlockNoteHTMLParser.parse(cardHTML)
+        let (cardDoc, cardBlocks) = try project(cardCopies)
+        defer { cardDoc.destroy() }
+        XCTAssertEqual(cardBlocks.map(\.block.node), ["heading", "paragraph"])
+        if cardBlocks.count == 2 {
+            XCTAssertEqual(cardBlocks[0].block.props.first { $0.key == "level" }?.value, .int(3))
+            XCTAssertEqual(cardBlocks[0].block.runs.map(\.text), ["Card"])
+            XCTAssertEqual(cardBlocks[0].block.runs.first?.marks.map(\.key), ["link"])
+            XCTAssertEqual(
+                cardBlocks[0].block.runs.first?.marks.first.flatMap { YBlockProjection.linkHref(from: $0.valueJSON) },
+                "https://example.com")
+            XCTAssertEqual(cardBlocks[1].block.runs.map(\.text), ["Summary"])
+            XCTAssertEqual(cardBlocks[1].block.runs.first?.marks.map(\.key), ["link"])
+            XCTAssertEqual(
+                cardBlocks[1].block.runs.first?.marks.first.flatMap { YBlockProjection.linkHref(from: $0.valueJSON) },
+                "https://example.com")
+        }
+
+        // 3. <b>Lead<p>Body</p></b> keeps bold on both paragraphs.
+        let leadCopies = try BlockNoteHTMLParser.parse("<b>Lead<p>Body</p></b>")
+        let (leadDoc, leadBlocks) = try project(leadCopies)
+        defer { leadDoc.destroy() }
+        XCTAssertEqual(leadBlocks.map(\.block.node), ["paragraph", "paragraph"])
+        XCTAssertEqual(leadBlocks.map { $0.block.runs.map(\.text).joined() }, ["Lead", "Body"])
+        for block in leadBlocks {
+            XCTAssertEqual(block.block.runs.first?.marks.map(\.key), ["bold"])
+        }
+
+        // 4. <blockquote><strong><p>Quoted</p></strong></blockquote> keeps bold on quote.
+        let quoteCopies = try BlockNoteHTMLParser.parse("<blockquote><strong><p>Quoted</p></strong></blockquote>")
+        let (quoteDoc, quoteBlocks) = try project(quoteCopies)
+        defer { quoteDoc.destroy() }
+        XCTAssertEqual(quoteBlocks.map(\.block.node), ["quote"])
+        XCTAssertEqual(quoteBlocks.first?.block.runs.map(\.text), ["Quoted"])
+        XCTAssertEqual(quoteBlocks.first?.block.runs.first?.marks.map(\.key), ["bold"])
+
+        // 5. Google Docs normal-weight <b> stays unbolded, and code blocks ignore wrapper marks.
+        let gdocsCopies = try BlockNoteHTMLParser.parse(
+            "<b style=\"font-weight:normal;\"><p>Plain</p></b><b><pre><code>let x = 1</code></pre></b>")
+        let (gdocsDoc, gdocsBlocks) = try project(gdocsCopies)
+        defer { gdocsDoc.destroy() }
+        XCTAssertEqual(gdocsBlocks.map(\.block.node), ["paragraph", "codeBlock"])
+        if gdocsBlocks.count == 2 {
+            XCTAssertEqual(gdocsBlocks[0].block.runs.map(\.text), ["Plain"])
+            XCTAssertTrue(gdocsBlocks[0].block.runs.allSatisfy(\.marks.isEmpty))
+            XCTAssertEqual(gdocsBlocks[1].block.runs.map(\.text), ["let x = 1"])
+            XCTAssertTrue(gdocsBlocks[1].block.runs.allSatisfy(\.marks.isEmpty))
+        }
+    }
+
+    func testListItemUnwrapsInlineWrappersIntoOwnText() throws {
+        // 1. <ul><li><span><p>Buy milk</p></span></li></ul> -> single bulletListItem("Buy milk")
+        let spanCopies = try BlockNoteHTMLParser.parse("<ul><li><span><p>Buy milk</p></span></li></ul>")
+        let (spanDoc, spanBlocks) = try project(spanCopies)
+        defer { spanDoc.destroy() }
+        XCTAssertEqual(spanBlocks.map(\.block.node), ["bulletListItem"])
+        XCTAssertEqual(spanBlocks.map(\.depth), [0])
+        XCTAssertEqual(spanBlocks.map { $0.block.runs.map(\.text).joined() }, ["Buy milk"])
+
+        // 2. <ul><li><label><input type="checkbox"><p>Buy milk</p></label></li></ul> -> checkListItem(false)
+        let labelCopies = try BlockNoteHTMLParser.parse(
+            "<ul><li><label><input type=\"checkbox\"><p>Buy milk</p></label></li></ul>")
+        let (labelDoc, labelBlocks) = try project(labelCopies)
+        defer { labelDoc.destroy() }
+        XCTAssertEqual(labelBlocks.map(\.block.node), ["checkListItem"])
+        XCTAssertEqual(labelBlocks.map(\.depth), [0])
+        XCTAssertEqual(labelBlocks.first?.block.props.first { $0.key == "checked" }?.value, .bool(false))
+        XCTAssertEqual(labelBlocks.map { $0.block.runs.map(\.text).joined() }, ["Buy milk"])
+
+        // 3. <ul><li><span>Parent<ul><li>Child</li></ul></span></li></ul> -> bullet("Parent") + nested bullet("Child")
+        let nestedCopies = try BlockNoteHTMLParser.parse(
+            "<ul><li><span>Parent<ul><li>Child</li></ul></span></li></ul>")
+        let (nestedDoc, nestedBlocks) = try project(nestedCopies)
+        defer { nestedDoc.destroy() }
+        XCTAssertEqual(nestedBlocks.map(\.block.node), ["bulletListItem", "bulletListItem"])
+        XCTAssertEqual(nestedBlocks.map(\.depth), [0, 1])
+        XCTAssertEqual(nestedBlocks.map { $0.block.runs.map(\.text).joined() }, ["Parent", "Child"])
+
+        // 4. Inline marks on wrapper around list item paragraph also propagate.
+        let boldCopies = try BlockNoteHTMLParser.parse("<ul><li><b><p>Bold milk</p></b></li></ul>")
+        let (boldDoc, boldBlocks) = try project(boldCopies)
+        defer { boldDoc.destroy() }
+        XCTAssertEqual(boldBlocks.map(\.block.node), ["bulletListItem"])
+        XCTAssertEqual(boldBlocks.first?.block.runs.map(\.text), ["Bold milk"])
+        XCTAssertEqual(boldBlocks.first?.block.runs.first?.marks.map(\.key), ["bold"])
+    }
+
+    func testPreWithSoleCodeChildIgnoresSurroundingWhitespace() throws {
+        let html =
+            "<pre>\n<code class=\"language-swift\">let x = 1\n</code>\n</pre>"
+            + "<pre>\n  <code class=\"language-swift\">let x = 1</code>\n</pre>"
+        let copies = try BlockNoteHTMLParser.parse(html)
+        let (doc, blocks) = try project(copies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(blocks.map(\.block.node), ["codeBlock", "codeBlock"])
+        guard blocks.count == 2 else { return }
+        XCTAssertEqual(blocks[0].block.props.first { $0.key == "language" }?.value, .string("swift"))
+        XCTAssertEqual(blocks[0].block.runs.map(\.text).joined(), "let x = 1")
+        XCTAssertEqual(blocks[1].block.props.first { $0.key == "language" }?.value, .string("swift"))
+        XCTAssertEqual(blocks[1].block.runs.map(\.text).joined(), "let x = 1")
+    }
 }

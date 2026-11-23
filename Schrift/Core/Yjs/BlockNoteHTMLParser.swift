@@ -171,6 +171,8 @@ enum BlockNoteHTMLParser {
             "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "pre", "hr", "table",
         ])
 
+        typealias Mark = (key: String, valueJSON: String)
+
         private var nextID = 1
         private var blockCount = 0
         private var utf16Count = 0
@@ -196,14 +198,18 @@ enum BlockNoteHTMLParser {
             payloadBytes = sum
         }
 
-        private static func markBytes(of marks: [(key: String, valueJSON: String)]) -> Int {
+        private static func markBytes(of marks: [Mark]) -> Int {
             marks.reduce(0) { $0 + $1.key.utf8.count + $1.valueJSON.utf8.count }
+        }
+
+        private func marks(adding element: HTMLNode, to current: [Mark]) -> [Mark] {
+            current + InlineFlattener.addedMarks(for: element, current: current, paletteColorsOnly: true)
         }
 
         // MARK: - Block walking
 
         mutating func walkContainer(
-            _ node: HTMLNode, depth: Int, into output: inout [BlockNoteWriter.Copy],
+            _ node: HTMLNode, depth: Int, inheritedMarks: [Mark] = [], into output: inout [BlockNoteWriter.Copy],
             hoisted: inout [BlockNoteWriter.Copy]
         ) throws {
             var inline = InlineBuffer()
@@ -227,7 +233,8 @@ enum BlockNoteHTMLParser {
 
             for child in node.children {
                 if child.name == "#text" {
-                    inline.appendText(child.text, marks: [])
+                    let addedMarks = inline.appendText(child.text, marks: inheritedMarks)
+                    if addedMarks > 0 { try addPayloadBytes(addedMarks) }
                     continue
                 }
                 if Self.droppedElements.contains(child.name) { continue }
@@ -247,14 +254,17 @@ enum BlockNoteHTMLParser {
                 }
                 if isBlockLevel(child) {
                     try flushInline()
-                    try parseBlock(child, depth: depth, into: &output, hoisted: &hoisted)
+                    try parseBlock(
+                        child, depth: depth, inheritedMarks: inheritedMarks, into: &output, hoisted: &hoisted)
                     emittedBlock = true
                 } else if containsBlockDescendant(child) {
                     try flushInline()
-                    try walkContainer(child, depth: depth, into: &output, hoisted: &hoisted)
+                    let nextMarks = marks(adding: child, to: inheritedMarks)
+                    try walkContainer(
+                        child, depth: depth, inheritedMarks: nextMarks, into: &output, hoisted: &hoisted)
                     emittedBlock = true
                 } else {
-                    try collectInline(child, marks: [], into: &inline)
+                    try collectInline(child, marks: inheritedMarks, into: &inline)
                 }
             }
             try flushInline(allowBreakOnlyEmpty: node.name == "div" || node.name == "p")
@@ -286,43 +296,53 @@ enum BlockNoteHTMLParser {
         }
 
         private mutating func parseBlock(
-            _ element: HTMLNode, depth: Int, into output: inout [BlockNoteWriter.Copy],
+            _ element: HTMLNode, depth: Int, inheritedMarks: [Mark] = [], into output: inout [BlockNoteWriter.Copy],
             hoisted: inout [BlockNoteWriter.Copy]
         ) throws {
             if Self.droppedElements.contains(element.name) { return }
 
             // BlockNote's own full HTML container wrapper (`data-node-type="blockContainer"`).
             if element.attributes["data-node-type"] == "blockContainer" {
-                try parseBlockNoteContainer(element, depth: depth, into: &output, hoisted: &hoisted)
+                try parseBlockNoteContainer(
+                    element, depth: depth, inheritedMarks: inheritedMarks, into: &output, hoisted: &hoisted)
                 return
             }
 
             // BlockNote's `data-content-type` blocks (checkListItem, heading, etc.).
             if let contentType = element.attributes["data-content-type"] {
                 try parseBlockNoteContent(
-                    element, contentType: contentType, depth: depth, into: &output, hoisted: &hoisted)
+                    element, contentType: contentType, depth: depth, inheritedMarks: inheritedMarks,
+                    into: &output, hoisted: &hoisted)
                 return
             }
 
             switch element.name {
             case "p":
                 try parseParagraph(
-                    element, node: "paragraph", props: nil, depth: depth, into: &output, hoisted: &hoisted)
+                    element, node: "paragraph", props: nil, depth: depth, inheritedMarks: inheritedMarks,
+                    into: &output, hoisted: &hoisted)
             case "h1", "h2", "h3", "h4", "h5", "h6":
                 let rawLevel = Int(String(element.name.dropFirst())) ?? 1
                 let level = min(max(rawLevel, 1), 3)
                 let props = headingProps(level: level)
                 try parseParagraph(
-                    element, node: "heading", props: props, depth: depth, into: &output, hoisted: &hoisted)
+                    element, node: "heading", props: props, depth: depth, inheritedMarks: inheritedMarks,
+                    into: &output, hoisted: &hoisted)
             case "ul":
-                try parseList(element, ordered: false, depth: depth, into: &output, hoisted: &hoisted)
+                try parseList(
+                    element, ordered: false, depth: depth, inheritedMarks: inheritedMarks,
+                    into: &output, hoisted: &hoisted)
             case "ol":
-                try parseList(element, ordered: true, depth: depth, into: &output, hoisted: &hoisted)
+                try parseList(
+                    element, ordered: true, depth: depth, inheritedMarks: inheritedMarks,
+                    into: &output, hoisted: &hoisted)
             case "li":
                 try parseListItem(
-                    element, ordered: false, start: nil, depth: depth, into: &output, hoisted: &hoisted)
+                    element, ordered: false, start: nil, depth: depth, inheritedMarks: inheritedMarks,
+                    into: &output, hoisted: &hoisted)
             case "blockquote":
-                try parseBlockquote(element, depth: depth, into: &output, hoisted: &hoisted)
+                try parseBlockquote(
+                    element, depth: depth, inheritedMarks: inheritedMarks, into: &output, hoisted: &hoisted)
             case "pre":
                 try parsePre(element, into: &output)
             case "hr":
@@ -330,9 +350,9 @@ enum BlockNoteHTMLParser {
                 output.append(.element("blockContainer", [("id", .string(id))], [.element("divider", [], [])]))
             case "table":
                 if depth == 0 {
-                    try parseTable(element, into: &output)
+                    try parseTable(element, inheritedMarks: inheritedMarks, into: &output)
                 } else {
-                    try parseTable(element, into: &hoisted)
+                    try parseTable(element, inheritedMarks: inheritedMarks, into: &hoisted)
                 }
             case "img":
                 if let img = makeImage(element) {
@@ -341,10 +361,15 @@ enum BlockNoteHTMLParser {
                 }
             default:
                 if Self.layoutContainers.contains(element.name) || containsBlockDescendant(element) {
-                    try walkContainer(element, depth: depth, into: &output, hoisted: &hoisted)
+                    let nextMarks =
+                        Self.layoutContainers.contains(element.name)
+                        ? inheritedMarks : marks(adding: element, to: inheritedMarks)
+                    try walkContainer(
+                        element, depth: depth, inheritedMarks: nextMarks, into: &output, hoisted: &hoisted)
                 } else {
                     try parseParagraph(
-                        element, node: "paragraph", props: nil, depth: depth, into: &output, hoisted: &hoisted)
+                        element, node: "paragraph", props: nil, depth: depth, inheritedMarks: inheritedMarks,
+                        into: &output, hoisted: &hoisted)
                 }
             }
         }
@@ -352,7 +377,7 @@ enum BlockNoteHTMLParser {
         // MARK: - BlockNote HTML markers
 
         private mutating func parseBlockNoteContainer(
-            _ element: HTMLNode, depth: Int, into output: inout [BlockNoteWriter.Copy],
+            _ element: HTMLNode, depth: Int, inheritedMarks: [Mark] = [], into output: inout [BlockNoteWriter.Copy],
             hoisted: inout [BlockNoteWriter.Copy]
         ) throws {
             var contentElement: HTMLNode?
@@ -365,26 +390,32 @@ enum BlockNoteHTMLParser {
                 }
             }
             guard let contentElement, let contentType = contentElement.attributes["data-content-type"] else {
-                try walkContainer(element, depth: depth, into: &output, hoisted: &hoisted)
+                try walkContainer(
+                    element, depth: depth, inheritedMarks: inheritedMarks, into: &output, hoisted: &hoisted)
                 return
             }
             var emitted: [BlockNoteWriter.Copy] = []
             try parseBlockNoteContent(
-                contentElement, contentType: contentType, depth: depth, into: &emitted, hoisted: &hoisted)
+                contentElement, contentType: contentType, depth: depth, inheritedMarks: inheritedMarks,
+                into: &emitted, hoisted: &hoisted)
             if let groupElement {
                 let childDepth = depth + 1
                 if let last = emitted.last, childDepth <= BlockNoteWriter.maxNestingDepth,
                     canTakeNestedChildren(last)
                 {
                     var nested: [BlockNoteWriter.Copy] = []
-                    try walkContainer(groupElement, depth: childDepth, into: &nested, hoisted: &hoisted)
+                    try walkContainer(
+                        groupElement, depth: childDepth, inheritedMarks: inheritedMarks,
+                        into: &nested, hoisted: &hoisted)
                     if !nested.isEmpty {
                         emitted[emitted.count - 1] = attachingChildren(nested, to: last)
                     }
                     output += emitted
                 } else {
                     output += emitted
-                    try walkContainer(groupElement, depth: depth, into: &output, hoisted: &hoisted)
+                    try walkContainer(
+                        groupElement, depth: depth, inheritedMarks: inheritedMarks,
+                        into: &output, hoisted: &hoisted)
                 }
             } else {
                 output += emitted
@@ -392,35 +423,37 @@ enum BlockNoteHTMLParser {
         }
 
         private mutating func parseBlockNoteContent(
-            _ element: HTMLNode, contentType: String, depth: Int, into output: inout [BlockNoteWriter.Copy],
-            hoisted: inout [BlockNoteWriter.Copy]
+            _ element: HTMLNode, contentType: String, depth: Int, inheritedMarks: [Mark] = [],
+            into output: inout [BlockNoteWriter.Copy], hoisted: inout [BlockNoteWriter.Copy]
         ) throws {
             switch contentType {
             case "checkListItem":
                 let checked = isChecklistChecked(element)
                 let props = checklistProps(checked: checked)
                 try parseParagraph(
-                    element, node: "checkListItem", props: props, depth: depth, into: &output, hoisted: &hoisted)
+                    element, node: "checkListItem", props: props, depth: depth, inheritedMarks: inheritedMarks,
+                    into: &output, hoisted: &hoisted)
             case "bulletListItem":
                 try parseParagraph(
-                    element, node: "bulletListItem", props: nil, depth: depth, into: &output, hoisted: &hoisted)
+                    element, node: "bulletListItem", props: nil, depth: depth, inheritedMarks: inheritedMarks,
+                    into: &output, hoisted: &hoisted)
             case "numberedListItem":
                 let start = element.attributes["data-start"].flatMap(Int.init).flatMap {
                     (1...999_999).contains($0) ? $0 : nil
                 }
                 try parseParagraph(
                     element, node: "numberedListItem", props: numberedProps(start: start), depth: depth,
-                    into: &output, hoisted: &hoisted)
+                    inheritedMarks: inheritedMarks, into: &output, hoisted: &hoisted)
             case "heading":
                 let rawLevel = element.attributes["data-level"].flatMap(Int.init) ?? 1
                 let level = min(max(rawLevel, 1), 3)
                 try parseParagraph(
                     element, node: "heading", props: headingProps(level: level), depth: depth,
-                    into: &output, hoisted: &hoisted)
+                    inheritedMarks: inheritedMarks, into: &output, hoisted: &hoisted)
             case "quote":
                 try parseParagraph(
                     element, node: "quote", props: BlockNoteWriter.nativePropSchemas["quote"], depth: depth,
-                    into: &output, hoisted: &hoisted)
+                    inheritedMarks: inheritedMarks, into: &output, hoisted: &hoisted)
             case "codeBlock":
                 try parsePre(element, into: &output)
             case "divider":
@@ -439,14 +472,15 @@ enum BlockNoteHTMLParser {
             case "table":
                 if let table = findFirstTag("table", in: element) {
                     if depth == 0 {
-                        try parseTable(table, into: &output)
+                        try parseTable(table, inheritedMarks: inheritedMarks, into: &output)
                     } else {
-                        try parseTable(table, into: &hoisted)
+                        try parseTable(table, inheritedMarks: inheritedMarks, into: &hoisted)
                     }
                 }
             default:
                 try parseParagraph(
-                    element, node: "paragraph", props: nil, depth: depth, into: &output, hoisted: &hoisted)
+                    element, node: "paragraph", props: nil, depth: depth, inheritedMarks: inheritedMarks,
+                    into: &output, hoisted: &hoisted)
             }
         }
 
@@ -454,13 +488,14 @@ enum BlockNoteHTMLParser {
 
         private mutating func parseParagraph(
             _ element: HTMLNode, node: String, props: [(key: String, value: YAnyValue)]?, depth: Int,
-            into output: inout [BlockNoteWriter.Copy], hoisted: inout [BlockNoteWriter.Copy]
+            inheritedMarks: [Mark] = [], into output: inout [BlockNoteWriter.Copy],
+            hoisted: inout [BlockNoteWriter.Copy]
         ) throws {
             var inline = InlineBuffer()
             var sawBreak = false
             for child in element.children {
                 if child.name == "br" { sawBreak = true }
-                try collectInline(child, marks: [], into: &inline)
+                try collectInline(child, marks: inheritedMarks, into: &inline)
             }
             let items = inline.finish()
             if items.isEmpty {
@@ -473,7 +508,7 @@ enum BlockNoteHTMLParser {
         }
 
         private mutating func parseBlockquote(
-            _ element: HTMLNode, depth: Int, into output: inout [BlockNoteWriter.Copy],
+            _ element: HTMLNode, depth: Int, inheritedMarks: [Mark] = [], into output: inout [BlockNoteWriter.Copy],
             hoisted: inout [BlockNoteWriter.Copy]
         ) throws {
             let quoteProps = BlockNoteWriter.nativePropSchemas["quote"]
@@ -486,7 +521,8 @@ enum BlockNoteHTMLParser {
             }
             for child in element.children {
                 if child.name == "#text" {
-                    inline.appendText(child.text, marks: [])
+                    let addedMarks = inline.appendText(child.text, marks: inheritedMarks)
+                    if addedMarks > 0 { try addPayloadBytes(addedMarks) }
                 } else if Self.droppedElements.contains(child.name) {
                     continue
                 } else if child.attributes["data-content-type"] == nil,
@@ -495,21 +531,26 @@ enum BlockNoteHTMLParser {
                 {
                     try flushQuote()
                     try parseParagraph(
-                        child, node: "quote", props: quoteProps, depth: depth, into: &output, hoisted: &hoisted)
+                        child, node: "quote", props: quoteProps, depth: depth, inheritedMarks: inheritedMarks,
+                        into: &output, hoisted: &hoisted)
                 } else if child.attributes["data-content-type"] == nil,
                     child.attributes["data-node-type"] == nil,
                     child.name == "blockquote" || Self.layoutContainers.contains(child.name)
                 {
                     try flushQuote()
-                    try parseBlockquote(child, depth: depth, into: &output, hoisted: &hoisted)
+                    try parseBlockquote(
+                        child, depth: depth, inheritedMarks: inheritedMarks, into: &output, hoisted: &hoisted)
                 } else if isBlockLevel(child) {
                     try flushQuote()
-                    try parseBlock(child, depth: depth, into: &output, hoisted: &hoisted)
+                    try parseBlock(
+                        child, depth: depth, inheritedMarks: inheritedMarks, into: &output, hoisted: &hoisted)
                 } else if containsBlockDescendant(child) {
                     try flushQuote()
-                    try parseBlockquote(child, depth: depth, into: &output, hoisted: &hoisted)
+                    let nextMarks = marks(adding: child, to: inheritedMarks)
+                    try parseBlockquote(
+                        child, depth: depth, inheritedMarks: nextMarks, into: &output, hoisted: &hoisted)
                 } else {
-                    try collectInline(child, marks: [], into: &inline)
+                    try collectInline(child, marks: inheritedMarks, into: &inline)
                 }
             }
             try flushQuote()
@@ -518,8 +559,8 @@ enum BlockNoteHTMLParser {
         // MARK: - Lists & checklists
 
         private mutating func parseList(
-            _ list: HTMLNode, ordered: Bool, depth: Int, into output: inout [BlockNoteWriter.Copy],
-            hoisted: inout [BlockNoteWriter.Copy]
+            _ list: HTMLNode, ordered: Bool, depth: Int, inheritedMarks: [Mark] = [],
+            into output: inout [BlockNoteWriter.Copy], hoisted: inout [BlockNoteWriter.Copy]
         ) throws {
             let explicitStart: Int? =
                 if ordered, let raw = list.attributes["start"]?.trimmingCharacters(in: .whitespaces),
@@ -539,7 +580,8 @@ enum BlockNoteHTMLParser {
             }
             for child in list.children {
                 if child.name == "#text" {
-                    inline.appendText(child.text, marks: [])
+                    let addedMarks = inline.appendText(child.text, marks: inheritedMarks)
+                    if addedMarks > 0 { try addPayloadBytes(addedMarks) }
                     continue
                 }
                 if Self.droppedElements.contains(child.name) { continue }
@@ -560,7 +602,8 @@ enum BlockNoteHTMLParser {
                     let start = firstItem ? explicitStart : nil
                     firstItem = false
                     try parseListItem(
-                        child, ordered: ordered, start: start, depth: depth, into: &output, hoisted: &hoisted)
+                        child, ordered: ordered, start: start, depth: depth, inheritedMarks: inheritedMarks,
+                        into: &output, hoisted: &hoisted)
                 } else if child.name == "ul" || child.name == "ol" {
                     try flushInline()
                     // Malformed HTML: nested list directly inside a list attaches to the previous item if any.
@@ -571,29 +614,35 @@ enum BlockNoteHTMLParser {
                     {
                         var nested: [BlockNoteWriter.Copy] = []
                         try parseList(
-                            child, ordered: nestedOrdered, depth: childDepth, into: &nested, hoisted: &hoisted)
+                            child, ordered: nestedOrdered, depth: childDepth, inheritedMarks: inheritedMarks,
+                            into: &nested, hoisted: &hoisted)
                         if !nested.isEmpty {
                             output[output.count - 1] = attachingChildren(nested, to: output[output.count - 1])
                         }
                     } else {
-                        try parseList(child, ordered: nestedOrdered, depth: depth, into: &output, hoisted: &hoisted)
+                        try parseList(
+                            child, ordered: nestedOrdered, depth: depth, inheritedMarks: inheritedMarks,
+                            into: &output, hoisted: &hoisted)
                     }
                 } else if isBlockLevel(child) {
                     try flushInline()
-                    try parseBlock(child, depth: depth, into: &output, hoisted: &hoisted)
+                    try parseBlock(
+                        child, depth: depth, inheritedMarks: inheritedMarks, into: &output, hoisted: &hoisted)
                 } else if containsBlockDescendant(child) {
                     try flushInline()
-                    try walkContainer(child, depth: depth, into: &output, hoisted: &hoisted)
+                    let nextMarks = marks(adding: child, to: inheritedMarks)
+                    try walkContainer(
+                        child, depth: depth, inheritedMarks: nextMarks, into: &output, hoisted: &hoisted)
                 } else {
-                    try collectInline(child, marks: [], into: &inline)
+                    try collectInline(child, marks: inheritedMarks, into: &inline)
                 }
             }
             try flushInline()
         }
 
         private mutating func parseListItem(
-            _ li: HTMLNode, ordered: Bool, start: Int?, depth: Int, into output: inout [BlockNoteWriter.Copy],
-            hoisted: inout [BlockNoteWriter.Copy]
+            _ li: HTMLNode, ordered: Bool, start: Int?, depth: Int, inheritedMarks: [Mark] = [],
+            into output: inout [BlockNoteWriter.Copy], hoisted: inout [BlockNoteWriter.Copy]
         ) throws {
             let checklist = detectChecklist(in: li)
             let node: String
@@ -614,46 +663,11 @@ enum BlockNoteHTMLParser {
             var itemHoisted: [BlockNoteWriter.Copy] = []
             var sawFirstParagraph = false
 
-            func appendChildBlock(_ block: BlockNoteWriter.Copy) {
-                childBlocks.append(block)
-            }
-
             let childDepth = min(depth + 1, BlockNoteWriter.maxNestingDepth)
-            for child in li.children {
-                if child === checklist.checkboxNode { continue }
-                if child.name == "#text" {
-                    inline.appendText(child.text, marks: [])
-                    continue
-                }
-                if Self.droppedElements.contains(child.name) { continue }
-                if child.name == "ul" || child.name == "ol" {
-                    try parseList(
-                        child, ordered: child.name == "ol", depth: childDepth,
-                        into: &childBlocks, hoisted: &itemHoisted)
-                } else if child.name == "p", !sawFirstParagraph, !inline.hasContent {
-                    sawFirstParagraph = true
-                    for grand in child.children {
-                        if grand === checklist.checkboxNode { continue }
-                        try collectInline(grand, marks: [], into: &inline)
-                    }
-                } else if child.name == "img" {
-                    if let img = makeImage(child) {
-                        itemHoisted.append(try makeImageContainer(url: img.url, alt: img.alt))
-                    }
-                } else if child.name == "table" {
-                    try parseTable(child, into: &itemHoisted)
-                } else if isBlockLevel(child) {
-                    var sub: [BlockNoteWriter.Copy] = []
-                    try parseBlock(child, depth: childDepth, into: &sub, hoisted: &itemHoisted)
-                    for block in sub { appendChildBlock(block) }
-                } else if containsBlockDescendant(child) {
-                    var sub: [BlockNoteWriter.Copy] = []
-                    try walkContainer(child, depth: childDepth, into: &sub, hoisted: &itemHoisted)
-                    for block in sub { appendChildBlock(block) }
-                } else {
-                    try collectInline(child, marks: [], skipping: checklist.checkboxNode, into: &inline)
-                }
-            }
+            try walkListItemChildren(
+                of: li, checkboxNode: checklist.checkboxNode, childDepth: childDepth, marks: inheritedMarks,
+                inline: &inline, childBlocks: &childBlocks, itemHoisted: &itemHoisted,
+                sawFirstParagraph: &sawFirstParagraph)
 
             let items = inline.finish()
             var mainParts: [BlockNoteWriter.Copy] = []
@@ -693,6 +707,52 @@ enum BlockNoteHTMLParser {
             } else {
                 hoisted += inlineHoisted
                 hoisted += itemHoisted
+            }
+        }
+
+        private mutating func walkListItemChildren(
+            of container: HTMLNode, checkboxNode: HTMLNode?, childDepth: Int, marks currentMarks: [Mark],
+            inline: inout InlineBuffer, childBlocks: inout [BlockNoteWriter.Copy],
+            itemHoisted: inout [BlockNoteWriter.Copy], sawFirstParagraph: inout Bool
+        ) throws {
+            for child in container.children {
+                if child === checkboxNode { continue }
+                if child.name == "#text" {
+                    let addedMarks = inline.appendText(child.text, marks: currentMarks)
+                    if addedMarks > 0 { try addPayloadBytes(addedMarks) }
+                    continue
+                }
+                if Self.droppedElements.contains(child.name) { continue }
+                if child.name == "ul" || child.name == "ol" {
+                    try parseList(
+                        child, ordered: child.name == "ol", depth: childDepth, inheritedMarks: currentMarks,
+                        into: &childBlocks, hoisted: &itemHoisted)
+                } else if child.name == "p", !sawFirstParagraph, !inline.hasContent, childBlocks.isEmpty {
+                    sawFirstParagraph = true
+                    for grand in child.children {
+                        if grand === checkboxNode { continue }
+                        try collectInline(grand, marks: currentMarks, skipping: checkboxNode, into: &inline)
+                    }
+                } else if child.name == "img" {
+                    if let img = makeImage(child) {
+                        itemHoisted.append(try makeImageContainer(url: img.url, alt: img.alt))
+                    }
+                } else if child.name == "table" {
+                    try parseTable(child, inheritedMarks: currentMarks, into: &itemHoisted)
+                } else if isBlockLevel(child) {
+                    var sub: [BlockNoteWriter.Copy] = []
+                    try parseBlock(
+                        child, depth: childDepth, inheritedMarks: currentMarks, into: &sub, hoisted: &itemHoisted)
+                    childBlocks += sub
+                } else if containsBlockDescendant(child) {
+                    try walkListItemChildren(
+                        of: child, checkboxNode: checkboxNode, childDepth: childDepth,
+                        marks: marks(adding: child, to: currentMarks),
+                        inline: &inline, childBlocks: &childBlocks, itemHoisted: &itemHoisted,
+                        sawFirstParagraph: &sawFirstParagraph)
+                } else {
+                    try collectInline(child, marks: currentMarks, skipping: checkboxNode, into: &inline)
+                }
             }
         }
 
@@ -746,7 +806,8 @@ enum BlockNoteHTMLParser {
 
         private mutating func parsePre(_ element: HTMLNode, into output: inout [BlockNoteWriter.Copy]) throws {
             let language = findCodeLanguage(in: element) ?? "text"
-            let textRoot = singlePreRoot(in: element) ?? element
+            let preRoot = element.name == "pre" ? element : (soleChild(named: "pre", in: element) ?? element)
+            let textRoot = soleChild(named: "code", in: preRoot) ?? preRoot
             var raw = ""
             collectRawText(textRoot, into: &raw)
             var normalized = NativeClipboard.normalizingLineBreaks(
@@ -762,8 +823,7 @@ enum BlockNoteHTMLParser {
                     [.element("codeBlock", [("language", .string(language))], content)]))
         }
 
-        private func singlePreRoot(in element: HTMLNode) -> HTMLNode? {
-            if element.name == "pre" { return element }
+        private func soleChild(named tag: String, in element: HTMLNode) -> HTMLNode? {
             var found: HTMLNode?
             for child in element.children {
                 if Self.droppedElements.contains(child.name) { continue }
@@ -771,7 +831,7 @@ enum BlockNoteHTMLParser {
                     if child.text.unicodeScalars.contains(where: { !HTMLNode.isASCIIWhitespace($0) }) { return nil }
                     continue
                 }
-                if child.name == "pre", found == nil {
+                if child.name == tag, found == nil {
                     found = child
                 } else {
                     return nil
@@ -824,12 +884,29 @@ enum BlockNoteHTMLParser {
 
         // MARK: - Tables & images
 
-        private mutating func parseTable(_ table: HTMLNode, into output: inout [BlockNoteWriter.Copy]) throws {
-            let rows: [[TablePastedCell]]
+        private mutating func parseTable(
+            _ table: HTMLNode, inheritedMarks: [Mark] = [], into output: inout [BlockNoteWriter.Copy]
+        ) throws {
+            var rows: [[TablePastedCell]]
             switch TableClipboard.cells(table: table, paletteColorsOnly: true) {
             case .empty: return
             case .tooLarge: throw Error.tooLarge
             case .cells(let parsed): rows = parsed
+            }
+            if !inheritedMarks.isEmpty {
+                for rowIndex in rows.indices {
+                    for cellIndex in rows[rowIndex].indices {
+                        for runIndex in rows[rowIndex][cellIndex].runs.indices {
+                            let existing = rows[rowIndex][cellIndex].runs[runIndex].marks
+                            let extra = inheritedMarks.filter { mark in
+                                !existing.contains { $0.key == mark.key }
+                            }
+                            if !extra.isEmpty {
+                                rows[rowIndex][cellIndex].runs[runIndex].marks = extra + existing
+                            }
+                        }
+                    }
+                }
             }
             for row in rows {
                 for cell in row {
