@@ -64,7 +64,7 @@ final class NativePasteAsBlocksTests: NativeEditingTestCase {
         _ = hostWindow(UINavigationController(rootViewController: editor))
         editor.loadViewIfNeeded()
         await editor.load()
-        for _ in 0..<300 where !editor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
+        await waitUntil { editor.isLoaded }
         XCTAssertTrue(editor.isLoaded)
         if let session = editor.cellSession { addTeardownBlock { await session.close().value } }
         return (harness, editor)
@@ -418,7 +418,8 @@ final class NativePasteAsBlocksTests: NativeEditingTestCase {
 
         let editor = NativeSourceEditorViewController(document: harness.session, request: request)
         _ = hostWindow(UINavigationController(rootViewController: editor))
-        for _ in 0..<300 where !editor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
+        await waitUntil { editor.isLoaded }
+        XCTAssertTrue(editor.isLoaded)
         let sourceSession = try XCTUnwrap(editor.sourceSession)
         addTeardownBlock { editor.close() }
 
@@ -620,6 +621,347 @@ final class NativePasteAsBlocksTests: NativeEditingTestCase {
         harness.view.paste(nil)
         await harness.settle()
         XCTAssertEqual(texts(session), ["Start plain fallback ok"])
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    // MARK: - 14. Toggles and locked-text blocks take the plain-text path
+
+    func testToggleAndLockedBlockTargetsTakePlainTextPathForHTMLAndMarkdown() async throws {
+        let toggleItem = BlockNoteBlock(
+            node: "toggleListItem", props: Self.paragraphProps, runs: [InlineRun("Toggle ")], id: "t1")
+        let toggleHeading = BlockNoteBlock(
+            node: "heading",
+            props: Self.paragraphProps + [("level", .int(2)), ("isToggleable", .bool(true))],
+            runs: [InlineRun("Header ")], id: "th")
+        let locked = BlockNoteBlock(
+            node: "paragraph",
+            props: Self.paragraphProps + [("futureProp", .string("v1"))],
+            runs: [InlineRun("Locked ")], id: "locked")
+        let harness = try await makeHarness([toggleItem, toggleHeading, locked])
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+        XCTAssertTrue(try block(session, "locked").isLocked)
+
+        let safariHTML: [[String: Any]] = [
+            [
+                TableClipboard.htmlType: Data("<p><strong>hello</strong></p>".utf8),
+                UTType.utf8PlainText.identifier: "hello",
+            ]
+        ]
+
+        // Toggle list item: Safari HTML + plain text pastes "hello"; Markdown pastes literally.
+        try caret(harness, "t1", 7)
+        harness.pasteboard.setItems(safariHTML)
+        harness.view.paste(nil)
+        await harness.settle()
+        XCTAssertNil(harness.input.noticeKey)
+        XCTAssertEqual(text(of: try block(session, "t1")), "Toggle hello")
+
+        try caret(harness, "t1", 12)
+        harness.pasteboard.string = " **bold**"
+        harness.view.paste(nil)
+        await harness.settle()
+        XCTAssertNil(harness.input.noticeKey)
+        XCTAssertEqual(text(of: try block(session, "t1")), "Toggle hello **bold**")
+        XCTAssertTrue(try block(session, "t1").runs.allSatisfy(\.marks.isEmpty))
+
+        // Toggle heading: Safari HTML + plain text pastes "hello"; Markdown pastes literally.
+        try caret(harness, "th", 7)
+        harness.pasteboard.setItems(safariHTML)
+        harness.view.paste(nil)
+        await harness.settle()
+        XCTAssertNil(harness.input.noticeKey)
+        XCTAssertEqual(text(of: try block(session, "th")), "Header hello")
+
+        try caret(harness, "th", 12)
+        harness.pasteboard.string = " **bold**"
+        harness.view.paste(nil)
+        await harness.settle()
+        XCTAssertNil(harness.input.noticeKey)
+        XCTAssertEqual(text(of: try block(session, "th")), "Header hello **bold**")
+        XCTAssertTrue(try block(session, "th").runs.allSatisfy(\.marks.isEmpty))
+
+        // Locked-text lossy block: HTML non-textblock + plain text and Markdown stay plain text.
+        try caret(harness, "locked", 7)
+        harness.pasteboard.setItems([
+            [
+                TableClipboard.htmlType: Data("<hr>".utf8),
+                UTType.utf8PlainText.identifier: "---",
+            ]
+        ])
+        harness.view.paste(nil)
+        await harness.settle()
+        XCTAssertNil(harness.input.noticeKey)
+        XCTAssertEqual(text(of: try block(session, "locked")), "Locked ---")
+
+        try caret(harness, "locked", 10)
+        harness.pasteboard.string = " **bold**"
+        harness.view.paste(nil)
+        await harness.settle()
+        XCTAssertNil(harness.input.noticeKey)
+        XCTAssertEqual(text(of: try block(session, "locked")), "Locked --- **bold**")
+        XCTAssertTrue(try block(session, "locked").runs.allSatisfy(\.marks.isEmpty))
+        try await assertConsistent(harness, localCommands: 6)
+    }
+
+    // MARK: - 15. UTF-16 plain text + HTML
+
+    func testUTF16PlainTextWithHTMLIsAcceptedByPlainTextPaths() async throws {
+        let harness = try await makeHarness([paragraph("p", ""), codeBlock("code", "")])
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+
+        let utf16Plain = try XCTUnwrap("UTF16 plain **text**".data(using: .utf16))
+        harness.pasteboard.setItems([
+            [
+                TableClipboard.htmlType: Data("<h1><strong>HTML</strong></h1>".utf8),
+                UTType.utf16PlainText.identifier: utf16Plain,
+            ]
+        ])
+        XCTAssertTrue(harness.input.canPastePlainTextFromPasteboard())
+        XCTAssertTrue(
+            harness.view.canPerformAction(
+                #selector(UIResponderStandardEditActions.pasteAndMatchStyle(_:)), withSender: nil))
+
+        // Paste and Match Style reads the UTF-16 plain text literally.
+        try caret(harness, "p", 0)
+        harness.view.pasteAndMatchStyle(nil)
+        await harness.settle()
+        XCTAssertEqual(text(of: try block(session, "p")), "UTF16 plain **text**")
+        XCTAssertTrue(try block(session, "p").runs.allSatisfy(\.marks.isEmpty))
+
+        // Code block paste also uses the UTF-16 plain text.
+        try caret(harness, "code", 0)
+        harness.view.paste(nil)
+        await harness.settle()
+        XCTAssertEqual(text(of: try block(session, "code")), "UTF16 plain **text**")
+
+        // Oversized HTML with UTF-16 plain text falls back to the UTF-16 plain text.
+        let tooManyHTMLBytes = Data(repeating: UInt8(ascii: "a"), count: TableClipboard.maxHTMLBytes + 1)
+        let utf16Fallback = try XCTUnwrap(" fallback".data(using: .utf16))
+        harness.pasteboard.setItems([
+            [
+                TableClipboard.htmlType: tooManyHTMLBytes,
+                UTType.utf16PlainText.identifier: utf16Fallback,
+            ]
+        ])
+        try caret(harness, "p", 20)
+        harness.view.paste(nil)
+        await harness.settle()
+        XCTAssertEqual(text(of: try block(session, "p")), "UTF16 plain **text** fallback")
+
+        // Oversized UTF-16 plain text is refused with the size-limit notice.
+        let tooManyPlainBytes = Data(repeating: 0x41, count: NativeClipboard.maxPasteUTF16 * 4 + 2)
+        harness.pasteboard.setItems([
+            [
+                TableClipboard.htmlType: Data("<p>small</p>".utf8),
+                UTType.utf16PlainText.identifier: tooManyPlainBytes,
+            ]
+        ])
+        harness.view.pasteAndMatchStyle(nil)
+        await harness.settle()
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_paste_too_large)
+        XCTAssertEqual(text(of: try block(session, "p")), "UTF16 plain **text** fallback")
+        try await assertConsistent(harness, localCommands: 3)
+    }
+
+    // MARK: - 16. Table multi-cell Paste and Match Style uses shared plain-text helper
+
+    func testTableMultiCellPasteAndMatchStyleUsesSharedPlainTextHelper() async throws {
+        let (harness, editor) = try await openTable()
+        let table = try XCTUnwrap(editor.cellSession)
+        editor.activate(TableGrid.CellRef(row: 1, index: 1), caret: .start)
+        editor.select(.init(anchor: TableSlot(row: 1, column: 1), head: TableSlot(row: 2, column: 2)))
+
+        // UTF-16 plain text + HTML fills the multi-cell selection with the UTF-16 plain text.
+        let utf16Cell = try XCTUnwrap("utf16 cell".data(using: .utf16))
+        harness.pasteboard.setItems([
+            [
+                TableClipboard.htmlType: Data("<table><tr><td>HTML</td></tr></table>".utf8),
+                UTType.utf16PlainText.identifier: utf16Cell,
+            ]
+        ])
+        XCTAssertTrue(table.input?.canPastePlainTextFromPasteboard() ?? false)
+        let filled = await table.run {
+            table.textView.pasteAndMatchStyle(nil)
+            return true
+        }
+        XCTAssertTrue(filled)
+        let filledR1C1 = await harness.engine { $0.tableGrid("tbl")?.rows[1][1].runs.map(\.text).joined() }
+        let filledR2C2 = await harness.engine { $0.tableGrid("tbl")?.rows[2][2].runs.map(\.text).joined() }
+        XCTAssertEqual(filledR1C1, "utf16 cell")
+        XCTAssertEqual(filledR2C2, "utf16 cell")
+
+        // Oversized UTF-16 plain text refuses via the shared byte bound.
+        editor.select(.init(anchor: TableSlot(row: 1, column: 1), head: TableSlot(row: 2, column: 2)))
+        harness.pasteboard.setItems([
+            [
+                TableClipboard.htmlType: Data("<p>small</p>".utf8),
+                UTType.utf16PlainText.identifier: Data(repeating: 0x41, count: NativeClipboard.maxPasteUTF16 * 4 + 2),
+            ]
+        ])
+        table.textView.pasteAndMatchStyle(nil)
+        await table.settle()
+        XCTAssertEqual(table.input?.noticeKey, .native_editor_paste_too_large)
+    }
+
+    // MARK: - 17. Internal payloads take priority over HTML and Markdown
+
+    func testInternalSubtreeAndInlinePayloadsTakePriorityOverHTMLAndMarkdown() async throws {
+        let harness = try await makeHarness([paragraph("empty", "")])
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+        try caret(harness, "empty", 0)
+
+        // BlockNoteSubtreePayload + public.html + Markdown text -> subtree payload wins.
+        let subtreePayload = try BlockNoteSubtreePayload.encode([
+            .element(
+                "blockContainer", [("id", .string("sub-1"))],
+                [
+                    .element(
+                        "quote",
+                        [("backgroundColor", .string("default")), ("textColor", .string("default"))],
+                        [.text([.run(InlineRun("From Subtree"))])])
+                ])
+        ])
+        harness.pasteboard.setItems([
+            [
+                BlockNoteSubtreePayload.pasteboardType: subtreePayload,
+                TableClipboard.htmlType: Data("<h1>From HTML</h1>".utf8),
+                UTType.utf8PlainText.identifier: "# From Markdown",
+            ]
+        ])
+        harness.view.paste(nil)
+        await harness.settle()
+        XCTAssertEqual(session.surface.blocks.map(\.node), ["quote"])
+        XCTAssertEqual(texts(session), ["From Subtree"])
+        try await assertConsistent(harness, localCommands: 1)
+
+        // BlockNoteInlinePayload + public.html + Markdown text -> inline payload wins.
+        let math = NativeInlineObject.math(source: "x^2")
+        let inlinePayload = try BlockNoteInlinePayload.encode([
+            [
+                .text([.run(InlineRun(" "))]),
+                .element(math.nodeName, math.canonicalProps, math.canonicalChildren),
+            ]
+        ])
+        let quoteID = session.surface.blocks[0].id
+        try caret(harness, quoteID, "From Subtree".utf16.count)
+        harness.pasteboard.setItems([
+            [
+                BlockNoteInlinePayload.pasteboardType: inlinePayload,
+                TableClipboard.htmlType: Data("<p><strong>From HTML</strong></p>".utf8),
+                UTType.utf8PlainText.identifier: "**From Markdown**",
+            ]
+        ])
+        harness.view.paste(nil)
+        await harness.settle()
+        let updatedQuote = try block(session, quoteID)
+        XCTAssertEqual(session.surface.blocks.map(\.node), ["quote"])
+        XCTAssertTrue(
+            updatedQuote.runs.contains {
+                if case .math(source: "x^2") = $0.inlineObject { true } else { false }
+            },
+            "inline payload must win over HTML and Markdown")
+        XCTAssertFalse(text(of: updatedQuote).contains("From HTML"))
+        XCTAssertFalse(text(of: updatedQuote).contains("From Markdown"))
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    // MARK: - 18. HTML-only pasteboard disables Paste and Match Style without decoding HTML
+
+    func testHTMLOnlyPasteboardMatchStylePastesTheHTMLTextLiterally() async throws {
+        let harness = try await makeHarness([paragraph("p", "Keep")])
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+        try caret(harness, "p", 4)
+
+        // With only HTML, iOS offers its text form: Paste and Match Style pastes that text, never blocks.
+        harness.pasteboard.setItems([
+            [TableClipboard.htmlType: Data("<h1><strong>Formatted</strong></h1>".utf8)]
+        ])
+        XCTAssertTrue(harness.input.canPastePlainTextFromPasteboard())
+        harness.view.pasteAndMatchStyle(nil)
+        await harness.settle()
+        XCTAssertTrue(session.surface.blocks.allSatisfy { $0.node == "paragraph" })
+        XCTAssertEqual(texts(session).first, "KeepFormatted")
+        XCTAssertTrue(session.surface.blocks.allSatisfy { $0.runs.allSatisfy(\.marks.isEmpty) })
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    // MARK: - 19. Dropped-only Markdown stays literal (pasted text is never lost)
+
+    func testMarkdownWhoseConstructsAreAllDroppedPastesLiterally() async throws {
+        let harness = try await makeHarness([paragraph("p", "")])
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+        try caret(harness, "p", 0)
+
+        let raw = "![photo](http://insecure.example/a.png)"
+        harness.pasteboard.string = raw
+        harness.view.paste(nil)
+        await harness.settle()
+
+        XCTAssertEqual(session.surface.blocks.map(\.node), ["paragraph"])
+        XCTAssertEqual(texts(session), [raw])
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    // MARK: - 20. Busy preconditions reject HTML/Markdown paste before parsing
+
+    func testActiveBarrierAndCompositionRejectHTMLAndMarkdownPaste() async throws {
+        let disk = Latch()
+        let interrupt: @Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void = {
+            operation, boundary in
+            if operation == .append, boundary == .payloadWritten { disk.pass() }
+        }
+        let harness = try await makeHarness([paragraph("p1", "Hello world")], interrupt: interrupt)
+        addTeardownBlock {
+            disk.open()
+            await harness.close()
+        }
+        let session = harness.session
+
+        // Active barrier: HTML and Markdown pastes fail immediately with busy notice.
+        try caret(harness, "p1", 5)
+        harness.view.insertText("\n")
+        await waitUntil { disk.waiting == 1 }
+
+        harness.pasteboard.setItems([
+            [
+                TableClipboard.htmlType: Data("<h1><strong>Blocked</strong></h1>".utf8),
+                UTType.utf8PlainText.identifier: "Blocked",
+            ]
+        ])
+        XCTAssertFalse(harness.input.pasteFromPasteboard())
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_busy)
+
+        harness.input.refuse(.native_editor_input_unavailable)
+        harness.pasteboard.string = "## Blocked Markdown"
+        XCTAssertFalse(harness.input.pasteFromPasteboard())
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_busy)
+
+        disk.open()
+        await harness.settle()
+        XCTAssertEqual(texts(session), ["Hello", " world"])
+        try await assertConsistent(harness, localCommands: 1)
+
+        // Composition owns view: HTML and Markdown pastes are dropped without mutating.
+        try caret(harness, "p1", 2)
+        harness.view.setMarkedText("にほん", selectedRange: NSRange(location: 0, length: 3))
+        XCTAssertTrue(harness.input.compositionOwnsView)
+        harness.pasteboard.setItems([
+            [
+                TableClipboard.htmlType: Data("<p><strong>Ignored</strong></p>".utf8),
+                UTType.utf8PlainText.identifier: "Ignored",
+            ]
+        ])
+        XCTAssertFalse(harness.input.pasteFromPasteboard())
+        harness.pasteboard.string = "**Ignored**"
+        XCTAssertFalse(harness.input.pasteFromPasteboard())
+        harness.view.unmarkText()
+        await harness.settle()
+        XCTAssertEqual(texts(session), ["Heにほんllo", " world"])
         try await assertConsistent(harness, localCommands: 2)
     }
 }

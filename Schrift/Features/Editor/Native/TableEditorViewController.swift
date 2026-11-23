@@ -648,9 +648,20 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     /// CellSelection with literal plain text, or returns false for a single
     /// cell so the text view pastes plain text into it.
     private func pastePlain() -> Bool {
-        guard let input = cellSession?.input, let grid, grid.isFamiliar, active != nil,
-            let selection, let raw = input.pasteboard.string, !raw.isEmpty
-        else { return false }
+        guard let input = cellSession?.input, let grid, grid.isFamiliar, active != nil, let selection else {
+            return false
+        }
+        let raw: String
+        switch NativeInputCoordinator.pasteboardPlainText(input.pasteboard) {
+        case .none:
+            return false
+        case .tooLarge:
+            input.refuse(.native_editor_paste_too_large)
+            return true
+        case .text(let string):
+            guard !string.isEmpty else { return false }
+            raw = string
+        }
         let text = NativeClipboard.strippingObjectReplacementCharacters(raw)
         guard !text.isEmpty else { return false }
         guard !NativeClipboard.isTooLarge(NativeClipboard.normalizingLineBreaks(text)) else {

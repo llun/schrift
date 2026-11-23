@@ -70,6 +70,42 @@ enum BlockNoteMarkdownPaste {
         }
     }
 
+    /// Allocation-free pre-check for busy-editor guards: returns `false` when
+    /// `raw` contains no block or inline Markdown trigger characters, so plain
+    /// text can queue behind a barrier without running the parser.
+    static func mayContainMarkdown(_ raw: String) -> Bool {
+        var atLineStart = true
+        var sawDigitAtLineStart = false
+        for scalar in raw.unicodeScalars {
+            if CharacterSet.newlines.contains(scalar) {
+                atLineStart = true
+                sawDigitAtLineStart = false
+                continue
+            }
+            switch scalar.value {
+            case 0x20, 0x09:
+                if sawDigitAtLineStart { sawDigitAtLineStart = false }
+            case 0x2A, 0x5F, 0x60, 0x7E, 0x5B, 0x7C, 0x5C:  // * _ ` ~ [ | \
+                return true
+            case 0x23, 0x3E, 0x2D, 0x2B:  // # > - +
+                if atLineStart { return true }
+                atLineStart = false
+                sawDigitAtLineStart = false
+            case 0x30...0x39:  // 0...9
+                if atLineStart { sawDigitAtLineStart = true }
+                atLineStart = false
+            case 0x2E, 0x29:  // . )
+                if sawDigitAtLineStart { return true }
+                atLineStart = false
+                sawDigitAtLineStart = false
+            default:
+                atLineStart = false
+                sawDigitAtLineStart = false
+            }
+        }
+        return false
+    }
+
     // MARK: - Parser
 
     private struct Parser {
