@@ -545,7 +545,7 @@ enum BlockNoteMarkdownPaste {
             let trimmed = rest.trimmingCharacters(in: .whitespaces)
             guard trimmed.hasPrefix("![") else { return nil }
             let chars = Array(trimmed)
-            var matcher = ImageMatcher(chars: chars)
+            let matcher = ImageMatcher(chars: chars)
             guard let match = matcher.match(from: 0), match.next == chars.count else { return nil }
             return (match.alt, match.url)
         }
@@ -556,28 +556,39 @@ enum BlockNoteMarkdownPaste {
             let next: Int
         }
 
-        /// Linear-time image syntax matcher: memoizes failed closing brackets
-        /// and unclosed angle destinations, rejects nested `<` inside `<...>`
-        /// (per CommonMark), and bounds balanced parenthesis depth (matching
-        /// CommonMark / cmark) so repeated `![` or `![a](` cannot rescan
-        /// quadratically.
+        /// Linear-time image syntax matcher: uses precomputed balanced bracket
+        /// pairs and the shared destination parser so nested brackets, `<...>`
+        /// destinations, balanced parentheses and optional quoted titles stay
+        /// linear.
         private struct ImageMatcher {
-            private static let maxParenDepth = 32
             let chars: [Character]
-            private var failedBracket = -1
-            private var noClosingAngle = false
+            private let matchingClose: [Int]
+            private let suffixCloseParens: [Int]
 
-            init(chars: [Character]) {
+            init(chars: [Character], backticks: BacktickIndex? = nil) {
                 self.chars = chars
+                let index = backticks ?? BacktickIndex(chars)
+                self.matchingClose = BlockNoteMarkdownPaste.matchingCloseBrackets(chars, backticks: index)
+                self.suffixCloseParens = BlockNoteMarkdownPaste.suffixCloseParenCounts(chars)
             }
 
-            mutating func match(from open: Int) -> MatchedImage? {
+            func match(from open: Int) -> MatchedImage? {
                 guard open + 1 < chars.count, chars[open] == "!", chars[open + 1] == "[" else { return nil }
-                if open + 2 <= failedBracket { return nil }
-                var i = open + 2
+                let closeBracket = matchingClose[open + 1]
+                guard closeBracket >= 0 else { return nil }
+                guard
+                    let dest = BlockNoteMarkdownPaste.parseDestination(
+                        in: chars,
+                        from: closeBracket + 1,
+                        limit: chars.count,
+                        suffixCloseParens: suffixCloseParens)
+                else { return nil }
                 var alt = ""
-                while i < chars.count, chars[i] != "]" {
-                    if chars[i] == "\\", i + 1 < chars.count {
+                var i = open + 2
+                while i < closeBracket {
+                    if chars[i] == "\\", i + 1 < closeBracket,
+                        BlockNoteMarkdownPaste.isASCIIPunctuation(chars[i + 1])
+                    {
                         alt.append(chars[i + 1])
                         i += 2
                         continue
@@ -585,87 +596,7 @@ enum BlockNoteMarkdownPaste {
                     alt.append(chars[i])
                     i += 1
                 }
-                guard i < chars.count, chars[i] == "]" else {
-                    failedBracket = chars.count
-                    return nil
-                }
-                let closeBracket = i
-                guard i + 1 < chars.count, chars[i + 1] == "(" else {
-                    failedBracket = closeBracket
-                    return nil
-                }
-                i += 2
-                while i < chars.count, chars[i] == " " || chars[i] == "\t" { i += 1 }
-                var url = ""
-                if i < chars.count, chars[i] == "<" {
-                    if noClosingAngle {
-                        failedBracket = closeBracket
-                        return nil
-                    }
-                    i += 1
-                    while i < chars.count, chars[i] != ">", chars[i] != "<" {
-                        if chars[i] == "\\", i + 1 < chars.count {
-                            url.append(chars[i + 1])
-                            i += 2
-                            continue
-                        }
-                        url.append(chars[i])
-                        i += 1
-                    }
-                    guard i < chars.count, chars[i] == ">" else {
-                        if i == chars.count { noClosingAngle = true }
-                        failedBracket = closeBracket
-                        return nil
-                    }
-                    i += 1
-                } else {
-                    var depth = 0
-                    while i < chars.count {
-                        let c = chars[i]
-                        if c == "\\" && i + 1 < chars.count {
-                            url.append(chars[i + 1])
-                            i += 2
-                            continue
-                        }
-                        if c == "(" {
-                            depth += 1
-                            if depth > Self.maxParenDepth {
-                                failedBracket = closeBracket
-                                return nil
-                            }
-                            url.append(c)
-                        } else if c == ")" {
-                            if depth == 0 { break }
-                            depth -= 1
-                            url.append(c)
-                        } else if c == " " || c == "\t" {
-                            break
-                        } else {
-                            url.append(c)
-                        }
-                        i += 1
-                    }
-                }
-                // Skip optional title up to closing `)`
-                while i < chars.count, chars[i] == " " || chars[i] == "\t" { i += 1 }
-                if i < chars.count, chars[i] == "\"" || chars[i] == "'" {
-                    let quote = chars[i]
-                    i += 1
-                    while i < chars.count, chars[i] != quote {
-                        if chars[i] == "\\", i + 1 < chars.count { i += 2 } else { i += 1 }
-                    }
-                    guard i < chars.count else {
-                        failedBracket = closeBracket
-                        return nil
-                    }
-                    i += 1
-                    while i < chars.count, chars[i] == " " || chars[i] == "\t" { i += 1 }
-                }
-                guard i < chars.count, chars[i] == ")" else {
-                    failedBracket = closeBracket
-                    return nil
-                }
-                return MatchedImage(alt: alt, url: url, next: i + 1)
+                return MatchedImage(alt: alt, url: dest.url, next: dest.next)
             }
         }
 
@@ -683,7 +614,7 @@ enum BlockNoteMarkdownPaste {
             }
             let chars = Array(text)
             let backticks = BacktickIndex(chars)
-            var matcher = ImageMatcher(chars: chars)
+            let matcher = ImageMatcher(chars: chars, backticks: backticks)
             var pieces: [ImageScanPiece] = []
             var current = ""
             var matchedAny = false
@@ -854,6 +785,162 @@ enum BlockNoteMarkdownPaste {
         }
     }
 
+    // MARK: - Shared bracket & destination helpers
+
+    private static let maxDestinationParenDepth = 32
+
+    private static func isASCIIPunctuation(_ character: Character) -> Bool {
+        guard let value = character.asciiValue else { return false }
+        return (0x21...0x2F).contains(value) || (0x3A...0x40).contains(value)
+            || (0x5B...0x60).contains(value) || (0x7B...0x7E).contains(value)
+    }
+
+    private static func suffixCloseParenCounts(_ chars: [Character]) -> [Int] {
+        var counts = [Int](repeating: 0, count: chars.count + 1)
+        var i = chars.count - 1
+        while i >= 0 {
+            counts[i] = counts[i + 1] + (chars[i] == ")" ? 1 : 0)
+            i -= 1
+        }
+        return counts
+    }
+
+    /// Maps every balanced `[` index in `chars` to its matching `]` index (or
+    /// `-1` when unmatched), honoring backslash escapes and N-backtick code
+    /// spans in a single O(n) / O(n log n) pass.
+    private static func matchingCloseBrackets(_ chars: [Character], backticks: BacktickIndex) -> [Int] {
+        var matching = [Int](repeating: -1, count: chars.count)
+        var stack: [Int] = []
+        var i = 0
+        while i < chars.count {
+            if chars[i] == "\\", i + 1 < chars.count {
+                i += 2
+                continue
+            }
+            if chars[i] == "`" {
+                var count = 0
+                while i + count < chars.count, chars[i + count] == "`" { count += 1 }
+                if let close = backticks.closingRun(length: count, from: i + count, limit: chars.count),
+                    close > i + count
+                {
+                    i = close + count
+                } else {
+                    i += count
+                }
+                continue
+            }
+            if chars[i] == "[" {
+                stack.append(i)
+            } else if chars[i] == "]" {
+                if let open = stack.popLast() {
+                    matching[open] = i
+                }
+            }
+            i += 1
+        }
+        return matching
+    }
+
+    /// Parses a CommonMark-subset `(destination [quoted-title])` starting at
+    /// `parenOpen` (`(`) and bounded by `limit`. Supports optional
+    /// leading/trailing spaces/tabs, `<...>` destinations (forbidding nested
+    /// `<`), bare destinations with balanced parentheses up to
+    /// `maxDestinationParenDepth` (rejecting unescaped whitespace and control
+    /// characters), and an optional whitespace-separated `"..."` or `'...'`
+    /// title (dropped). Stateless, allocation-free on failure, and amortized
+    /// linear across a line.
+    private static func parseDestination(
+        in chars: [Character], from parenOpen: Int, limit: Int, suffixCloseParens: [Int]
+    ) -> (url: String, next: Int)? {
+        guard parenOpen + 1 < limit, chars[parenOpen] == "(", suffixCloseParens[parenOpen + 1] > 0 else {
+            return nil
+        }
+        var i = parenOpen + 1
+        while i < limit, chars[i] == " " || chars[i] == "\t" { i += 1 }
+        let destStart: Int
+        let destEnd: Int
+        var hasEscape = false
+        if i < limit, chars[i] == "<" {
+            i += 1
+            destStart = i
+            while i < limit, chars[i] != ">", chars[i] != "<" {
+                if chars[i] == "\\", i + 1 < limit, isASCIIPunctuation(chars[i + 1]) {
+                    hasEscape = true
+                    i += 2
+                    continue
+                }
+                i += 1
+            }
+            guard i < limit, chars[i] == ">" else { return nil }
+            destEnd = i
+            i += 1
+        } else {
+            destStart = i
+            var depth = 0
+            while i < limit {
+                let c = chars[i]
+                if c == "\\", i + 1 < limit, isASCIIPunctuation(chars[i + 1]) {
+                    hasEscape = true
+                    i += 2
+                    continue
+                }
+                if c == "(" {
+                    depth += 1
+                    guard depth <= maxDestinationParenDepth, i + 1 < limit, depth < suffixCloseParens[i + 1] else {
+                        return nil
+                    }
+                } else if c == ")" {
+                    if depth == 0 { break }
+                    depth -= 1
+                } else if let ascii = c.asciiValue {
+                    if ascii == 0x20 || ascii == 0x09 {
+                        break
+                    } else if ascii < 0x20 || ascii == 0x7F {
+                        return nil
+                    }
+                } else if c.isWhitespace {
+                    break
+                }
+                i += 1
+            }
+            guard depth == 0 else { return nil }
+            destEnd = i
+        }
+        guard destEnd > destStart else { return nil }
+        let afterDestination = i
+        while i < limit, chars[i] == " " || chars[i] == "\t" { i += 1 }
+        if i > afterDestination, i < limit, chars[i] == "\"" || chars[i] == "'" {
+            let quote = chars[i]
+            i += 1
+            while i < limit, chars[i] != quote {
+                if chars[i] == "\\", i + 1 < limit { i += 2 } else { i += 1 }
+            }
+            guard i < limit else { return nil }
+            i += 1
+            while i < limit, chars[i] == " " || chars[i] == "\t" { i += 1 }
+        }
+        guard i < limit, chars[i] == ")" else { return nil }
+        let url: String
+        if hasEscape {
+            var unescaped = ""
+            unescaped.reserveCapacity(destEnd - destStart)
+            var k = destStart
+            while k < destEnd {
+                if chars[k] == "\\", k + 1 < destEnd, isASCIIPunctuation(chars[k + 1]) {
+                    unescaped.append(chars[k + 1])
+                    k += 2
+                } else {
+                    unescaped.append(chars[k])
+                    k += 1
+                }
+            }
+            url = unescaped
+        } else {
+            url = String(chars[destStart..<destEnd])
+        }
+        return (url, i + 1)
+    }
+
     // MARK: - Paste inline Markdown parser
 
     /// Linear-time paste inline Markdown parser with flanking rules for `*`,
@@ -862,13 +949,12 @@ enum BlockNoteMarkdownPaste {
     /// Kept separate from `InlineMarkdown` so classic editor & save round-trips
     /// stay byte-identical.
     private struct PasteInlineParser {
-        private static let asciiPunctuation: Set<Character> = Set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
         private static let escapable: Set<Character> = Set("\\`*_{}[]()#+-.!~>|")
 
         private let chars: [Character]
         private let backticks: BacktickIndex
-        private let closeBrackets: [Int]
-        private let closeParens: [Int]
+        private let matchingClose: [Int]
+        private let suffixCloseParens: [Int]
         private var runs: [InlineRun] = []
         private var pendingText = ""
         private var pendingMarks: [(key: String, valueJSON: String)] = []
@@ -876,25 +962,11 @@ enum BlockNoteMarkdownPaste {
 
         init(_ text: String) {
             let chars = Array(text)
+            let backticks = BacktickIndex(chars)
             self.chars = chars
-            self.backticks = BacktickIndex(chars)
-            var brackets: [Int] = []
-            var parens: [Int] = []
-            var i = 0
-            while i < chars.count {
-                if chars[i] == "\\" {
-                    i += 2
-                    continue
-                }
-                if chars[i] == "]" {
-                    brackets.append(i)
-                } else if chars[i] == ")" {
-                    parens.append(i)
-                }
-                i += 1
-            }
-            self.closeBrackets = brackets
-            self.closeParens = parens
+            self.backticks = backticks
+            self.matchingClose = BlockNoteMarkdownPaste.matchingCloseBrackets(chars, backticks: backticks)
+            self.suffixCloseParens = BlockNoteMarkdownPaste.suffixCloseParenCounts(chars)
         }
 
         mutating func parse() -> [InlineRun] {
@@ -981,50 +1053,74 @@ enum BlockNoteMarkdownPaste {
                     continue
                 }
 
-                // Link: [label](url), keeping only sanitized hrefs (label text always stays).
-                if c == "[", let link = matchLink(from: i, limit: n) {
-                    let href = String(chars[link.urlRange])
-                    let nextMarks: [(key: String, valueJSON: String)] =
-                        sanitizedLinkURL(href) == href
-                        ? adding("link", NativeMark.linkValue(href), to: marks) : marks
-                    scan(link.labelRange, marks: nextMarks)
+                // Link: [label](url), keeping only sanitized hrefs; rejected links stay literal source text.
+                if c == "[", !marks.contains(where: { $0.key == "link" }), let link = matchLink(from: i, limit: n) {
+                    if sanitizedLinkURL(link.url) == link.url {
+                        scan(link.labelRange, marks: adding("link", NativeMark.linkValue(link.url), to: marks))
+                    } else {
+                        emit(String(chars[i..<link.next]), marks: marks)
+                    }
                     i = link.next
                     continue
                 }
 
-                // Strong emphasis: **...**
-                if c == "*", i + 1 < n, chars[i + 1] == "*", canOpen(i..<(i + 2)),
-                    let close = matchDelimiter(open: i, length: 2, char: "*", limit: n)
-                {
-                    scan((i + 2)..<close, marks: adding("bold", InlineMarkdown.boldValue, to: marks))
-                    i = close + 2
+                // Strong emphasis (`**...**`) and emphasis (`*...*`). A run with
+                // no closer is emitted as literal text in one step so long runs
+                // stay linear.
+                if c == "*" {
+                    var runEnd = i
+                    while runEnd < n, chars[runEnd] == "*" { runEnd += 1 }
+                    let runLen = runEnd - i
+                    if runLen >= 2, canOpen(i..<(i + 2)),
+                        let close = matchDelimiter(open: i, length: 2, char: "*", limit: n)
+                    {
+                        scan((i + 2)..<close, marks: adding("bold", InlineMarkdown.boldValue, to: marks))
+                        i = close + 2
+                        continue
+                    }
+                    if runLen == 1, isLone(char: "*", at: i, bounds: bounds), canOpen(i..<(i + 1)),
+                        let close = matchDelimiter(open: i, length: 1, char: "*", limit: n)
+                    {
+                        scan((i + 1)..<close, marks: adding("italic", InlineMarkdown.italicValue, to: marks))
+                        i = close + 1
+                        continue
+                    }
+                    emit(String(chars[i..<runEnd]), marks: marks)
+                    i = runEnd
                     continue
                 }
 
-                // Strikethrough: ~~...~~
-                if c == "~", i + 1 < n, chars[i + 1] == "~", canOpen(i..<(i + 2)),
-                    let close = matchDelimiter(open: i, length: 2, char: "~", limit: n)
-                {
-                    scan((i + 2)..<close, marks: adding("strike", InlineMarkdown.strikeValue, to: marks))
-                    i = close + 2
+                // Strikethrough: ~~...~~. Emit an unclosed run in one step.
+                if c == "~" {
+                    var runEnd = i
+                    while runEnd < n, chars[runEnd] == "~" { runEnd += 1 }
+                    let runLen = runEnd - i
+                    if runLen >= 2, canOpen(i..<(i + 2)),
+                        let close = matchDelimiter(open: i, length: 2, char: "~", limit: n)
+                    {
+                        scan((i + 2)..<close, marks: adding("strike", InlineMarkdown.strikeValue, to: marks))
+                        i = close + 2
+                        continue
+                    }
+                    emit(String(chars[i..<runEnd]), marks: marks)
+                    i = runEnd
                     continue
                 }
 
-                // Emphasis: *...*
-                if c == "*", isLone(char: "*", at: i, bounds: bounds), canOpen(i..<(i + 1)),
-                    let close = matchDelimiter(open: i, length: 1, char: "*", limit: n)
-                {
-                    scan((i + 1)..<close, marks: adding("italic", InlineMarkdown.italicValue, to: marks))
-                    i = close + 1
-                    continue
-                }
-
-                // Emphasis: _..._ (lone underscore with flanking)
-                if c == "_", isLone(char: "_", at: i, bounds: 0..<chars.count), canOpen(i..<(i + 1)),
-                    let close = matchDelimiter(open: i, length: 1, char: "_", limit: n)
-                {
-                    scan((i + 1)..<close, marks: adding("italic", InlineMarkdown.italicValue, to: marks))
-                    i = close + 1
+                // Emphasis: _..._ (lone underscore with flanking). Emit longer runs in one step.
+                if c == "_" {
+                    var runEnd = i
+                    while runEnd < n, chars[runEnd] == "_" { runEnd += 1 }
+                    let runLen = runEnd - i
+                    if runLen == 1, isLone(char: "_", at: i, bounds: 0..<chars.count), canOpen(i..<(i + 1)),
+                        let close = matchDelimiter(open: i, length: 1, char: "_", limit: n)
+                    {
+                        scan((i + 1)..<close, marks: adding("italic", InlineMarkdown.italicValue, to: marks))
+                        i = close + 1
+                        continue
+                    }
+                    emit(String(chars[i..<runEnd]), marks: marks)
+                    i = runEnd
                     continue
                 }
 
@@ -1036,7 +1132,7 @@ enum BlockNoteMarkdownPaste {
         // MARK: - Flanking & delimiter matching
 
         private func isMarkdownPunctuation(_ character: Character) -> Bool {
-            character.isASCII ? Self.asciiPunctuation.contains(character) : character.isPunctuation
+            character.isASCII ? BlockNoteMarkdownPaste.isASCIIPunctuation(character) : character.isPunctuation
         }
 
         private func neighbor(_ index: Int) -> Character? {
@@ -1139,38 +1235,19 @@ enum BlockNoteMarkdownPaste {
             return nil
         }
 
-        private func nextIndex(in positions: [Int], from: Int, limit: Int) -> Int? {
-            var lo = 0
-            var hi = positions.count
-            while lo < hi {
-                let mid = lo + (hi - lo) / 2
-                if positions[mid] < from {
-                    lo = mid + 1
-                } else {
-                    hi = mid
-                }
-            }
-            guard lo < positions.count else { return nil }
-            let pos = positions[lo]
-            return pos < limit ? pos : nil
-        }
-
         private func matchLink(from open: Int, limit: Int)
-            -> (labelRange: Range<Int>, urlRange: Range<Int>, next: Int)?
+            -> (labelRange: Range<Int>, url: String, next: Int)?
         {
-            guard open + 1 < limit, chars[open + 1] != "]" else { return nil }
-            guard let closeBracket = nextIndex(in: closeBrackets, from: open + 1, limit: limit) else {
-                return nil
-            }
-            let labelRange = (open + 1)..<closeBracket
-            let parenOpen = closeBracket + 1
-            guard parenOpen < limit, chars[parenOpen] == "(" else { return nil }
-            guard let closeParen = nextIndex(in: closeParens, from: parenOpen + 1, limit: limit) else {
-                return nil
-            }
-            let urlRange = (parenOpen + 1)..<closeParen
-            guard !urlRange.isEmpty else { return nil }
-            return (labelRange, urlRange, closeParen + 1)
+            let closeBracket = matchingClose[open]
+            guard closeBracket > open + 1, closeBracket < limit else { return nil }
+            guard
+                let dest = BlockNoteMarkdownPaste.parseDestination(
+                    in: chars,
+                    from: closeBracket + 1,
+                    limit: limit,
+                    suffixCloseParens: suffixCloseParens)
+            else { return nil }
+            return ((open + 1)..<closeBracket, dest.url, dest.next)
         }
     }
 }

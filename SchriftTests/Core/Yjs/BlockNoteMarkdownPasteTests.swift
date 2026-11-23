@@ -154,11 +154,12 @@ final class BlockNoteMarkdownPasteTests: XCTestCase {
         XCTAssertTrue(runs1.contains { $0.text.contains("snake_case") && $0.marks.isEmpty })
 
         let runs2 = blocks[2].block.runs
-        let okLink = try XCTUnwrap(runs2.first { $0.text == "ok" })
-        XCTAssertEqual(okLink.marks.map(\.key), ["link"])
-        XCTAssertEqual(YBlockProjection.linkHref(from: okLink.marks[0].valueJSON), "https://example.com")
-        XCTAssertTrue(runs2.contains { $0.text.contains("badjs") && $0.marks.isEmpty })
-        XCTAssertTrue(runs2.contains { $0.text.contains("baddata") && $0.marks.isEmpty })
+        XCTAssertEqual(runs2.map(\.text), ["ok", " [badjs](javascript:alert(1)) [baddata](data:text/html,hi)"])
+        if runs2.count == 2 {
+            XCTAssertEqual(runs2[0].marks.map(\.key), ["link"])
+            XCTAssertEqual(YBlockProjection.linkHref(from: runs2[0].marks[0].valueJSON), "https://example.com")
+            XCTAssertTrue(runs2[1].marks.isEmpty)
+        }
     }
 
     func testPlainTextWithoutMarkdownMatchesMultiLinePaste() throws {
@@ -382,6 +383,166 @@ final class BlockNoteMarkdownPasteTests: XCTestCase {
             XCTAssertEqual(copies.count, 24)
             XCTAssertLessThan(
                 elapsed, .milliseconds(500), "pathological link scan should stay bounded, took \(elapsed)")
+        }
+    }
+
+    func testInvalidWhitespaceAndRejectedLinksStayLiteral() throws {
+        let broken = try BlockNoteMarkdownPaste.parse("[broken](unclosed and [two](https://two.example)")
+        let (brokenDoc, brokenBlocks) = try project(broken)
+        defer { brokenDoc.destroy() }
+        XCTAssertEqual(brokenBlocks.map(\.block.node), ["paragraph"])
+        let brokenRuns = brokenBlocks[0].block.runs
+        XCTAssertEqual(brokenRuns.map(\.text), ["[broken](unclosed and ", "two"])
+        if brokenRuns.count == 2 {
+            XCTAssertTrue(brokenRuns[0].marks.isEmpty)
+            XCTAssertEqual(brokenRuns[1].marks.map(\.key), ["link"])
+            XCTAssertEqual(
+                YBlockProjection.linkHref(from: brokenRuns[1].marks[0].valueJSON), "https://two.example")
+        }
+
+        let prose = try BlockNoteMarkdownPaste.parse("Items [foo](see note)")
+        let (proseDoc, proseBlocks) = try project(prose)
+        defer { proseDoc.destroy() }
+        XCTAssertEqual(proseBlocks.map(\.block.node), ["paragraph"])
+        XCTAssertEqual(proseBlocks[0].block.runs.map(\.text), ["Items [foo](see note)"])
+        XCTAssertTrue(proseBlocks[0].block.runs.allSatisfy(\.marks.isEmpty))
+
+        let badJS = try BlockNoteMarkdownPaste.parse("[badjs](javascript:alert(1))")
+        let (badJSDoc, badJSBlocks) = try project(badJS)
+        defer { badJSDoc.destroy() }
+        XCTAssertEqual(badJSBlocks.map(\.block.node), ["paragraph"])
+        XCTAssertEqual(badJSBlocks[0].block.runs.map(\.text), ["[badjs](javascript:alert(1))"])
+        XCTAssertTrue(badJSBlocks[0].block.runs.allSatisfy(\.marks.isEmpty))
+    }
+
+    func testLongUnclosedDelimiterRunsStayLinear() throws {
+        let tildeLine = "a " + String(repeating: "~", count: 8_190)
+        let starLine = String(repeating: "*", count: 8_190) + " a"
+        let tildeInput = Array(repeating: tildeLine, count: 24).joined(separator: "\n")
+        let starInput = Array(repeating: starLine, count: 24).joined(separator: "\n")
+
+        let start = ThreadCPUClock.now
+        let tildeCopies = try BlockNoteMarkdownPaste.parse(tildeInput)
+        let starCopies = try BlockNoteMarkdownPaste.parse(starInput)
+        let elapsed = ThreadCPUClock.now - start
+
+        XCTAssertLessThan(
+            elapsed, .milliseconds(500), "unclosed ~/* runs should stay linear, took \(elapsed)")
+
+        let (tildeDoc, tildeBlocks) = try project(tildeCopies)
+        defer { tildeDoc.destroy() }
+        XCTAssertEqual(tildeBlocks.count, 24)
+        XCTAssertEqual(tildeBlocks.first?.block.runs.map(\.text), [tildeLine])
+        XCTAssertTrue(tildeBlocks.allSatisfy { $0.block.runs == [InlineRun(tildeLine)] })
+
+        let (starDoc, starBlocks) = try project(starCopies)
+        defer { starDoc.destroy() }
+        XCTAssertEqual(starBlocks.count, 24)
+        XCTAssertEqual(starBlocks.first?.block.runs.map(\.text), [starLine])
+        XCTAssertTrue(starBlocks.allSatisfy { $0.block.runs == [InlineRun(starLine)] })
+    }
+
+    func testBalancedParenthesisDestinationsStayLossless() throws {
+        // `sanitizedLinkURL` rejects parentheses to preserve `InlineMarkdown` save round-trips,
+        // so balanced-paren link destinations stay intact as literal source text rather than
+        // truncating at the first `)`.
+        let wikiURL = "https://en.wikipedia.org/wiki/Swift_(programming_language)"
+        let fooURL = "https://example.com/(a)/b"
+        XCTAssertNil(sanitizedLinkURL(wikiURL))
+        XCTAssertNil(sanitizedLinkURL(fooURL))
+
+        let wikiSource = "[Swift](\(wikiURL))"
+        let wikiCopies = try BlockNoteMarkdownPaste.parse(wikiSource)
+        let (wikiDoc, wikiBlocks) = try project(wikiCopies)
+        defer { wikiDoc.destroy() }
+        XCTAssertEqual(wikiBlocks.map(\.block.node), ["paragraph"])
+        XCTAssertEqual(wikiBlocks[0].block.runs.map(\.text), [wikiSource])
+        XCTAssertTrue(wikiBlocks[0].block.runs.allSatisfy(\.marks.isEmpty))
+
+        let fooSource = "[foo](\(fooURL))"
+        let fooCopies = try BlockNoteMarkdownPaste.parse(fooSource)
+        let (fooDoc, fooBlocks) = try project(fooCopies)
+        defer { fooDoc.destroy() }
+        XCTAssertEqual(fooBlocks.map(\.block.node), ["paragraph"])
+        XCTAssertEqual(fooBlocks[0].block.runs.map(\.text), [fooSource])
+        XCTAssertTrue(fooBlocks[0].block.runs.allSatisfy(\.marks.isEmpty))
+
+        let mixed = try BlockNoteMarkdownPaste.parse("\(wikiSource) and [ok](https://example.com)")
+        let (mixedDoc, mixedBlocks) = try project(mixed)
+        defer { mixedDoc.destroy() }
+        XCTAssertEqual(mixedBlocks.map(\.block.node), ["paragraph"])
+        let mixedRuns = mixedBlocks[0].block.runs
+        XCTAssertEqual(mixedRuns.map(\.text), ["\(wikiSource) and ", "ok"])
+        if mixedRuns.count == 2 {
+            XCTAssertTrue(mixedRuns[0].marks.isEmpty)
+            XCTAssertEqual(mixedRuns[1].marks.map(\.key), ["link"])
+            XCTAssertEqual(YBlockProjection.linkHref(from: mixedRuns[1].marks[0].valueJSON), "https://example.com")
+        }
+
+        // The shared destination parser accepts balanced parentheses when the URL validator does.
+        let imageCopies = try BlockNoteMarkdownPaste.parse("![Swift](https://images.example/Swift_(logo).png)")
+        let (imageDoc, imageBlocks) = try project(imageCopies)
+        defer { imageDoc.destroy() }
+        XCTAssertEqual(imageBlocks.map(\.block.node), ["image"])
+        XCTAssertEqual(
+            imageBlocks[0].block.props.first { $0.key == "url" }?.value,
+            .string("https://images.example/Swift_(logo).png"))
+        XCTAssertEqual(imageBlocks[0].block.props.first { $0.key == "name" }?.value, .string("Swift"))
+    }
+
+    func testAngleBracketedTitledAndPaddedLinkDestinations() throws {
+        let inputs = [
+            "[Example](<https://example.com>)",
+            "[Example](https://example.com \"Title\")",
+            "[Example]( https://example.com )",
+            "[Example](https://example.com 'Title (1)')",
+        ]
+        for input in inputs {
+            let copies = try BlockNoteMarkdownPaste.parse(input)
+            let (doc, blocks) = try project(copies)
+            defer { doc.destroy() }
+            XCTAssertEqual(blocks.map(\.block.node), ["paragraph"], input)
+            let runs = blocks[0].block.runs
+            XCTAssertEqual(runs.map(\.text), ["Example"], input)
+            if runs.count == 1 {
+                XCTAssertEqual(runs[0].marks.map(\.key), ["link"], input)
+                XCTAssertEqual(
+                    YBlockProjection.linkHref(from: runs[0].marks[0].valueJSON), "https://example.com", input)
+            }
+        }
+    }
+
+    func testBalancedNestedBracketsInLinkLabelsAndImageAltText() throws {
+        let nestedLink = try BlockNoteMarkdownPaste.parse("[foo [bar] baz](https://example.com)")
+        let (linkDoc, linkBlocks) = try project(nestedLink)
+        defer { linkDoc.destroy() }
+        XCTAssertEqual(linkBlocks.map(\.block.node), ["paragraph"])
+        let linkRuns = linkBlocks[0].block.runs
+        XCTAssertEqual(linkRuns.map(\.text), ["foo [bar] baz"])
+        if linkRuns.count == 1 {
+            XCTAssertEqual(linkRuns[0].marks.map(\.key), ["link"])
+            XCTAssertEqual(YBlockProjection.linkHref(from: linkRuns[0].marks[0].valueJSON), "https://example.com")
+        }
+
+        let nestedImage = try BlockNoteMarkdownPaste.parse("![alt [1]](https://images.example/a.png)")
+        let (imgDoc, imgBlocks) = try project(nestedImage)
+        defer { imgDoc.destroy() }
+        XCTAssertEqual(imgBlocks.map(\.block.node), ["image"])
+        XCTAssertEqual(
+            imgBlocks[0].block.props.first { $0.key == "url" }?.value, .string("https://images.example/a.png"))
+        XCTAssertEqual(imgBlocks[0].block.props.first { $0.key == "name" }?.value, .string("alt [1]"))
+
+        let prefixedImage = try BlockNoteMarkdownPaste.parse("![prefix ![ok](https://images.example/ok.png)")
+        let (prefDoc, prefBlocks) = try project(prefixedImage)
+        defer { prefDoc.destroy() }
+        XCTAssertEqual(prefBlocks.map(\.block.node), ["paragraph", "image"])
+        if prefBlocks.count == 2 {
+            XCTAssertEqual(prefBlocks[0].block.runs.map(\.text), ["![prefix "])
+            XCTAssertTrue(prefBlocks[0].block.runs.allSatisfy(\.marks.isEmpty))
+            XCTAssertEqual(
+                prefBlocks[1].block.props.first { $0.key == "url" }?.value,
+                .string("https://images.example/ok.png"))
+            XCTAssertEqual(prefBlocks[1].block.props.first { $0.key == "name" }?.value, .string("ok"))
         }
     }
 }
