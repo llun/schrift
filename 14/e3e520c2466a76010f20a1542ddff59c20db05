@@ -1,0 +1,30 @@
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_4fb28ab57323fe::t_3d3cedb3d72683 3079-3082
+  s_4fb28ab57323fe::t_90c08b829ce6ab 2045,2859,2862,2907-2911,2948-2962,2969-2972,2975,3007-3025,3028,3034-3045,3047-3061,3063-3064,3067,3069,3073,3083-3102,3110
+SchriftTests/Features/Editor/Native/NativePasteAsBlocksTests.swift
+  s_4fb28ab57323fe::t_f11fba723268b5 656,663,672,679,693,700,729,736,750,762,836,859,886-887,904,946,964
+  s_4fb28ab57323fe::t_3d3cedb3d72683 691,720,747,760,784,803,827,834,848,857,873-883,888-889,936,959
+  s_4fb28ab57323fe::t_fad605ac70659a 67,421-422,626-655,657-662,664-671,673-678,680-690,692,694-699,701-719,721-728,730-735,737-746,748-749,751-759,761,763-783,785-802,804-826,828-833,835,837-847,849-856,858,860-872,884-885,890-903,905-935,937-945,947-958,960-963,965-966
+Schrift/Core/Yjs/BlockNoteMarkdownPaste.swift
+  s_4fb28ab57323fe::t_dd9e1174b7a165 73-108
+Schrift/Features/Editor/Native/TableEditorViewController.swift
+  s_4fb28ab57323fe::t_49d7f0799d65a7 651-664
+docs/standards/document-engine.md
+  s_4fb28ab57323fe::t_5798fd31adaf35 704-713
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "14e3e520c2466a76010f20a1542ddff59c20db05",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
