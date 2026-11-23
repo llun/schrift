@@ -691,4 +691,83 @@ final class BlockNoteMarkdownPasteTests: XCTestCase {
             elapsedNestedStar, .milliseconds(500),
             "24 capped lines of unclosed '*' inside '**' should stay linear, took \(elapsedNestedStar)")
     }
+
+    func testItalicInsideLinkLabelContainingNestedLinkSyntaxMatchesCharacterScanner() throws {
+        let copies = try BlockNoteMarkdownPaste.parse("[*a [b *c*](https://x.com)](https://y.com)")
+        let (doc, blocks) = try project(copies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(blocks.map(\.block.node), ["paragraph"])
+        guard blocks.count == 1 else { return }
+        let runs = blocks[0].block.runs
+        XCTAssertEqual(runs.map(\.text), ["*a [b ", "c", "](https://x.com)"])
+        guard runs.count == 3 else { return }
+        XCTAssertEqual(runs[0].marks.map(\.key), ["link"])
+        XCTAssertEqual(YBlockProjection.linkHref(from: runs[0].marks[0].valueJSON), "https://y.com")
+        XCTAssertEqual(Set(runs[1].marks.map(\.key)), ["link", "italic"])
+        let midHref = try XCTUnwrap(runs[1].marks.first { $0.key == "link" }?.valueJSON)
+        XCTAssertEqual(YBlockProjection.linkHref(from: midHref), "https://y.com")
+        XCTAssertEqual(runs[2].marks.map(\.key), ["link"])
+        XCTAssertEqual(YBlockProjection.linkHref(from: runs[2].marks[0].valueJSON), "https://y.com")
+    }
+
+    func testFlankingClassifiesPreviousGraphemeClusterByBaseScalar() throws {
+        // `‼️` is U+203C (punctuation) + U+FE0F (variation selector): base is punctuation.
+        let bangCopies = try BlockNoteMarkdownPaste.parse("‼️*important*")
+        let (bangDoc, bangBlocks) = try project(bangCopies)
+        defer { bangDoc.destroy() }
+
+        XCTAssertEqual(bangBlocks.map(\.block.node), ["paragraph"])
+        guard bangBlocks.count == 1 else { return }
+        XCTAssertEqual(bangBlocks[0].block.runs.map(\.text), ["‼️", "important"])
+        if bangBlocks[0].block.runs.count == 2 {
+            XCTAssertTrue(bangBlocks[0].block.runs[0].marks.isEmpty)
+            XCTAssertEqual(bangBlocks[0].block.runs[1].marks.map(\.key), ["italic"])
+        }
+
+        // `" \u{0301}"` has whitespace base scalar U+0020, so the trailing `*` is not right-flanking.
+        let combinedSpace = "*foo \u{0301}*"
+        let spaceCopies = try BlockNoteMarkdownPaste.parse(combinedSpace)
+        let (spaceDoc, spaceBlocks) = try project(spaceCopies)
+        defer { spaceDoc.destroy() }
+
+        XCTAssertEqual(spaceBlocks.map(\.block.node), ["paragraph"])
+        guard spaceBlocks.count == 1 else { return }
+        XCTAssertEqual(spaceBlocks[0].block.runs.map(\.text), [combinedSpace])
+        XCTAssertTrue(spaceBlocks[0].block.runs.allSatisfy(\.marks.isEmpty))
+    }
+
+    func testASCIISyntaxBytesExtendedByGraphemeExtendersStayLiteral() throws {
+        // Keycap `*️⃣` (`*` + U+FE0F + U+20E3) is a single grapheme, not a `*` delimiter.
+        let literalKeycap = "Press *️⃣* now"
+        let literalCopies = try BlockNoteMarkdownPaste.parse(literalKeycap)
+        let (literalDoc, literalBlocks) = try project(literalCopies)
+        defer { literalDoc.destroy() }
+        XCTAssertEqual(literalBlocks.map(\.block.node), ["paragraph"])
+        XCTAssertEqual(literalBlocks.first?.block.runs.map(\.text), [literalKeycap])
+        XCTAssertTrue(literalBlocks.first?.block.runs.allSatisfy(\.marks.isEmpty) ?? false)
+
+        let italicKeycapCopies = try BlockNoteMarkdownPaste.parse("*Press *️⃣*")
+        let (italicDoc, italicBlocks) = try project(italicKeycapCopies)
+        defer { italicDoc.destroy() }
+        XCTAssertEqual(italicBlocks.map(\.block.node), ["paragraph"])
+        XCTAssertEqual(italicBlocks.first?.block.runs.map(\.text), ["Press *️⃣"])
+        XCTAssertEqual(italicBlocks.first?.block.runs.first?.marks.map(\.key), ["italic"])
+
+        // Combining mark attached to `(`, `[`, `)`, or `` ` `` prevents syntax matching.
+        let extendedSyntaxInputs = [
+            "hello ![alt](\u{0301}https://example.com/a.png)",
+            "`\u{0301}code`",
+            "[\u{0301}a](https://example.com)",
+            "[a](https://example.com)\u{0301}",
+        ]
+        for input in extendedSyntaxInputs {
+            let copies = try BlockNoteMarkdownPaste.parse(input)
+            let (doc, blocks) = try project(copies)
+            defer { doc.destroy() }
+            XCTAssertEqual(blocks.map(\.block.node), ["paragraph"], input)
+            XCTAssertEqual(blocks.first?.block.runs.map(\.text), [input], input)
+            XCTAssertTrue(blocks.first?.block.runs.allSatisfy(\.marks.isEmpty) ?? false, input)
+        }
+    }
 }
