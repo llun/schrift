@@ -690,5 +690,12 @@ enum L10nKey: String, CaseIterable, Sendable {
     // "Discard offline edits?"
     case native_editor_waiting_classic_discard_message = "native.editor.waiting_classic_discard_message"
     // "Your unsynced changes on this device will be permanently deleted."
+    // Native drag-to-reorder
+    case native_editor_drag_handle = "native.editor.drag_handle"  // "Drag to reorder"
+    case native_editor_drag_moved_to_top = "native.editor.drag_moved_to_top"  // "Moved to top"
+    case native_editor_drag_moved_before = "native.editor.drag_moved_before"  // "Moved before %@"
+    case native_editor_drag_moved_after = "native.editor.drag_moved_after"  // "Moved after %@"
+    case native_editor_drag_moved_inside = "native.editor.drag_moved_inside"  // "Moved inside %@"
+    case native_editor_drag_nested_count = "native.editor.drag_nested_count"  // "+%d nested"
     // (screen-specific keys are added by B9, B11, Phase C, Phase F)
 }

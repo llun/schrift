@@ -27,6 +27,8 @@ final class StringsCompletenessTests: XCTestCase {
         .native_editor_waiting_classic_failed, .native_editor_waiting_classic_copy_text,
         .native_editor_waiting_classic_discard_title, .native_editor_waiting_classic_discard_message,
         .native_editor_paste_and_match_style,
+        .native_editor_drag_handle, .native_editor_drag_moved_to_top, .native_editor_drag_moved_before,
+        .native_editor_drag_moved_after, .native_editor_drag_moved_inside, .native_editor_drag_nested_count,
     ]
 
     private static let extendedPluralKeys: Set<L10nKey> = [
@@ -121,9 +123,12 @@ final class StringsCompletenessTests: XCTestCase {
         let en = Strings_en.table
         for language in AppLanguage.allCases where language != .english {
             let table = Strings.table(for: language)
+            // A missing key renders the English string (LocalizationStore's fallback), so only present
+            // translations can disagree; which keys may be missing is testEveryLanguageHasEveryBaseKey's job.
             for key in L10nKey.allCases where !Self.extendedPluralKeys.contains(key) {
+                guard let translated = table[key] else { continue }
                 XCTAssertEqual(
-                    argumentList(table[key] ?? ""), argumentList(en[key] ?? ""),
+                    argumentList(translated), argumentList(en[key] ?? ""),
                     "\(language.code) format-argument mismatch on \(key.rawValue)")
             }
         }

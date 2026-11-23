@@ -642,6 +642,90 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(texts.label, "Tree first|Tree second|Tree second", "the journal restores the duplicate")
     }
 
+    /// Dragging the contextual `⋮⋮` handle downward moves the first paragraph
+    /// below the second in one durable move that survives a relaunch.
+    func testDragHandleReordersParagraphBelowAnotherAndSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-drag"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        focusFirstParagraph(of: editor, in: app)
+        app.buttons["drag.caret.p1"].tap()
+
+        let order = app.staticTexts["drag.order"]
+        app.buttons["drag.read"].tap()
+        XCTAssertEqual(
+            order.label,
+            "First paragraph:0|Second paragraph:0|Parent list item:0|Nestable paragraph:0")
+
+        let handle = app.buttons["nativeEditor.dragHandle"]
+        XCTAssertTrue(handle.waitForExistence(timeout: 5), "the drag handle must appear beside the active block")
+        XCTAssertTrue(handle.waitForStableFrame())
+
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let destination = start.withOffset(CGVector(dx: 0, dy: 52))
+        start.press(forDuration: 0.3, thenDragTo: destination)
+
+        let reordered = "Second paragraph:0|First paragraph:0|Parent list item:0|Nestable paragraph:0"
+        let didReorder = waitForDragOrder(app: app, order: order, expected: reordered)
+        XCTAssertTrue(didReorder, "expected \(reordered), got \(order.label)")
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+
+        app.terminate()
+        app.launchArguments = ["--native-open", "--native-drag"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        app.buttons["drag.read"].tap()
+        XCTAssertEqual(order.label, reordered, "the journal restores the drag reorder")
+    }
+
+    /// Dragging the contextual `⋮⋮` handle sideways to the right nests a
+    /// paragraph under the list item above it and survives a relaunch.
+    func testDragHandleSlidesRightToNestParagraphUnderListItemAndSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-drag"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        focusFirstParagraph(of: editor, in: app)
+        app.buttons["drag.caret.p3"].tap()
+
+        let order = app.staticTexts["drag.order"]
+        app.buttons["drag.read"].tap()
+        XCTAssertEqual(
+            order.label,
+            "First paragraph:0|Second paragraph:0|Parent list item:0|Nestable paragraph:0")
+
+        let handle = app.buttons["nativeEditor.dragHandle"]
+        XCTAssertTrue(handle.waitForExistence(timeout: 5), "the drag handle must appear beside the active block")
+        XCTAssertTrue(handle.waitForStableFrame())
+
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let destination = start.withOffset(CGVector(dx: 64, dy: 0))
+        start.press(forDuration: 0.3, thenDragTo: destination)
+
+        let nested = "First paragraph:0|Second paragraph:0|Parent list item:0|Nestable paragraph:1"
+        let didNest = waitForDragOrder(app: app, order: order, expected: nested)
+        XCTAssertTrue(didNest, "expected \(nested), got \(order.label)")
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+
+        app.terminate()
+        app.launchArguments = ["--native-open", "--native-drag"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        app.buttons["drag.read"].tap()
+        XCTAssertEqual(order.label, nested, "the journal restores the nested drag")
+    }
+
+    private func waitForDragOrder(app: XCUIApplication, order: XCUIElement, expected: String) -> Bool {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            app.buttons["drag.read"].tap()
+            if order.label == expected { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        }
+        return order.label == expected
+    }
+
     /// PR06b: the disclosure button folds and unfolds a toggle in the native
     /// host. Folded, the children leave the text VoiceOver reads; typing
     /// elsewhere leaves them alone, and unfolding shows them intact.

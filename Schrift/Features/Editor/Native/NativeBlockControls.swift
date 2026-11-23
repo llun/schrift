@@ -463,6 +463,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     /// the replica are untouched; TextKit re-lays out only the viewport.
     func invalidateChrome() {
         for view in attachmentViews.allObjects { view.applyTheme() }
+        textView?.blockDragController?.applyTheme()
         guard let textView, let layout = textView.textLayoutManager else { return }
         layout.invalidateLayout(for: layout.documentRange)
         textView.setNeedsLayout()

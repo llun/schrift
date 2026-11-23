@@ -176,6 +176,9 @@ private struct NativeOpenFixture: View {
             }
             if ProcessInfo.processInfo.arguments.contains("--native-selection") { SelectionReadout() }
         }
+        .overlay(alignment: .bottomTrailing) {
+            if ProcessInfo.processInfo.arguments.contains("--native-drag") { DragControls() }
+        }
         .overlay(alignment: .bottomLeading) {
             if ProcessInfo.processInfo.arguments.contains("--native-diagnostics") { DiagnosticsReadoutOverlay() }
         }
@@ -322,6 +325,22 @@ private struct NativeOpenFixture: View {
                         node: "bulletListItem", props: style, runs: [InlineRun("Tree first")], id: "owned-tree-1"),
                     BlockNoteBlock(
                         node: "bulletListItem", props: style, runs: [InlineRun("Tree second")], id: "owned-tree-2"),
+                ], at: 0)
+        }
+        // `--native-drag`: paragraphs and a bullet item for handle drag-to-reorder and nesting.
+        if ProcessInfo.processInfo.arguments.contains("--native-drag") {
+            blocks.insert(
+                contentsOf: [
+                    BlockNoteBlock(
+                        node: "paragraph", props: style, runs: [InlineRun("First paragraph")], id: "drag-p1"),
+                    BlockNoteBlock(
+                        node: "paragraph", props: style, runs: [InlineRun("Second paragraph")], id: "drag-p2"),
+                    BlockNoteBlock(
+                        node: "bulletListItem", props: style, runs: [InlineRun("Parent list item")], id: "drag-list-1"),
+                    BlockNoteBlock(
+                        node: "paragraph", props: style, runs: [InlineRun("Nestable paragraph")], id: "drag-p3"),
+                    BlockNoteBlock(
+                        node: "paragraph", props: style, runs: [InlineRun("Fourth paragraph")], id: "drag-p4"),
                 ], at: 0)
         }
         var checkpoint = BlockNoteYjs.encode(blocks, clientID: 1)
@@ -804,6 +823,58 @@ private struct TreeControls: View {
 
     @MainActor private static func depths() -> String {
         blocks().prefix(3).map { String($0.depth) }.joined(separator: ",")
+    }
+}
+
+/// `--native-drag`: unobtrusive bottom-trailing controls for drag-to-reorder UI tests
+/// (places the caret on a named block and reads the first four blocks' text and depth).
+private struct DragControls: View {
+    @State private var summary = ""
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 6) {
+                Button("Focus p1") { Self.placeCaret(in: "drag-p1") }
+                    .accessibilityIdentifier("drag.caret.p1")
+                Button("Focus p3") { Self.placeCaret(in: "drag-p3") }
+                    .accessibilityIdentifier("drag.caret.p3")
+                Button("Read drag") { summary = Self.readOrder() }
+                    .accessibilityIdentifier("drag.read")
+            }
+            Text(summary)
+                .font(.caption2)
+                .accessibilityIdentifier("drag.order")
+        }
+        .padding(8)
+        .buttonStyle(.bordered)
+    }
+
+    @MainActor private static func blockEntries() -> [(id: String, location: Int, depth: Int, text: String)] {
+        guard let view = mountedTextView() else { return [] }
+        let storage = view.textStorage
+        let ns = storage.string as NSString
+        var result: [(id: String, location: Int, depth: Int, text: String)] = []
+        storage.enumerateAttribute(.nativeBlockID, in: NSRange(location: 0, length: storage.length)) {
+            value, range, _ in
+            guard let id = value as? String, result.last?.id != id else { return }
+            let depth = storage.attribute(.nativeDepth, at: range.location, effectiveRange: nil) as? Int ?? 0
+            let raw = ns.substring(with: range).trimmingCharacters(in: .newlines)
+            result.append((id, range.location, depth, raw))
+        }
+        return result
+    }
+
+    @MainActor private static func placeCaret(in blockID: String) {
+        guard let view = mountedTextView(),
+            let entry = blockEntries().first(where: { $0.id == blockID })
+        else { return }
+        view.selectedRange = NSRange(location: entry.location, length: 0)
+        view.delegate?.textViewDidChangeSelection?(view)
+        view.layoutIfNeeded()
+    }
+
+    @MainActor private static func readOrder() -> String {
+        blockEntries().prefix(4).map { "\($0.text):\($0.depth)" }.joined(separator: "|")
     }
 }
 

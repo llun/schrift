@@ -268,6 +268,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         surface.onPatchApplied = { [weak self] patch in
             // The editor's own commands place their caret themselves.
             if patch.nativeCommand?.surfaceID != surfaceID { self?.needsRestore = true }
+            self?.view?.blockDragController?.reconcileAfterSurfaceChange()
         }
         // A fold sends no selection change; the caret must not stay in what it hid.
         let relayout = surface.onFoldChange
@@ -275,6 +276,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             relayout?()
             // A peer patch may have edited storage just before this fold callback.
             self?.asOneKeyboardChange { self?.keepSelectionVisible() }
+            self?.view?.blockDragController?.reconcileAfterSurfaceChange()
         }
         inputLanguage = { [weak view] in view?.textInputMode?.primaryLanguage }
         view.delegate = self
@@ -282,6 +284,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         view.isEditable = true
         view.allowsEditingTextAttributes = false
         refreshSelectionMarks()
+        view.blockDragController?.updateHandle()
     }
 
     // MARK: - Table cells (PR11a)
@@ -1322,6 +1325,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         lastCaret = view.selectedRange.location
         selection.selectionDidChange()
         refreshSelectionMarks()
+        view.blockDragController?.updateHandle()
     }
 
     /// A caret UIKit placed never rests in folded content: it moves past the
@@ -2038,10 +2042,22 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         activeMarks = []
         typingCaret = nil
         isEditingBlurred = false
+        view?.blockDragController?.cancelDrag()
+        view?.blockDragController?.updateHandle()
     }
 
     var canEditForTextDrop: Bool {
         canEdit
+    }
+
+    var canReorderBlocks: Bool {
+        canFormat && tableMove == nil && tableKey == nil
+    }
+
+    /// The visible single block containing the caret or selection, or `nil`
+    /// across multiple blocks, while composing, or when editing is unavailable.
+    func caretBlockID() -> String? {
+        blockActionTarget()
     }
 
     var canAcceptMediaDrop: Bool {
@@ -3634,6 +3650,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         if began {
             noticeKey = nil
             activeInlineTrigger = nil
+            view.blockDragController?.cancelDrag()
+            view.blockDragController?.updateHandle()
         }
         return began
     }
@@ -3880,6 +3898,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         barrier = nil
         intents = []
         history.destroy()
+        view?.blockDragController?.cancelDrag()
+        view?.blockDragController?.updateHandle()
         dropped?(false)
     }
 

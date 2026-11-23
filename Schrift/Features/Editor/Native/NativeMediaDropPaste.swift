@@ -797,13 +797,7 @@ final class NativeMediaDropController: NSObject, UIDropInteractionDelegate, UITe
     weak var textView: NativeTextView?
     private(set) var currentTarget: MediaDropTarget?
 
-    private let lineIndicator: UIView = {
-        let view = UIView()
-        view.isHidden = true
-        view.isUserInteractionEnabled = false
-        view.layer.cornerRadius = 1
-        return view
-    }()
+    private let lineIndicator = NativeDropLayoutHelper.makeDropLineView()
 
     private let replaceIndicator: UIView = {
         let view = UIView()
@@ -948,12 +942,9 @@ final class NativeMediaDropController: NSObject, UIDropInteractionDelegate, UITe
         layoutManager: NSTextLayoutManager,
         docStart: NSTextLocation
     ) -> CGRect? {
-        guard entries.indices.contains(index) else { return nil }
-        let offset = entries[index].range.location
-        guard let loc = contentManager.location(docStart, offsetBy: offset),
-            let fragment = layoutManager.textLayoutFragment(for: loc)
-        else { return nil }
-        return fragment.layoutFragmentFrame
+        NativeDropLayoutHelper.fragmentFrame(
+            forBlockAt: index, entries: entries, contentManager: contentManager,
+            layoutManager: layoutManager, docStart: docStart)
     }
 
     private func spanContainerFrame(
@@ -1013,14 +1004,11 @@ final class NativeMediaDropController: NSObject, UIDropInteractionDelegate, UITe
     private func showIndicator(for result: HitTestResult, in textView: NativeTextView) {
         let accent = textView.blockControls.color(\.brandFill)
         currentTarget = result.target
-        let inset = textView.textContainerInset
-        let width = max(44, textView.bounds.width - inset.left - inset.right)
 
         switch result.target {
         case .before(_, let indicatorY), .after(_, let indicatorY):
             replaceIndicator.isHidden = true
-            lineIndicator.backgroundColor = accent
-            lineIndicator.frame = CGRect(x: inset.left, y: round(indicatorY - 1), width: width, height: 2)
+            NativeDropLayoutHelper.layoutDropLine(lineIndicator, indicatorY: indicatorY, depth: 0, in: textView)
             lineIndicator.isHidden = false
         case .replace:
             lineIndicator.isHidden = true

@@ -455,7 +455,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `NativeIndentTests`, `BlockNoteTreeOracleTests` (`f-sink-bullet`, `enter-empty-nested`)
   and the host UI test `testTabNestsTheSecondBulletAndSurvivesRelaunch` (`--native-tree`
   seeds two bullets and host-only caret/depth controls). Subtree
-  move/copy/clipboard are PR06d; drag is not built yet.
+  move/copy/clipboard and drag-to-reorder are described below.
 
 - **PR06b toggles and local folding.** Under the native flag (`nativeMarks`, as PR05b
   gated callouts) `YBlockProjection` models `toggleListItem` (BlockNote 0.56
@@ -716,15 +716,24 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `NativeBlockReorder.dropTarget` (clamping depth, keeping tables, media and column
   groups at depth 0, and refusing folded toggles, locked/opaque blocks, own subtrees
   and no-ops), and `NativeInputCoordinator.moveBlock(_:to:)` (one undo step, selection
-  following the moved block, within the document or one open column); the drag gesture
-  UI is not built yet. Tests: `NativeBlockCommandsTests`, `NativeBlockReorderTests`,
-  `NativeClipboardTests`, `NativePasteAsBlocksTests` (round trip byte-identical but for ids,
+  following the moved block, within the document or one open column). `NativeBlockDragController`
+  on `NativeTextView` drives the drag-to-reorder UI: a contextual `⋮⋮` drag handle beside the
+  caret block (and pointer-hovered block on iPad, no permanent gutter, hidden for locked/opaque
+  blocks and outside Editing mode) plus 0.4 s long-press on non-text cards (image, file, video,
+  audio, pdf, divider, table, column group), a lifted preview card with nested-child count,
+  horizontal slide snapping in list-indent steps with the shared 2 pt `brandFill` drop line
+  (`NativeDropLayoutHelper`, shared with `NativeMediaDropController`), `CADisplayLink` edge
+  auto-scroll (~56 pt), lift/selection/drop haptics, cancel without mutation, and a VoiceOver
+  landing announcement. Tests: `NativeBlockCommandsTests`, `NativeBlockReorderTests`,
+  `NativeBlockDragControllerTests`, `NativeClipboardTests`, `NativePasteAsBlocksTests` (round trip byte-identical but for ids,
   malformed/oversized payloads, web HTML, Markdown, slice merge, table cells, code blocks,
   source editors, Paste and Match Style + `⌘⇧V` + edit menu, single-step undo), `BlockNoteTreeOracleTests.testMovesMatchTheBlockNoteCaptures`
   (`BlockNoteMoveCaptures`, from the installed 0.56 `moveBlocksUp`/`moveBlocksDown` through
-  the S3 harness in node/jsdom) and the host UI test
+  the S3 harness in node/jsdom) and the host UI tests
   `testDuplicateFromTheBlockMenuSurvivesRelaunch` (`--native-tree`, whose host controls also
-  read the first three blocks' text as `tree.texts`).
+  read the first three blocks' text as `tree.texts`),
+  `testDragHandleReordersParagraphBelowAnotherAndSurvivesRelaunch`, and
+  `testDragHandleSlidesRightToNestParagraphUnderListItemAndSurvivesRelaunch` (`--native-drag`).
 
 - **PR07b collaborative undo in the native editor.** `Native/NativeUndoManager` owns one
   `ReplicaHistory` (PR08a: the nonisolated Yjs side — the `YUndoManager`, its trim, the

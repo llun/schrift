@@ -195,6 +195,15 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
      editors stay literal, HTML tables and multi-cell selections keep table-editor paste behavior,
      **Paste and Match Style** (edit menu and `⌘⇧V`) pastes literal plain text for HTML and
      Markdown, and one undo restores the document after any paste.
+   - Drag-to-reorder: in Editing mode, verify the `⋮⋮` handle appears beside the caret's block
+     (and under the pointer on iPad), stays hidden on locked/opaque blocks and in Reading mode, and
+     does not interfere with text selection or scrolling. Drag a paragraph below another via the
+     handle, slide sideways over a list item to nest/outdent (verifying the indented 2 pt drop line,
+     lifted preview, and lift/selection/drop haptics), long-press (~0.4 s) non-text cards (image,
+     file, video, audio, divider, table, column group), drag a folded toggle with its hidden
+     children, drag near the top/bottom edge to auto-scroll, reorder within a column's text view,
+     verify cancel restores without moving, one undo restores a drop, and VoiceOver announces where
+     the block landed while keeping Move Up/Down/Indent/Outdent actions.
 4. **IME, system text tools & Pencil:**
    - Test Chinese, Japanese, and Korean IME composition around Return, block join/split, and
      concurrent peer edits (including `provisional.json` recovery if a peer deletes the active
