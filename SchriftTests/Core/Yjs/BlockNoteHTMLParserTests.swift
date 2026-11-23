@@ -723,7 +723,8 @@ final class BlockNoteHTMLParserTests: XCTestCase {
                 "https://inner.example")
         }
 
-        // 3. Unclosed <a> is closed by a new <a> start tag in block-paste mode, so <h2>Next</h2> has no link.
+        // 3. Nested links: the inner link wins for its text. The first link is never closed in this
+        // malformed input, so text after it (the heading) stays inside it, as the parsed tree has it.
         let adoptHTML = "<a href=\"https://a.example\">One<a href=\"https://b.example\">Two</a><h2>Next</h2>"
         let adoptCopies = try BlockNoteHTMLParser.parse(adoptHTML)
         let (adoptDoc, adoptBlocks) = try project(adoptCopies)
@@ -742,11 +743,13 @@ final class BlockNoteHTMLParserTests: XCTestCase {
             }
             XCTAssertEqual(adoptBlocks[1].block.props.first { $0.key == "level" }?.value, .int(2))
             XCTAssertEqual(adoptBlocks[1].block.runs.map(\.text), ["Next"])
-            XCTAssertTrue(adoptBlocks[1].block.runs.allSatisfy(\.marks.isEmpty))
+            XCTAssertEqual(
+                adoptBlocks[1].block.runs.first?.marks.first.flatMap { YBlockProjection.linkHref(from: $0.valueJSON) },
+                "https://a.example")
         }
     }
 
-    func testANestedLinkClosesOnlyTheOpenLink() throws {
+    func testNestedLinksKeepFormattingAndDroppedContainers() throws {
         // Bold opened inside the first link stays bold across the second link.
         let (boldDoc, bold) = try project(
             BlockNoteHTMLParser.parse(
