@@ -156,6 +156,10 @@ struct TableModel {
     /// Each paragraph item's runs as the grid reads them (`TableGrid`).
     private var runs: [ObjectIdentifier: [InlineRun]] = [:]
 
+    init(rows: [Row]) {
+        self.rows = rows
+    }
+
     init(table: YType, block: String) throws {
         rows = try YBlockProjection.children(of: table, includeFormats: false).map { rowItem in
             guard case .type(let row) = rowItem.content else { throw BlockNoteWriter.Error.malformedBlock(block) }

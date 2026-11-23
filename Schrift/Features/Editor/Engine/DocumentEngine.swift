@@ -1887,6 +1887,9 @@ final class DocumentEngine {
     /// peer's concurrent edit inside the moved block lands in the deleted
     /// original (as with `sinkListItem`); identity is not preserved.
     private func prepareBlockCommand(_ command: NativeEditCommand) throws -> PreparedCommand {
+        if case .insertSubtrees(let payload, let replacing) = command.kind, let replacing {
+            return try preparePasteSubtrees(command, payload: payload, replacing: replacing)
+        }
         let index = builder.index
         let id = command.blockID
         let order = index.list(of: id)
@@ -2005,7 +2008,7 @@ final class DocumentEngine {
                 [.element("paragraph", writer.schemas["paragraph"] ?? [], [])])
             let left = before ? item.left : item
             return ({ try writer.insertBlocks([paragraph], into: entry.group, after: left) }, { start(newID) })
-        case .insertSubtrees(let payload):
+        case .insertSubtrees(let payload, _):
             // The payload is untrusted (any app's pasteboard): decoded, bounded
             // and validated here, and every container gets a fresh id.
             let copies = try BlockNoteSubtreePayload.validatingPastable(BlockNoteSubtreePayload.decode(payload))
@@ -2036,6 +2039,155 @@ final class DocumentEngine {
         default:
             throw DocumentEngineError.unsupportedNativeInput
         }
+    }
+
+    /// Context-aware block paste replacing `range` in one transaction:
+    /// - source editors (`mathBlock`, `diagram`, inline `math`): refused (plain text only via `replaceText`);
+    /// - single table cell paragraph: flattened into inline runs + `hardBreak` keeping supported marks;
+    /// - single `codeBlock`: flattened into unmarked plain text;
+    /// - prose blocks: ProseMirror-style slice merge (`BlockNoteWriter.replaceRangeWithBlocks`).
+    private func preparePasteSubtrees(
+        _ command: NativeEditCommand, payload: Data, replacing range: NativePasteRange
+    ) throws -> PreparedCommand {
+        let index = builder.index
+        guard index.isCanonical, !index.isSourceText(command.blockID),
+            let entry = index.entries[command.blockID]
+        else { throw DocumentEngineError.unsupportedNativeInput }
+
+        let copies = try BlockNoteSubtreePayload.validatingPastable(BlockNoteSubtreePayload.decode(payload))
+        let shape = try BlockNoteSubtreePayload.validate(copies)
+        guard Self.payloadUTF16Count(of: copies) <= NativeClipboard.maxPasteUTF16 else {
+            throw BlockNoteSubtreePayload.Error.tooLarge
+        }
+
+        // Single table cell: flatten blocks into inline runs + hard breaks keeping supported marks.
+        if isCellText(entry) {
+            guard entry.isProjectable, range.endBlockID == command.blockID else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            let units = textUnits(entry)
+            guard Self.isBoundary(range.startOffset, in: units),
+                Self.isBoundary(range.endOffset, in: units),
+                range.startOffset <= range.endOffset
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            let flattened = try BlockNoteWriter.flattenForTableCell(copies)
+            guard range.startOffset < range.endOffset || !flattened.isEmpty else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            let target = try textTarget(entry)
+            let insertedCount = Self.utf16Count(of: flattened)
+            return (
+                write: {
+                    try self.writer.replaceRangeWithCopies(
+                        in: target, range: range.startOffset..<range.endOffset, copies: flattened)
+                },
+                caret: {
+                    EditorPosition(blockID: command.blockID, offset: range.startOffset + insertedCount, assoc: -1)
+                }
+            )
+        }
+
+        // Single code block: flatten blocks into plain unmarked text.
+        if entry.element?.typeRef == .xmlElement(nodeName: "codeBlock"),
+            range.endBlockID == command.blockID
+        {
+            let (_, units) = try structuralTarget(command.blockID, allowCode: true, allowLossy: .any)
+            guard Self.isBoundary(range.startOffset, in: units),
+                Self.isBoundary(range.endOffset, in: units),
+                range.startOffset <= range.endOffset
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            let plain = BlockNoteWriter.plainText(ofBlocks: copies)
+            guard !NativeClipboard.isTooLarge(plain) else {
+                throw BlockNoteSubtreePayload.Error.tooLarge
+            }
+            guard range.startOffset < range.endOffset || !plain.isEmpty else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            let target = try textTarget(entry)
+            return (
+                write: {
+                    try self.writer.replaceText(
+                        in: target, range: range.startOffset..<range.endOffset, with: plain, marks: [:])
+                },
+                caret: {
+                    EditorPosition(blockID: command.blockID, offset: range.startOffset + plain.utf16.count, assoc: -1)
+                }
+            )
+        }
+
+        // Prose block(s): ProseMirror-style slice merge in one transaction.
+        let same = range.endBlockID == command.blockID
+        let singleTextblock =
+            copies.count == 1 && BlockNoteWriter.isMergeableTextblock(copies[0])
+            && BlockNoteWriter.nestedGroupOfContainer(copies[0]) == nil
+        let startAllowance: LossyAllowance = !same ? .none : (singleTextblock ? .any : .styled)
+        let (startNode, startUnits) = try structuralTarget(
+            command.blockID, allowCode: false, allowLossy: startAllowance)
+        let list = index.list(of: command.blockID)
+        guard index.sameList(command.blockID, range.endBlockID),
+            let lower = index.listPosition(of: command.blockID),
+            let upper = index.listPosition(of: range.endBlockID),
+            lower <= upper,
+            !isToggle(command.blockID)
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let group = entry.group
+        var endUnits = startUnits
+        for pos in stride(from: lower + 1, through: upper, by: 1) {
+            guard index.entries[list[pos]]?.group === group else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            try requireEditableBlock(list[pos])
+            endUnits = try structuralTarget(list[pos], allowCode: false, allowLossy: .none).units
+            guard !isToggle(list[pos]) else { throw DocumentEngineError.unsupportedNativeInput }
+        }
+        guard Self.isBoundary(range.startOffset, in: startUnits),
+            Self.isBoundary(range.endOffset, in: endUnits),
+            !same || range.startOffset <= range.endOffset,
+            let endEntry = index.entries[range.endBlockID]
+        else { throw DocumentEngineError.unsupportedNativeInput }
+
+        let targetFidelity = builder.nativeSnapshot(entry).block.fidelity
+        let replaceStartWhenEmpty =
+            startNode == "paragraph" && entry.nestedGroup == nil && !targetFidelity.isOpaque
+            && !targetFidelity.isLockedText
+        let replaceAll = replaceStartWhenEmpty && range.startOffset == 0 && range.endOffset == endUnits.count
+        let isSingleInlineMerge = !replaceAll && singleTextblock
+        guard same || endEntry.nestedGroup == nil, isSingleInlineMerge || entry.nestedGroup == nil else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+
+        let pastesGroup = copies.contains { if case .element("columnList", _, _) = $0 { true } else { false } }
+        guard entry.depth + shape.depth <= BlockNoteWriter.maxNestingDepth,
+            !Self.nestsTable(copies, depth: entry.depth),
+            !pastesGroup || (entry.depth == 0 && index.columnOf[command.blockID] == nil)
+        else { throw DocumentEngineError.unsupportedNativeInput }
+
+        let used = usedIDs()
+        let newIDs = (0..<shape.blocks).map { _ in newBlockID() }
+        let trailingID = newBlockID()
+        let allIDs = newIDs + [trailingID]
+        guard Set(allIDs).count == allIDs.count, allIDs.allSatisfy({ isUnused($0, in: used) }) else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        var idSlice = newIDs[...]
+        let fresh = try copies.map { try $0.replacingIDs(&idSlice) }
+        let firstItem = entry.containerItem
+        let lastItem = endEntry.containerItem
+        var outcome: (blockID: String, offset: Int?) = (command.blockID, range.startOffset)
+        return (
+            write: {
+                let result = try self.writer.replaceRangeWithBlocks(
+                    from: try self.writer.indexedTarget(firstItem, id: command.blockID), at: range.startOffset,
+                    to: try self.writer.indexedTarget(lastItem, id: range.endBlockID), at: range.endOffset,
+                    blocks: fresh, replaceStartWhenEmpty: replaceStartWhenEmpty, trailingBlockID: trailingID)
+                outcome = (result.caretBlockID, result.caretOffset)
+                return result.update
+            },
+            caret: {
+                EditorPosition(
+                    blockID: outcome.blockID, offset: outcome.offset ?? self.textLength(outcome.blockID), assoc: -1)
+            }
+        )
     }
 
     /// The UTF-16 length of an indexed block's text (0 when it has none).

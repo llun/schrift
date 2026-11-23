@@ -54,11 +54,13 @@ struct NativeEditCommand: Equatable, Sendable {
         case deleteBlock
         /// A new empty paragraph `newID` before or after `blockID`'s subtree.
         case insertBlock(newID: String, before: Bool)
-        /// A lossless paste: `payload` (`BlockNoteSubtreePayload`, untrusted)
-        /// as siblings after `blockID`'s subtree, replacing `blockID` when it
-        /// is an empty paragraph without children. The engine decodes and
-        /// bounds the payload and mints a fresh id per container (PR08a).
-        case insertSubtrees(payload: Data)
+        /// A lossless or parsed block paste: `payload`
+        /// (`BlockNoteSubtreePayload`, untrusted). When `replacing` is nil,
+        /// inserts the subtrees after `blockID` (replacing an empty paragraph).
+        /// When `replacing` is set, deletes the range and applies ProseMirror-
+        /// style slice merge (or flattens to inline runs + hard breaks in a
+        /// table cell, or plain text in a code block) in one transaction.
+        case insertSubtrees(payload: Data, replacing: NativePasteRange? = nil)
         /// One step of the session's collaborative history (PR07b,
         /// `NativeUndoManager`). `blockID` is unused (empty).
         /// Shift-Return in a table cell paragraph: one BlockNote `hardBreak`
