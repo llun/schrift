@@ -37,6 +37,9 @@ final class CollaborationPresenceTests: XCTestCase {
                 (0..<50).map { _ in LocalAwarenessState(name: "Ada", color: "#123456").json(wireProtocol: wire) })
             XCTAssertEqual(encodings.count, 1, "\(wire): \(encodings)")
         }
+        XCTAssertEqual(
+            LocalAwarenessState(name: "Ada", color: "#123456").json(wireProtocol: .yWebSocket),
+            ##"{"user":{"color":"#123456","name":"Ada"}}"##, "keys are sorted, so every encoding is identical")
     }
 
     func testNestedAwarenessIsProtocolSpecificAndEscapesUserName() throws {
