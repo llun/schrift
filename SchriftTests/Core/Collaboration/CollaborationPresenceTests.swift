@@ -30,6 +30,15 @@ final class CollaborationPresenceTests: XCTestCase {
         XCTAssertFalse(json.contains("a\\/b"))
     }
 
+    func testTheSameStateAlwaysEncodesToTheSameBytes() {
+        // Peers compare re-broadcasts byte for byte; Swift dictionaries don't keep key order.
+        for wire in [CollaborationWireProtocol.hocuspocus, .yWebSocket] {
+            let encodings = Set(
+                (0..<50).map { _ in LocalAwarenessState(name: "Ada", color: "#123456").json(wireProtocol: wire) })
+            XCTAssertEqual(encodings.count, 1, "\(wire): \(encodings)")
+        }
+    }
+
     func testNestedAwarenessIsProtocolSpecificAndEscapesUserName() throws {
         let state = LocalAwarenessState(name: "A\"da\\B", color: "#123456")
         let json = state.json(wireProtocol: .yWebSocket)

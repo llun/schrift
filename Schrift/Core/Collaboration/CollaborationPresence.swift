@@ -38,7 +38,7 @@ struct LocalAwarenessState: Equatable, Sendable {
             object["cursor"] = encoded
         }
         guard
-            let data = try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes]),
+            let data = try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes, .sortedKeys]),
             let string = String(data: data, encoding: .utf8)
         else { return "{}" }
         return string
