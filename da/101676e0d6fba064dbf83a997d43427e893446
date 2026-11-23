@@ -1,0 +1,27 @@
+Schrift/Core/Yjs/BlockNoteHTMLParser.swift
+  s_4fb28ab57323fe::t_e396f82cc98b60 177-178,193-202,252-255,271-287,343,374,376-377,382,492-495,497-504,508-510,533-539,541-544,546-557,559,565,581-585,587-588,591,649-652,748-749,751,756,765-789,838,856-857,864-865,872,890-891,906,908-909,911,945,955,958,974,980-981,1032
+Schrift/Core/Yjs/BlockNoteMarkdownPaste.swift
+  s_4fb28ab57323fe::t_464a4a07d1538c 68,82-94,122,174,186-187,322,324,395,440-441,494-501,503,511-512,547-551,719-720,726,739,1096
+Schrift/Core/Yjs/HTMLNode.swift
+  s_4fb28ab57323fe::t_3b313845c84aa5 413-416
+SchriftTests/Core/Yjs/BlockNoteHTMLParserTests.swift
+  s_4fb28ab57323fe::t_eddc8c3be01a8b 330-524
+SchriftTests/Core/Yjs/BlockNoteMarkdownPasteTests.swift
+  s_4fb28ab57323fe::t_8ffb1f70f216f2 548-640
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da101676e0d6fba064dbf83a997d43427e893446",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
