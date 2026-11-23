@@ -401,6 +401,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             return true
         case .paste:
             return paste()
+        case .pastePlain:
+            return pastePlain()
         case .arrow(let direction, let extend):
             return arrow(direction, extend: extend)
         }
@@ -639,6 +641,40 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             cells = [[TableClipboard.cell(text: text)]]
         }
         guard let cells else { return false }
+        return pasteCells(cells, anchor: selection?.anchor ?? slot(active), head: selection?.head, input: input)
+    }
+
+    /// Paste and Match Style in the table editor: fills a multi-cell
+    /// CellSelection with literal plain text, or returns false for a single
+    /// cell so the text view pastes plain text into it.
+    private func pastePlain() -> Bool {
+        guard let input = cellSession?.input, let grid, grid.isFamiliar, active != nil, let selection else {
+            return false
+        }
+        let raw: String
+        switch NativeInputCoordinator.pasteboardPlainText(input.pasteboard) {
+        case .none:
+            return false
+        case .tooLarge:
+            input.refuse(.native_editor_paste_too_large)
+            return true
+        case .text(let string):
+            guard !string.isEmpty else { return false }
+            raw = string
+        }
+        let text = NativeClipboard.strippingObjectReplacementCharacters(raw)
+        guard !text.isEmpty else { return false }
+        guard !NativeClipboard.isTooLarge(NativeClipboard.normalizingLineBreaks(text)) else {
+            input.refuse(.native_editor_paste_too_large)
+            return true
+        }
+        return pasteCells(
+            [[TableClipboard.cell(text: text)]], anchor: selection.anchor, head: selection.head, input: input)
+    }
+
+    private func pasteCells(
+        _ cells: [[TablePastedCell]], anchor: TableSlot, head: TableSlot?, input: NativeInputCoordinator
+    ) -> Bool {
         // Repeated over the selection, the cells' text is bounded as one paste is.
         let rect = selectionRect()
         let size = TableClipboard.size(cells)
@@ -653,8 +689,6 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             input.refuse(.native_editor_paste_too_large)
             return true
         }
-        let anchor = selection?.anchor ?? slot(active)
-        let head = selection?.head
         if perform(.paste(cells: cells, anchor: anchor, head: head)) {
             // The web selects what it pasted.
             if let head {

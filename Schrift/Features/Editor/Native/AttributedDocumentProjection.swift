@@ -81,6 +81,7 @@ struct NativeEditorLabels: Equatable {
     var blockMenu = Strings_en.table[.native_editor_block_actions]!
     var blockActions = Dictionary(
         uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, Strings_en.table[$0.labelKey]!) })
+    var pasteAndMatchStyle = Strings_en.table[.native_editor_paste_and_match_style]!
 }
 
 /// Disposable presentation, never a serialization or write-back source.

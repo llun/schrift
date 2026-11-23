@@ -841,7 +841,8 @@ extension NativeEditorLabels {
             openLink: loc[.native_editor_open_link],
             blockMenu: loc[.native_editor_block_actions],
             blockActions: Dictionary(
-                uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) }))
+                uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) }),
+            pasteAndMatchStyle: loc[.native_editor_paste_and_match_style])
     }
 }
 

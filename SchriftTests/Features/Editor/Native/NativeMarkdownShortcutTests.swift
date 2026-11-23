@@ -251,17 +251,28 @@ final class NativeMarkdownShortcutTests: NativeEditingTestCase {
 
     // MARK: - Paste and undo
 
-    func testPasteOfAMarkdownPrefixDoesNotConvert() async throws {
+    func testPlainPasteOfAMarkdownPrefixDoesNotTriggerTypingShortcut() async throws {
         let harness = try await makeHarness([paragraph("p", "")])
         let session = harness.session
         try caret(harness, "p", 0)
         harness.pasteboard.string = "# Title"
-        let pasted = await harness.run { harness.input.pasteFromPasteboard() }
-        XCTAssertTrue(pasted)
+        // Paste and Match Style inserts literal plain text without firing typing shortcuts.
+        harness.view.pasteAndMatchStyle(nil)
+        await harness.settle()
         XCTAssertEqual(try block(session, "p").node, "paragraph")
         XCTAssertEqual(text(of: try block(session, "p")), "# Title")
         XCTAssertFalse(converted(harness))
         try await assertConsistent(harness, localCommands: 1)
+
+        // Regular paste parses Markdown into blocks via `.insertSubtrees`, not `.blockType`.
+        let undone = await harness.run { harness.input.undo() }
+        XCTAssertTrue(undone)
+        let pasted = await harness.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(pasted)
+        XCTAssertEqual(session.surface.blocks.map(\.node), ["heading"])
+        XCTAssertEqual(text(of: session.surface.blocks[0]), "Title")
+        XCTAssertFalse(converted(harness))
+        try await assertConsistent(harness, localCommands: 3)
     }
 
     func testUndoAfterAShortcutRestoresTheTypedPrefix() async throws {

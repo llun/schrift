@@ -430,8 +430,9 @@ final class NativeClipboardTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: 0)
     }
 
-    /// Over a selection the plain text replaces it, as one range command.
-    func testAPayloadOverASelectionPastesThePlainText() async throws {
+    /// Over a selection an internal subtree payload uses `.insertSubtrees(payload:replacing:)`,
+    /// preserving nested structure; Paste and Match Style pastes plain text as `.range`.
+    func testAPayloadOverASelectionReplacesWithSubtreesAndMatchStylePastesPlainText() async throws {
         let harness = try await makeHarness(richSeed())
         addTeardownBlock { await harness.close() }
         let session = harness.session
@@ -441,9 +442,27 @@ final class NativeClipboardTests: NativeEditingTestCase {
         try select(harness, from: ("c", 1), to: ("c", 3))
         harness.view.paste(nil)
         await harness.settle()
+        guard case .insertSubtrees(_, let replacing)? = harness.log.commands.last?.kind, replacing != nil else {
+            return XCTFail("expected .insertSubtrees(payload:replacing:)")
+        }
+        XCTAssertEqual(text(of: try block(session, "c")), "GChild")
+        let cPos = try XCTUnwrap(session.surface.rangeIndex.position(for: "c"))
+        XCTAssertEqual(text(of: session.surface.blocks[cPos + 1]), "Deep")
+        XCTAssertEqual(session.surface.blocks[cPos + 1].depth, 1)
+        XCTAssertEqual(text(of: session.surface.blocks[cPos + 2]), "ma")
+        XCTAssertEqual(session.surface.blocks[cPos + 2].depth, 0)
+        try await assertConsistent(harness, localCommands: 1)
+
+        // Undo restores "Gamma", and Paste and Match Style replaces the selection with plain text.
+        let undone = await harness.run { harness.input.undo() }
+        XCTAssertTrue(undone)
+        XCTAssertEqual(text(of: try block(session, "c")), "Gamma")
+        try select(harness, from: ("c", 1), to: ("c", 3))
+        harness.view.pasteAndMatchStyle(nil)
+        await harness.settle()
         XCTAssertEqual(text(of: try block(session, "c")), "GChild")
         guard case .range? = harness.log.commands.last?.kind else { return XCTFail("not a plain range paste") }
-        try await assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 3)
     }
 
     // MARK: - Review: untrusted payloads

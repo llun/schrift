@@ -494,6 +494,7 @@ enum Strings_en {
         .native_editor_block_insert_above: "Insert block above",
         .native_editor_block_insert_below: "Insert block below",
         .native_editor_paste_unavailable: "This copied content can't be pasted here. Nothing was changed.",
+        .native_editor_paste_and_match_style: "Paste and Match Style",
         .profile_native_editor: "Native editor (experimental)",
         .profile_native_editor_footer:
             "Applies when you next open a document. Supports text, formatting, headings, lists, checklists, quotes, code blocks, toggles, callouts, tables, columns, media, math, diagrams, page links and mentions, plus offline and live collaboration. A document containing a block the native editor can't edit yet opens read-only.",

@@ -182,13 +182,19 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
      `1) `, `[] `, `[ ] `, `[x] `, `> `) and verify the block converts with the prefix removed and
      the caret at the start; `#### ` and a prefix typed mid-line stay literal. Type a
      triple-backtick fence (optionally with a language) and press Return for a code block. Verify
-     one undo restores the paragraph with the typed prefix, and that pasting `# Title` does not
-     convert.
+     one undo restores the paragraph with the typed prefix, and that Paste and Match Style (`⌘⇧V`)
+     keeps `# Title` literal.
    - Type inline markdown delimiters (`**bold**`, `__bold__`, `*italic*`, `_italic_`, `` `code` ``,
      `~~strike~~`) in prose blocks and table cells and verify they convert on the closing delimiter
      with the caret after the formatted text and the next typed character plain; mid-word
      (`snake_case_`, `foo**bar**`), whitespace-only, code blocks, code-marked text, IME composition,
-     and paste stay literal, and one undo restores the literal delimiters.
+     and Paste and Match Style stay literal, and one undo restores the literal delimiters.
+   - Paste formatted web HTML (headings, bold/italic/links, lists, `https://` image) and Markdown
+     plain text into an empty paragraph, mid-paragraph, over a selection, into a heading/list item,
+     and into a single table cell (inline marks + hard breaks); verify code blocks and source
+     editors stay literal, HTML tables and multi-cell selections keep table-editor paste behavior,
+     **Paste and Match Style** (edit menu and `⌘⇧V`) pastes literal plain text for HTML and
+     Markdown, and one undo restores the document after any paste.
 4. **IME, system text tools & Pencil:**
    - Test Chinese, Japanese, and Korean IME composition around Return, block join/split, and
      concurrent peer edits (including `provisional.json` recovery if a peer deletes the active

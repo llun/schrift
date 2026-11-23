@@ -311,7 +311,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         case arrow(Direction, extend: Bool)
         case delete
         case typing
-        case copy, cut, paste
+        case copy, cut, paste, pastePlain
     }
 
     @ObservationIgnored var tableKey: ((TableKey) -> Bool)?
@@ -2018,6 +2018,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return pasteboard.hasStrings
                 || pasteboard.contains(pasteboardTypes: [
                     BlockNoteSubtreePayload.pasteboardType,
+                    BlockNoteInlinePayload.pasteboardType,
                     TableClipboard.htmlType,
                 ])
         }
@@ -2036,6 +2037,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return true
         }
         return pasteboard.contains(pasteboardTypes: NativeMediaDropPaste.pasteboardMediaIdentifiers)
+    }
+
+    /// Synchronous capability check for Paste and Match Style (`pasteAndMatchStyle:` / ⌘⇧V).
+    func canPastePlainTextFromPasteboard() -> Bool {
+        guard canEdit else { return false }
+        return Self.hasPlainText(pasteboard)
     }
 
     /// Republishes `activeMarks` and the caret's typing attributes (what UIKit
@@ -2845,14 +2852,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return true
     }
 
-    /// Paste at a caret prefers Schrift's lossless subtree payload, then
-    /// lossless inline-slice payload (`BlockNoteInlinePayload`), then same-origin
-    /// document URL interlinking at a collapsed non-`codeBlock` caret; otherwise
-    /// plain text (with `\u{FFFC}` stripped) replaces the selection.
+    /// Paste priority: media/files, internal Schrift subtree payload, internal
+    /// inline-slice payload, same-origin document URL interlinking, bounded
+    /// `public.html` parsed to blocks, Markdown-looking plain text parsed to
+    /// blocks, and finally literal plain text (`\u{FFFC}` stripped). Code
+    /// blocks, source editors and targets block paste refuses stay plain.
     @discardableResult
     func pasteFromPasteboard() -> Bool {
-        guard let view, view.isEditable else { return false }
-        if sourceKind == nil, tableMove == nil, tableKey == nil {
+        guard let view, view.isEditable, !compositionOwnsView, !isFrozen, !isDetached else { return false }
+        let isTableCell = tableMove != nil || tableKey != nil
+        if sourceKind == nil, !isTableCell {
             switch NativeMediaDropPaste.classifyPasteboard(pasteboard) {
             case .media(let providers):
                 return pasteMedia(providers)
@@ -2861,44 +2870,245 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
         }
         if sourceKind == nil {
-            if view.selectedRange.length == 0,
-                let payload = pasteboard.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType)
-            {
-                return pasteBlocks(payload)
+            if let payload = pasteboard.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType) {
+                if view.selectedRange.length == 0, !isTableCell {
+                    return pasteBlocks(payload)
+                }
+                return pasteBlocks(payload, replacing: view.selectedRange)
             }
             if let inlinePayload = pasteboard.data(forPasteboardType: BlockNoteInlinePayload.pasteboardType) {
                 return pasteInline(inlinePayload, replacing: view.selectedRange)
             }
         }
-        guard let raw = pasteboard.string, !raw.isEmpty else { return false }
+        let plainText = Self.pasteboardPlainText(pasteboard)
         if sourceKind == nil,
             view.selectedRange.length == 0,
+            case .text(let raw) = plainText, !raw.isEmpty,
             let pos = surface.rangeIndex.textPosition(atUTF16: view.selectedRange.location),
-            let position = pos.position as Int?,
-            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position]),
-            !isCode(surface.blocks[position].id),
+            !AttributedDocumentProjection.isPlaceholder(surface.blocks[pos.position]),
+            !isCode(surface.blocks[pos.position].id),
             let interlink = NativeInlineObject.interlink(fromURLString: raw, serverOrigin: serverOrigin)
         {
             directInsertion = nil
-            guard !compositionOwnsView, !isFrozen, !isDetached else { return false }
             guard !hasActiveBarrier else {
                 noticeKey = .native_editor_input_busy
                 return false
             }
-            let blockID = surface.blocks[position].id
+            let blockID = surface.blocks[pos.position].id
             let range = pos.offset..<pos.offset
             return applyStructural(
                 blockID, .insertInlineObject(interlink, replacing: range),
                 refusal: .native_editor_paste_unavailable,
                 retry: again { [weak self] in self?.pasteFromPasteboard() ?? false }, readsSelection: true)
         }
+        let plainOnly = isPlainTextOnlyTarget(for: view.selectedRange)
+        var htmlFallbackToPlain = false
+        var htmlTooLarge = false
+        // While input is busy (a barrier, queued typing, a pending commit), paste plain text: it
+        // queues behind the busy state, as before.
+        let asBlocks = !plainOnly && !isBusy
+        if asBlocks, pasteboard.types.contains(TableClipboard.htmlType) {
+            switch Self.pasteboardHTML(pasteboard) {
+            case .none:
+                break
+            case .tooLarge:
+                htmlFallbackToPlain = true
+                htmlTooLarge = true
+            case .html(let html):
+                do {
+                    if let payload = try BlockNoteHTMLParser.payload(html) {
+                        return pasteBlocks(payload, replacing: view.selectedRange)
+                    }
+                    htmlFallbackToPlain = true
+                } catch BlockNoteHTMLParser.Error.tooLarge {
+                    htmlFallbackToPlain = true
+                    htmlTooLarge = true
+                } catch {
+                    htmlFallbackToPlain = true
+                }
+            }
+        }
+        let raw: String
+        switch plainText {
+        case .none:
+            if htmlTooLarge { noticeKey = .native_editor_paste_too_large }
+            return false
+        case .tooLarge:
+            noticeKey = .native_editor_paste_too_large
+            return false
+        case .text(let string):
+            guard !string.isEmpty else {
+                if htmlTooLarge { noticeKey = .native_editor_paste_too_large }
+                return false
+            }
+            raw = string
+        }
+        if asBlocks, !htmlFallbackToPlain {
+            do {
+                if let payload = try BlockNoteMarkdownPaste.markdownPayload(raw) {
+                    return pasteBlocks(payload, replacing: view.selectedRange)
+                }
+            } catch BlockNoteMarkdownPaste.Error.tooLarge {
+                noticeKey = .native_editor_paste_too_large
+                return false
+            } catch {
+                // Fall back to plain text on unexpected encoding errors.
+            }
+        }
+        return pastePlainText(raw, replacing: view.selectedRange, tooLargeFallback: htmlTooLarge)
+    }
+
+    /// Pastes explicit plain text from the pasteboard literally via the
+    /// plain-text replacement path (Paste and Match Style / ⌘⇧V), skipping
+    /// HTML, Markdown, media and internal Schrift payloads while respecting
+    /// size limits, code blocks and source editors.
+    @discardableResult
+    func pastePlainTextFromPasteboard() -> Bool {
+        guard let view, view.isEditable, !compositionOwnsView, !isFrozen, !isDetached else { return false }
+        switch Self.pasteboardPlainText(pasteboard) {
+        case .none:
+            return false
+        case .tooLarge:
+            noticeKey = .native_editor_paste_too_large
+            return false
+        case .text(let raw):
+            guard !raw.isEmpty else { return false }
+            return pastePlainText(raw, replacing: view.selectedRange)
+        }
+    }
+
+    @discardableResult
+    private func pastePlainText(_ raw: String, replacing range: NSRange, tooLargeFallback: Bool = false) -> Bool {
         let text = NativeClipboard.strippingObjectReplacementCharacters(raw)
-        guard !text.isEmpty else { return false }
+        guard !text.isEmpty else {
+            if tooLargeFallback { noticeKey = .native_editor_paste_too_large }
+            return false
+        }
         guard !NativeClipboard.isTooLarge(NativeClipboard.normalizingLineBreaks(text)) else {
             noticeKey = .native_editor_paste_too_large
             return false
         }
-        return replace(range: view.selectedRange, with: text)
+        return replace(range: range, with: text)
+    }
+
+    private func isPlainTextOnlyTarget(for range: NSRange) -> Bool {
+        if sourceKind != nil { return true }
+        let index = surface.rangeIndex
+        guard let start = index.textPosition(atUTF16: range.location),
+            let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: range.length > 0),
+            start.position <= end.position
+        else { return true }
+        if tableMove != nil || tableKey != nil {
+            return start.position != end.position || surface.blocks[start.position].isOpaque
+        }
+        return (start.position...end.position).contains { blockPasteRefusesBlock(surface.blocks[$0]) }
+    }
+
+    /// Targets `DocumentEngine.preparePasteSubtrees` refuses (or that stay
+    /// literal by design) while plain-text replacement can still write into
+    /// them: code blocks, toggles, locked-text `.lossy` blocks, and opaque or
+    /// non-schema blocks.
+    private func blockPasteRefusesBlock(_ block: BlockSnapshot) -> Bool {
+        block.node == "codeBlock"
+            || AttributedDocumentProjection.isToggle(block)
+            || block.isLocked
+            || block.isOpaque
+            || AttributedDocumentProjection.isPlaceholder(block)
+            || BlockNoteWriter.nativePropSchemas[block.node] == nil
+    }
+
+    enum PasteboardText: Equatable {
+        case none
+        case text(String)
+        case tooLarge
+    }
+
+    static func hasPlainText(_ pasteboard: UIPasteboard) -> Bool {
+        if !plainTextTypes(in: pasteboard).isEmpty {
+            return true
+        }
+        if pasteboard.types.contains(TableClipboard.htmlType) {
+            return false
+        }
+        return pasteboard.hasStrings
+    }
+
+    /// Reads plain text from the first `UTType.plainText` item in pasteboard order (a source
+    /// app's own text precedes any form UIKit derives from HTML), size-bounded.
+    static func pasteboardPlainText(_ pasteboard: UIPasteboard) -> PasteboardText {
+        let plainTypes = plainTextTypes(in: pasteboard)
+        if !plainTypes.isEmpty {
+            for type in plainTypes {
+                if let data = pasteboard.data(forPasteboardType: type) {
+                    guard data.count <= NativeClipboard.maxPasteUTF16 * 4 else { return .tooLarge }
+                    if let string = decodePlainText(data, type: type) {
+                        guard string.utf16.count <= NativeClipboard.maxPasteUTF16 else { return .tooLarge }
+                        return .text(string)
+                    }
+                }
+                if let string = pasteboard.value(forPasteboardType: type) as? String {
+                    guard string.utf16.count <= NativeClipboard.maxPasteUTF16 else { return .tooLarge }
+                    return .text(string)
+                }
+            }
+            if !pasteboard.types.contains(TableClipboard.htmlType), let string = pasteboard.string {
+                guard string.utf16.count <= NativeClipboard.maxPasteUTF16 else { return .tooLarge }
+                return .text(string)
+            }
+            return .none
+        }
+        if pasteboard.types.contains(TableClipboard.htmlType) {
+            return .none
+        }
+        if let string = pasteboard.string {
+            guard string.utf16.count <= NativeClipboard.maxPasteUTF16 else { return .tooLarge }
+            return .text(string)
+        }
+        return .none
+    }
+
+    /// Plain-text types in the pasteboard's own order: the source app lists its real text first,
+    /// and a form UIKit derives from HTML comes after, so explicit text wins.
+    private static func plainTextTypes(in pasteboard: UIPasteboard) -> [String] {
+        pasteboard.types.filter { UTType($0)?.conforms(to: .plainText) == true }
+    }
+
+    private static func decodePlainText(_ data: Data, type: String) -> String? {
+        switch type {
+        case UTType.utf8PlainText.identifier:
+            return String(data: data, encoding: .utf8)
+        case UTType.utf16PlainText.identifier, UTType.utf16ExternalPlainText.identifier:
+            return String(data: data, encoding: .utf16)
+                ?? String(data: data, encoding: .utf16LittleEndian)
+                ?? String(data: data, encoding: .utf16BigEndian)
+        default:
+            if data.starts(with: [0xFE, 0xFF]) || data.starts(with: [0xFF, 0xFE]) {
+                return String(data: data, encoding: .utf16)
+            }
+            return String(data: data, encoding: .utf8)
+                ?? String(data: data, encoding: .utf16)
+                ?? String(data: data, encoding: .isoLatin1)
+        }
+    }
+
+    private enum PasteboardHTML {
+        case none
+        case html(String)
+        case tooLarge
+    }
+
+    private static func pasteboardHTML(_ pasteboard: UIPasteboard) -> PasteboardHTML {
+        guard pasteboard.types.contains(TableClipboard.htmlType) else { return .none }
+        if let data = pasteboard.data(forPasteboardType: TableClipboard.htmlType) {
+            guard data.count <= TableClipboard.maxHTMLBytes else { return .tooLarge }
+            guard let string = String(data: data, encoding: .utf8) else { return .none }
+            return .html(string)
+        }
+        if let string = pasteboard.value(forPasteboardType: TableClipboard.htmlType) as? String {
+            guard string.utf8.count <= TableClipboard.maxHTMLBytes else { return .tooLarge }
+            return .html(string)
+        }
+        return .none
     }
 
     @discardableResult
@@ -3042,6 +3252,36 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return applyStructural(
             entry.blockID, .insertSubtrees(payload: payload), refusal: .native_editor_paste_unavailable,
             retry: again { [weak self] in self?.pasteBlocks(payload) ?? false }, readsSelection: true)
+    }
+
+    /// Context-aware block paste replacing `range` in one undoable transaction
+    /// (slice merge in prose, inline runs + hard breaks in a table cell, plain
+    /// text in a code block).
+    private func pasteBlocks(_ payload: Data, replacing range: NSRange) -> Bool {
+        directInsertion = nil
+        guard view != nil, !compositionOwnsView, !isFrozen, !isDetached else { return false }
+        guard !hasActiveBarrier else {
+            noticeKey = .native_editor_input_busy
+            return false
+        }
+        let index = surface.rangeIndex
+        guard let start = index.textPosition(atUTF16: range.location),
+            let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: range.length > 0)
+        else {
+            noticeKey = .native_editor_paste_unavailable
+            return false
+        }
+        guard !touchesFoldedContent(start.position, end.position) else {
+            noticeKey = .native_editor_range_unavailable
+            return false
+        }
+        let startBlockID = index.entries[start.position].blockID
+        let pasteRange = NativePasteRange(
+            startOffset: start.offset, endBlockID: index.entries[end.position].blockID, endOffset: end.offset)
+        return applyStructural(
+            startBlockID, .insertSubtrees(payload: payload, replacing: pasteRange),
+            refusal: .native_editor_paste_unavailable,
+            retry: again(at: range) { [weak self] in self?.pasteBlocks(payload, replacing: $0) ?? false })
     }
 
     private func pasteInline(_ payload: Data, replacing range: NSRange) -> Bool {
@@ -3282,14 +3522,60 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
     }
 
-    /// The long-press edit menu gains a Block submenu for the target block.
+    /// The long-press edit menu adds Paste and Match Style beside Paste (UIKit
+    /// omits it while `allowsEditingTextAttributes` is false) and a Block
+    /// submenu for the target block.
     func textView(_ textView: UITextView, editMenuForTextIn range: NSRange, suggestedActions: [UIMenuElement])
         -> UIMenu?
     {
+        var children = suggestedActions
+        var changed = false
+        let pastePlainAction = #selector(UIResponderStandardEditActions.pasteAndMatchStyle(_:))
+        if canPastePlainTextFromPasteboard(), !Self.menuContains(children, action: pastePlainAction) {
+            let title = view?.blockControls.labels.pasteAndMatchStyle ?? NativeEditorLabels().pasteAndMatchStyle
+            let command = UICommand(title: title, action: pastePlainAction)
+            if let updated = Self.inserting(
+                command, after: #selector(UIResponderStandardEditActions.paste(_:)), in: children)
+            {
+                children = updated
+            } else {
+                children.append(command)
+            }
+            changed = true
+        }
         let actions = blockMenuActions()
-        guard !actions.isEmpty else { return nil }
-        let title = view?.blockControls.labels.blockMenu ?? NativeEditorLabels().blockMenu
-        return UIMenu(children: suggestedActions + [UIMenu(title: title, children: actions)])
+        if !actions.isEmpty {
+            let title = view?.blockControls.labels.blockMenu ?? NativeEditorLabels().blockMenu
+            children.append(UIMenu(title: title, children: actions))
+            changed = true
+        }
+        return changed ? UIMenu(children: children) : nil
+    }
+
+    private static func menuContains(_ elements: [UIMenuElement], action: Selector) -> Bool {
+        for element in elements {
+            if let command = element as? UICommand, command.action == action { return true }
+            if let menu = element as? UIMenu, menuContains(menu.children, action: action) { return true }
+        }
+        return false
+    }
+
+    private static func inserting(_ item: UIMenuElement, after action: Selector, in elements: [UIMenuElement])
+        -> [UIMenuElement]?
+    {
+        for (index, element) in elements.enumerated() {
+            if let command = element as? UICommand, command.action == action {
+                var copy = elements
+                copy.insert(item, at: index + 1)
+                return copy
+            }
+            if let menu = element as? UIMenu, let updated = inserting(item, after: action, in: menu.children) {
+                var copy = elements
+                copy[index] = menu.replacingChildren(updated)
+                return copy
+            }
+        }
+        return nil
     }
 
     private static func isNewline(_ text: String) -> Bool {
