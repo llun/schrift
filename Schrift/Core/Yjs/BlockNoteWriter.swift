@@ -91,6 +91,9 @@ struct BlockNoteWriter {
     /// The deepest block level the native editor nests to (root blocks are
     /// depth 0); `sinkListItem`'s caller refuses a move past it.
     static let maxNestingDepth = 16
+    /// Block types that stay at the root (or a column's top level) without
+    /// children: tables, media blocks, and transient upload loaders.
+    static let rootOnlyNodes: Set<String> = MediaBlock.nodes.union(["table", MediaBlock.uploadLoader])
 
     let doc: YDoc
     /// The block types this writer edits: `propSchemas` unless the caller

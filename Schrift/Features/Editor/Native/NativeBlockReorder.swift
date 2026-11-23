@@ -45,8 +45,6 @@ struct NativeBlockDropTarget: Equatable, Sendable {
 /// projected block list and fold state; every non-nil result satisfies the same
 /// structural invariants that `DocumentEngine` enforces on commit.
 enum NativeBlockReorder {
-    private static let rootOnlyNodes: Set<String> = MediaBlock.nodes.union(["table", MediaBlock.uploadLoader])
-
     /// Whether `blockID` can be picked up and dragged with its nested subtree.
     static func canDrag(
         _ blockID: String,
@@ -101,7 +99,9 @@ enum NativeBlockReorder {
         // all hidden) maps past its subtree; any visible interior slot is invalid.
         var effectiveSlot = slotIndex
         if slotIndex > sourceIndex, slotIndex < subtree.upperBound {
-            guard slotIndex == sourceIndex + 1, hiddenFlags[slotIndex] else { return nil }
+            guard slotIndex == sourceIndex + 1, hiddenFlags[slotIndex..<subtree.upperBound].allSatisfy({ $0 }) else {
+                return nil
+            }
             effectiveSlot = subtree.upperBound
         }
 
@@ -109,7 +109,7 @@ enum NativeBlockReorder {
         let nextIndex = nextVisibleIndex(from: effectiveSlot, excluding: subtree, hidden: hiddenFlags)
         guard prevIndex != nil || nextIndex != nil else { return nil }
 
-        let dragMaxDepth = info.mustBeRoot ? 0 : max(0, BlockNoteWriter.maxNestingDepth - info.subtreeHeight)
+        let dragMaxDepth = info.mustBeRoot ? 0 : BlockNoteWriter.maxNestingDepth - info.subtreeHeight
         let resolved: NativeBlockDropTarget
 
         if let prevIndex {
@@ -170,9 +170,11 @@ enum NativeBlockReorder {
             let block = blocks[index]
             guard !block.isOpaque, !block.isLocked, block.node != "columnList" else { return nil }
             maxDepth = max(maxDepth, block.depth)
-            if rootOnlyNodes.contains(block.node) { containsRootOnly = true }
+            if BlockNoteWriter.rootOnlyNodes.contains(block.node) { containsRootOnly = true }
         }
-        return SourceInfo(mustBeRoot: containsRootOnly, subtreeHeight: maxDepth - source.depth)
+        let subtreeHeight = maxDepth - source.depth
+        guard subtreeHeight <= BlockNoteWriter.maxNestingDepth else { return nil }
+        return SourceInfo(mustBeRoot: containsRootOnly, subtreeHeight: subtreeHeight)
     }
 
     private static func subtreeRange(startingAt index: Int, in blocks: [BlockSnapshot]) -> Range<Int> {
@@ -204,7 +206,9 @@ enum NativeBlockReorder {
     }
 
     private static func canAcceptChildren(_ block: BlockSnapshot, expanded: Set<String>) -> Bool {
-        guard !block.isOpaque, !block.isLocked, block.node != "columnList", !rootOnlyNodes.contains(block.node) else {
+        guard !block.isOpaque, !block.isLocked, block.node != "columnList",
+            !BlockNoteWriter.rootOnlyNodes.contains(block.node)
+        else {
             return false
         }
         if isToggle(block), !expanded.contains(block.id) { return false }
@@ -250,7 +254,7 @@ enum NativeBlockReorder {
             }
             if let parentIndex = ancestorIndex(of: anchorIndex, atDepth: candidateDepth - 1, in: blocks) {
                 let parent = blocks[parentIndex]
-                if !rootOnlyNodes.contains(parent.node), parent.node != "columnList",
+                if !BlockNoteWriter.rootOnlyNodes.contains(parent.node), parent.node != "columnList",
                     !(isToggle(parent) && !expanded.contains(parent.id))
                 {
                     return NativeBlockDropTarget(destination: .after(blocks[anchorIndex].id), depth: candidateDepth)

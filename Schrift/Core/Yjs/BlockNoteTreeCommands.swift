@@ -124,10 +124,21 @@ extension BlockNoteWriter {
     /// goes, and so does any nested group it leaves empty. Identity is not
     /// preserved.
     @discardableResult
-    func moveBlockAsFirstChild(_ item: YItem, id: String, into parent: YType) throws -> Data {
-        guard !item.deleted, case .type(let container) = item.content,
-            parent.typeRef == .xmlElement(nodeName: "blockContainer")
-        else { throw Error.missingBlock(id) }
+    func moveBlockAsFirstChild(
+        _ item: YItem, id: String, into parent: YType, parentID: String? = nil
+    ) throws -> Data {
+        guard !item.deleted, case .type(let container) = item.content else { throw Error.missingBlock(id) }
+        guard parent.typeRef == .xmlElement(nodeName: "blockContainer") else {
+            let label: String =
+                if let parentID {
+                    parentID
+                } else if case .xmlElement(let node)? = parent.typeRef {
+                    node
+                } else {
+                    "parent"
+                }
+            throw Error.malformedBlock(label)
+        }
         let last = children(parent).last
         var nested: YType?
         if let last, case .type(let type) = last.content, type.typeRef == .xmlElement(nodeName: "blockGroup") {
@@ -141,7 +152,7 @@ extension BlockNoteWriter {
             } else {
                 group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
                 guard try YWrite.insertAfter(tx, into: parent, after: last, [.type(group)]) != nil else {
-                    throw Error.malformedBlock(id)
+                    throw Error.malformedBlock(parentID ?? id)
                 }
             }
             try insertCopy(tx, copy, into: group, after: nil)

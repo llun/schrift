@@ -33,6 +33,18 @@ final class NativeBlockReorderTests: NativeEditingTestCase {
             node: "toggleListItem", props: Self.paragraphProps, runs: [InlineRun(text)], id: id, children: children)
     }
 
+    private func imageBlock(_ id: String, url: String = "https://example.com/pic.png") -> BlockNoteBlock {
+        let props = (MediaBlock.schemas["image"] ?? []).map {
+            $0.key == "url" ? ($0.key, YAnyValue.string(url)) : $0
+        }
+        return BlockNoteBlock(node: "image", props: props, runs: [], id: id)
+    }
+
+    private func uploadLoaderBlock(_ id: String) -> BlockNoteBlock {
+        BlockNoteBlock(
+            node: MediaBlock.uploadLoader, props: MediaBlock.schemas[MediaBlock.uploadLoader] ?? [], runs: [], id: id)
+    }
+
     private func snap(
         _ id: String,
         node: String = "paragraph",
@@ -247,6 +259,88 @@ final class NativeBlockReorderTests: NativeEditingTestCase {
             NativeBlockDropTarget(
                 destination: .after("d\(BlockNoteWriter.maxNestingDepth - 1)"),
                 depth: BlockNoteWriter.maxNestingDepth - 1))
+    }
+
+    func testDropTargetRefusesSubtreeTallerThanMaxNestingDepth() {
+        // A web-synced chain of depths 0...17 has subtree height 17 > maxNestingDepth (16).
+        let tallDepth = BlockNoteWriter.maxNestingDepth + 1
+        var blocks: [BlockSnapshot] = (0...tallDepth).map { depth in
+            snap("d\(depth)", depth: depth, parentID: depth == 0 ? nil : "d\(depth - 1)")
+        }
+        blocks.append(snap("tail", depth: 0))
+
+        // `d0` has subtree height 17: refused by both `canDrag` and `dropTarget`.
+        XCTAssertFalse(NativeBlockReorder.canDrag("d0", in: blocks))
+        XCTAssertNil(
+            NativeBlockReorder.dropTarget(moving: "d0", in: blocks, slotIndex: blocks.count, requestedDepth: 0))
+
+        // `d1` has subtree height 16 (exactly maxNestingDepth): allowed at depth 0 only.
+        XCTAssertTrue(NativeBlockReorder.canDrag("d1", in: blocks))
+        XCTAssertEqual(
+            NativeBlockReorder.dropTarget(moving: "d1", in: blocks, slotIndex: blocks.count, requestedDepth: 2),
+            NativeBlockDropTarget(destination: .after("tail"), depth: 0))
+    }
+
+    func testDropTargetRejectsInteriorSlotWhenLaterSubtreeDescendantIsVisible() {
+        let blocks = [
+            snap("a", depth: 0),
+            snap("p", depth: 0),
+            snap("c1", depth: 1, parentID: "p"),
+            snap("c2", depth: 1, parentID: "p"),
+            snap("tail", depth: 0),
+        ]
+
+        // Custom mask: first child `c1` is hidden, but second child `c2` is visible.
+        // Slot 2 (right after `p`) lies inside `p`'s visible subtree and must return nil,
+        // rather than rewriting past `c2`.
+        let partialHidden = [false, false, true, false, false]
+        XCTAssertNil(
+            NativeBlockReorder.dropTarget(
+                moving: "p", in: blocks, hidden: partialHidden, slotIndex: 2, requestedDepth: 1))
+
+        // When every descendant in `p`'s subtree is hidden, slot 2 is `p`'s bottom edge
+        // and maps past the subtree (so requesting depth 1 indents `p` under `a`).
+        let allHidden = [false, false, true, true, false]
+        XCTAssertEqual(
+            NativeBlockReorder.dropTarget(
+                moving: "p", in: blocks, hidden: allHidden, slotIndex: 2, requestedDepth: 1),
+            NativeBlockDropTarget(destination: .firstChild(of: "a"), depth: 1))
+    }
+
+    func testDropTargetEnforcesMediaAndUploadLoaderRootOnlyRules() {
+        let blocks = [
+            snap("p", depth: 0),
+            snap("k1", depth: 1, parentID: "p"),
+            snap("k2", depth: 1, parentID: "p"),
+            snap("img", node: "image", depth: 0),
+            snap("loader", node: MediaBlock.uploadLoader, depth: 0),
+            snap("parentImg", depth: 0),
+            snap("imgKid", node: "image", depth: 1, parentID: "parentImg"),
+            snap("parentLoader", depth: 0),
+            snap("loaderKid", node: MediaBlock.uploadLoader, depth: 1, parentID: "parentLoader"),
+            snap("tail", depth: 0),
+        ]
+
+        // Image, uploadLoader, and parents containing them stay at depth 0:
+        // draggable at root, refused between depth-1 children (`k1`/`k2`), clamped to depth 0 at root slots.
+        for id in ["img", "loader", "parentImg", "parentLoader"] {
+            XCTAssertTrue(NativeBlockReorder.canDrag(id, in: blocks), "\(id) is draggable at root")
+            XCTAssertNil(
+                NativeBlockReorder.dropTarget(moving: id, in: blocks, slotIndex: 2, requestedDepth: 1),
+                "\(id) cannot drop between depth-1 children")
+            XCTAssertEqual(
+                NativeBlockReorder.dropTarget(moving: id, in: blocks, slotIndex: 0, requestedDepth: 2),
+                NativeBlockDropTarget(destination: .before("p"), depth: 0),
+                "\(id) clamps to depth 0")
+        }
+
+        // Neither image nor uploadLoader can accept children (requested depth > 0 clamps to `.after` at depth 0).
+        XCTAssertEqual(
+            NativeBlockReorder.dropTarget(moving: "tail", in: blocks, slotIndex: 4, requestedDepth: 2),
+            NativeBlockDropTarget(destination: .after("img"), depth: 0))
+        XCTAssertEqual(
+            NativeBlockReorder.dropTarget(moving: "tail", in: blocks, slotIndex: 5, requestedDepth: 2),
+            NativeBlockDropTarget(destination: .after("loader"), depth: 0))
     }
 
     // MARK: - Engine & Coordinator: Multi-Block Moves, Nesting, Subtrees & Selection
@@ -654,5 +748,202 @@ final class NativeBlockReorderTests: NativeEditingTestCase {
         XCTAssertEqual(ids(session), ["a", "c", "d", "b", "b1"])
         XCTAssertEqual(depths(session), [0, 0, 0, 1, 2])
         try await assertConsistent(harness, localCommands: 3)
+    }
+
+    // MARK: - Media / UploadLoader, Document-End Caret, Fidelity, Writer Validation
+
+    func testImageAndUploadLoaderStayAtRootAndRejectChildren() async throws {
+        // 1. Image block and a parent containing an image child.
+        let imageHarness = try await makeHarness([
+            nested(paragraph("lead", "Lead"), [paragraph("k1", "Child")]),
+            imageBlock("img"),
+            nested(paragraph("parentImg", "Parent"), [imageBlock("imgKid")]),
+            paragraph("tail", "Tail"),
+        ])
+        addTeardownBlock { await imageHarness.close() }
+        let imageSession = imageHarness.session
+        let imagePayload = try await payload(imageSession, "img")
+        let parentImgPayload = try await payload(imageSession, "parentImg")
+
+        // Image moves losslessly at depth 0.
+        let movedImg = await imageHarness.run { imageHarness.input.moveBlock("img", to: .after("tail")) }
+        XCTAssertTrue(movedImg)
+        XCTAssertEqual(ids(imageSession), ["lead", "k1", "parentImg", "imgKid", "tail", "img"])
+        let imagePayloadAfter = try await payload(imageSession, "img")
+        XCTAssertEqual(imagePayloadAfter, imagePayload)
+
+        // Image cannot nest below depth 0 or accept children.
+        let imgAsChild = await imageHarness.run { imageHarness.input.moveBlock("img", to: .firstChild(of: "lead")) }
+        let imgAtDepth1 = await imageHarness.run { imageHarness.input.moveBlock("img", to: .after("k1")) }
+        let intoImg = await imageHarness.run { imageHarness.input.moveBlock("tail", to: .firstChild(of: "img")) }
+        XCTAssertFalse(imgAsChild)
+        XCTAssertFalse(imgAtDepth1)
+        XCTAssertFalse(intoImg)
+
+        // Parent containing an image cannot be nested below depth 0, but moves losslessly at depth 0.
+        let parentImgNested = await imageHarness.run {
+            imageHarness.input.moveBlock("parentImg", to: .firstChild(of: "lead"))
+        }
+        let parentImgAtDepth1 = await imageHarness.run {
+            imageHarness.input.moveBlock("parentImg", to: .after("k1"))
+        }
+        XCTAssertFalse(parentImgNested)
+        XCTAssertFalse(parentImgAtDepth1)
+        let movedParentImg = await imageHarness.run {
+            imageHarness.input.moveBlock("parentImg", to: .before("lead"))
+        }
+        XCTAssertTrue(movedParentImg)
+        XCTAssertEqual(ids(imageSession), ["parentImg", "imgKid", "lead", "k1", "tail", "img"])
+        let parentImgPayloadAfter = try await payload(imageSession, "parentImg")
+        XCTAssertEqual(parentImgPayloadAfter, parentImgPayload)
+        XCTAssertNil(imageHarness.input.noticeKey)
+        try await assertConsistent(imageHarness, localCommands: 2)
+
+        // 2. UploadLoader block (captured fixture: ["lead", "mx", "tail"]).
+        let base64 = try XCTUnwrap(BlockNoteMediaCaptures.fixtures.first { $0.name == "uploadLoader" }?.update)
+        let loaderHarness = try await makeHarness(state: try XCTUnwrap(Data(base64Encoded: base64)))
+        addTeardownBlock { await loaderHarness.close() }
+        let loaderSession = loaderHarness.session
+        XCTAssertEqual(ids(loaderSession), ["lead", "mx", "tail"])
+        let loaderBefore = try block(loaderSession, "mx")
+
+        // UploadLoader moves losslessly at depth 0.
+        let movedLoader = await loaderHarness.run { loaderHarness.input.moveBlock("mx", to: .after("tail")) }
+        XCTAssertTrue(movedLoader)
+        XCTAssertEqual(ids(loaderSession), ["lead", "tail", "mx"])
+        XCTAssertEqual(try block(loaderSession, "mx"), loaderBefore)
+
+        // UploadLoader cannot nest below depth 0 or accept children.
+        let loaderAsChild = await loaderHarness.run {
+            loaderHarness.input.moveBlock("mx", to: .firstChild(of: "lead"))
+        }
+        let intoLoader = await loaderHarness.run { loaderHarness.input.moveBlock("tail", to: .firstChild(of: "mx")) }
+        XCTAssertFalse(loaderAsChild)
+        XCTAssertFalse(intoLoader)
+
+        let nestTail = await loaderHarness.run { loaderHarness.input.moveBlock("tail", to: .firstChild(of: "lead")) }
+        XCTAssertTrue(nestTail)
+        let loaderAtDepth1 = await loaderHarness.run { loaderHarness.input.moveBlock("mx", to: .after("tail")) }
+        XCTAssertFalse(loaderAtDepth1)
+        XCTAssertNil(loaderHarness.input.noticeKey)
+        try await assertConsistent(loaderHarness, localCommands: 2)
+
+        // 3. Engine refuses nesting a parent that contains an `uploadLoader` child, while allowing root moves.
+        let doc = try makeDoc(
+            [
+                nested(paragraph("lead", "Lead"), [paragraph("k1", "Child")]),
+                nested(paragraph("parentLoader", "Parent"), [uploadLoaderBlock("loaderKid")]),
+                paragraph("tail", "Tail"),
+            ], clientID: 1)
+        defer { doc.destroy() }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface(blocks: projection(doc)))
+        let nestParentLoader = NativeEditCommand(
+            id: UUID(), baseRevision: engine.revision, blockID: "parentLoader",
+            kind: .moveBlock(.firstChild(of: "lead")))
+        let depth1ParentLoader = NativeEditCommand(
+            id: UUID(), baseRevision: engine.revision, blockID: "parentLoader",
+            kind: .moveBlock(.after("k1")))
+        let rootParentLoader = NativeEditCommand(
+            id: UUID(), baseRevision: engine.revision, blockID: "parentLoader",
+            kind: .moveBlock(.after("tail")))
+        XCTAssertFalse(engine.canApplyStructural(nestParentLoader))
+        XCTAssertFalse(engine.canApplyStructural(depth1ParentLoader))
+        XCTAssertTrue(engine.canApplyStructural(rootParentLoader))
+    }
+
+    func testMovingLastBlockWithCaretAtDocumentEndKeepsCaretInMovedBlock() async throws {
+        let harness = try await makeHarness([
+            paragraph("a", "Alpha"),
+            paragraph("b", "Bravo"),
+            paragraph("c", "Charlie"),
+        ])
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+        let lastEntry = try XCTUnwrap(session.surface.rangeIndex.entry(for: "c"))
+        let docEnd = NSRange(location: harness.view.textStorage.length, length: 0)
+        XCTAssertEqual(docEnd.location, session.surface.rangeIndex.length)
+        XCTAssertEqual(docEnd.location, NSMaxRange(lastEntry.range))
+
+        // Place the caret at the exact end of the document, then move the last block to the top.
+        setSelection(harness, docEnd)
+        let moved = await harness.run { harness.input.moveBlock("c", to: .before("a")) }
+        XCTAssertTrue(moved)
+        XCTAssertEqual(ids(session), ["c", "a", "b"])
+        XCTAssertEqual(
+            harness.view.selectedRange, NSRange(location: try location(session, "c", "Charlie".utf16.count), length: 0))
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    func testLockedTextChildIsRefusedWhileStyledOnlyLossyBlockMoves() async throws {
+        let lockedKid = BlockNoteBlock(
+            node: "paragraph", props: Self.paragraphProps + [("unknownProp", .string("keep"))],
+            runs: [InlineRun("LockedKid")], id: "lockedKid")
+        let styledProps = Self.paragraphProps.map {
+            $0.key == "textColor" ? ($0.key, YAnyValue.string("red")) : $0
+        }
+        let styled = BlockNoteBlock(node: "paragraph", props: styledProps, runs: [InlineRun("Styled")], id: "styled")
+        let harness = try await makeHarness([
+            paragraph("a", "Alpha"),
+            nested(paragraph("parentOfLocked", "Parent"), [lockedKid]),
+            styled,
+            paragraph("z", "Omega"),
+        ])
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+
+        // Confirm the fixture actually produces a locked-text `.lossy` child and a styled-only `.lossy` block.
+        let fidelities = await session.engine { engine -> (Bool, Bool) in
+            let kidLocked = engine.nativeBlock("lockedKid")?.block.fidelity.isLockedText ?? false
+            let styledFidelity = engine.nativeBlock("styled")?.block.fidelity
+            let styledIsLossyUnlocked =
+                if case .lossy? = styledFidelity { !(styledFidelity?.isLockedText ?? true) } else { false }
+            return (kidLocked, styledIsLossyUnlocked)
+        }
+        XCTAssertEqual(fidelities?.0, true, "lockedKid must be a locked-text .lossy block")
+        XCTAssertEqual(fidelities?.1, true, "styled must be a styled-only (unlocked) .lossy block")
+
+        // Parent with a locked-text child is refused by both resolver and engine.
+        XCTAssertFalse(NativeBlockReorder.canDrag("parentOfLocked", in: session.surface.blocks))
+        let refusedParent = await harness.run { harness.input.moveBlock("parentOfLocked", to: .before("a")) }
+        XCTAssertFalse(refusedParent)
+        XCTAssertNil(harness.input.noticeKey)
+
+        // Styled-only lossy block is draggable and moves losslessly at root and into a parent.
+        XCTAssertTrue(NativeBlockReorder.canDrag("styled", in: session.surface.blocks))
+        let styledPayload = try await payload(session, "styled")
+        let movedTop = await harness.run { harness.input.moveBlock("styled", to: .before("a")) }
+        XCTAssertTrue(movedTop)
+        XCTAssertEqual(ids(session), ["styled", "a", "parentOfLocked", "lockedKid", "z"])
+
+        let movedNested = await harness.run { harness.input.moveBlock("styled", to: .firstChild(of: "a")) }
+        XCTAssertTrue(movedNested)
+        XCTAssertEqual(ids(session), ["a", "styled", "parentOfLocked", "lockedKid", "z"])
+        XCTAssertEqual(depths(session), [0, 1, 0, 1, 0])
+        let styledPayloadAfter = try await payload(session, "styled")
+        XCTAssertEqual(styledPayloadAfter, styledPayload)
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    func testMoveBlockAsFirstChildRejectsNonContainerParentWithParentError() throws {
+        let doc = try makeDoc([paragraph("a", "Alpha"), paragraph("b", "Bravo")], clientID: 1)
+        defer { doc.destroy() }
+        let writer = BlockNoteWriter(doc: doc, schemas: BlockNoteWriter.nativePropSchemas)
+        let targetA = try writer.find("a")
+        let targetB = try writer.find("b")
+        // `targetB.element` is a `paragraph`, not a `blockContainer`.
+        do {
+            _ = try writer.moveBlockAsFirstChild(targetA.item, id: "a", into: targetB.element, parentID: "b")
+            XCTFail("expected malformedBlock error for non-container parent")
+        } catch BlockNoteWriter.Error.malformedBlock(let blamed) {
+            XCTAssertEqual(blamed, "b")
+        }
+
+        // Without an explicit parentID, the error blames the parent element's node name, not the moved block.
+        do {
+            _ = try writer.moveBlockAsFirstChild(targetA.item, id: "a", into: targetB.element)
+            XCTFail("expected malformedBlock error for non-container parent")
+        } catch BlockNoteWriter.Error.malformedBlock(let blamed) {
+            XCTAssertEqual(blamed, "paragraph")
+        }
     }
 }
