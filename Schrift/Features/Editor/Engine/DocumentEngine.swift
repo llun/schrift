@@ -357,7 +357,7 @@ final class DocumentEngine {
             revision == command.baseRevision, revision < UInt64.max
         else { throw DocumentEngineError.staleNativeCommand }
         switch command.kind {
-        case .moveUp, .moveDown, .duplicate, .deleteBlock, .insertBlock, .insertSubtrees:
+        case .moveUp, .moveDown, .moveBlock, .duplicate, .deleteBlock, .insertBlock, .insertSubtrees:
             do {
                 return try prepareBlockCommand(command)
             } catch BlockNoteSubtreePayload.Error.tooLarge {
@@ -664,7 +664,7 @@ final class DocumentEngine {
                 }
             }
             caret = { EditorPosition(blockID: command.blockID, offset: removing.lowerBound, assoc: -1) }
-        case .moveUp, .moveDown, .duplicate, .deleteBlock, .insertBlock, .insertSubtrees:
+        case .moveUp, .moveDown, .moveBlock, .duplicate, .deleteBlock, .insertBlock, .insertSubtrees:
             throw DocumentEngineError.unsupportedNativeInput  // prepared above
         case .undo, .redo:
             throw DocumentEngineError.unsupportedNativeInput  // `applyHistoryStep`
@@ -1960,6 +1960,79 @@ final class DocumentEngine {
                 { try writer.moveBlock(item, id: id, into: destination.group, after: destination.left) },
                 { EditorPosition(blockID: id, offset: offset, assoc: -1) }
             )
+        case .moveBlock(let destination):
+            let targetID = destination.referenceBlockID
+            guard !isLocked(id),
+                !index.isTableParagraph(id), !index.isSourceText(id),
+                !index.isTableParagraph(targetID), !index.isSourceText(targetID),
+                let target = index.entries[targetID],
+                index.sameList(id, targetID),
+                let targetPosition = index.listPosition(of: targetID),
+                !(position..<end).contains(targetPosition)
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            switch destination {
+            case .before:
+                if target.group === entry.group, at + 1 < siblings.count, siblings[at + 1] == targetID {
+                    throw DocumentEngineError.unsupportedNativeInput
+                }
+            case .after:
+                if target.group === entry.group, at > 0, siblings[at - 1] == targetID {
+                    throw DocumentEngineError.unsupportedNativeInput
+                }
+            case .firstChild:
+                if entry.parentID == targetID, at == 0 {
+                    throw DocumentEngineError.unsupportedNativeInput
+                }
+            }
+            if index.isColumnGroup(id) {
+                guard entry.depth == 0, index.columnOf[id] == nil,
+                    !builder.nativeSnapshot(entry).block.fidelity.isOpaque,
+                    target.depth == 0
+                else { throw DocumentEngineError.unsupportedNativeInput }
+                let left: YItem?
+                switch destination {
+                case .before: left = target.containerItem.left
+                case .after: left = target.containerItem
+                case .firstChild: throw DocumentEngineError.unsupportedNativeInput
+                }
+                return ({ try writer.moveBlock(item, id: id, into: target.group, after: left) }, { start(id) })
+            }
+            let deepest = try requireMovable(id, including: { $0 > entry.depth }) - 1
+            let offset = try caretOffset(in: id)
+            switch destination {
+            case .before, .after:
+                if let parentID = target.parentID {
+                    try requireEditableBlock(parentID)
+                    if target.group !== entry.group {
+                        guard !isTable(parentID), !index.isColumnGroup(parentID) else {
+                            throw DocumentEngineError.unsupportedNativeInput
+                        }
+                    }
+                }
+                guard target.depth + deepest - entry.depth <= BlockNoteWriter.maxNestingDepth,
+                    target.depth == 0 || !movesTable(id, including: { $0 > entry.depth })
+                else { throw DocumentEngineError.unsupportedNativeInput }
+                let left = destination == .before(targetID) ? target.containerItem.left : target.containerItem
+                return (
+                    { try writer.moveBlock(item, id: id, into: target.group, after: left) },
+                    { EditorPosition(blockID: id, offset: offset, assoc: -1) }
+                )
+            case .firstChild:
+                let targetFidelity = builder.nativeSnapshot(target).block.fidelity
+                guard !index.isColumnGroup(targetID), target.isSimpleContainer,
+                    !targetFidelity.isOpaque, !targetFidelity.isLockedText,
+                    !isTable(targetID)
+                else { throw DocumentEngineError.unsupportedNativeInput }
+                try requireEditableBlock(targetID)
+                let destinationDepth = target.depth + 1
+                guard destinationDepth + deepest - entry.depth <= BlockNoteWriter.maxNestingDepth,
+                    !movesTable(id, including: { $0 > entry.depth })
+                else { throw DocumentEngineError.unsupportedNativeInput }
+                return (
+                    { try writer.moveBlockAsFirstChild(item, id: id, into: target.container) },
+                    { EditorPosition(blockID: id, offset: offset, assoc: -1) }
+                )
+            }
         case .duplicate(var newIDs):
             let isGroup = index.isColumnGroup(id)
             if isGroup {

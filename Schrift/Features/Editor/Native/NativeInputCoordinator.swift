@@ -1836,6 +1836,43 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return isCode(entry.blockID) ? replace(range: effectiveSelection, with: "  ") : indent()
     }
 
+    /// Moves `id` and its nested subtree to `destination` as one durable,
+    /// undoable command. Selection inside `id` keeps its offsets; otherwise the
+    /// caret follows `id` to its new position. Unavailable moves are quiet
+    /// no-ops, matching `moveUp`/`moveDown`.
+    @discardableResult
+    func moveBlock(_ id: String, to destination: NativeMoveDestination) -> Bool {
+        directInsertion = nil
+        guard sourceKind == nil, let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else {
+            return false
+        }
+        guard let entry = surface.rangeIndex.entry(for: id), !surface.isHidden(blockID: id) else { return false }
+        let targetID = destination.referenceBlockID
+        guard surface.rangeIndex.entry(for: targetID) != nil, !surface.isHidden(blockID: targetID) else {
+            return false
+        }
+        if case .firstChild(let parentID) = destination,
+            let parent = block(parentID),
+            AttributedDocumentProjection.isToggle(parent),
+            !surface.isExpanded(parentID)
+        {
+            return false
+        }
+        let range = view.selectedRange
+        let inBlock =
+            range.location >= entry.range.location
+            && (range.location < NSMaxRange(entry.range)
+                || (range.length == 0 && range.location == surface.rangeIndex.length
+                    && entry.blockID == surface.rangeIndex.entries.last?.blockID))
+            && NSMaxRange(range) <= NSMaxRange(entry.range)
+        let remapping: (blockID: String, offset: Int, length: Int)? =
+            inBlock ? (id, range.location - entry.textRange.location, range.length) : nil
+        return applyStructural(
+            id, .moveBlock(destination), refusal: nil, remapping: remapping,
+            retry: again { [weak self] in self?.moveBlock(id, to: destination) ?? false },
+            readsSelection: false)
+    }
+
     private func moveBlock(_ kind: NativeEditCommand.Kind) -> Bool {
         directInsertion = nil
         guard sourceKind == nil, let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else {
@@ -1949,7 +1986,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             origin: readsSelection ? blockSelection() : nil, requestedSource: requestedSource,
             onSettled: onSettled)
         switch kind {
-        case .moveUp, .moveDown, .join: barrier?.movesBlock = true
+        case .moveUp, .moveDown, .moveBlock, .join: barrier?.movesBlock = true
         default: break
         }
         barrierShown = []

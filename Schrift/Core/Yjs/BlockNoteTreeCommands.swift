@@ -119,6 +119,36 @@ extension BlockNoteWriter {
         }
     }
 
+    /// Moves the block and its subtree to become the first child of `parent`
+    /// (creating `parent`'s nested `blockGroup` when absent); the original
+    /// goes, and so does any nested group it leaves empty. Identity is not
+    /// preserved.
+    @discardableResult
+    func moveBlockAsFirstChild(_ item: YItem, id: String, into parent: YType) throws -> Data {
+        guard !item.deleted, case .type(let container) = item.content,
+            parent.typeRef == .xmlElement(nodeName: "blockContainer")
+        else { throw Error.missingBlock(id) }
+        let last = children(parent).last
+        var nested: YType?
+        if let last, case .type(let type) = last.content, type.typeRef == .xmlElement(nodeName: "blockGroup") {
+            nested = type
+        }
+        let copy = try snapshot(container, block: id, depth: 0)
+        return try transaction { tx in
+            let group: YType
+            if let nested {
+                group = nested
+            } else {
+                group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+                guard try YWrite.insertAfter(tx, into: parent, after: last, [.type(group)]) != nil else {
+                    throw Error.malformedBlock(id)
+                }
+            }
+            try insertCopy(tx, copy, into: group, after: nil)
+            removeBlock(tx, item)
+        }
+    }
+
     /// `removeBlocks` for one block and its subtree. A nested group left
     /// empty goes too (ProseMirror's `blockGroup` needs a child); the root
     /// group's last block is the caller's to refuse.
