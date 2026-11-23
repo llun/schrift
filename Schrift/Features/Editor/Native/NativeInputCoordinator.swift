@@ -2904,8 +2904,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let plainOnly = isPlainTextOnlyTarget(for: view.selectedRange)
         var htmlFallbackToPlain = false
         var htmlTooLarge = false
-        // While a barrier is in flight, paste plain text: it queues behind the barrier, as before.
-        let asBlocks = !plainOnly && !hasActiveBarrier
+        // While input is busy (a barrier, queued typing, a pending commit), paste plain text: it
+        // queues behind the busy state, as before.
+        let asBlocks = !plainOnly && !isBusy
         if asBlocks, pasteboard.types.contains(TableClipboard.htmlType) {
             switch Self.pasteboardHTML(pasteboard) {
             case .none:
@@ -3032,9 +3033,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return pasteboard.hasStrings
     }
 
-    /// Reads explicit plain text from any stored type conforming to
-    /// `UTType.plainText` without letting UIKit parse an untrusted or
-    /// oversized `public.html` payload to synthesize a fallback string.
+    /// Reads plain text from the first `UTType.plainText` item in pasteboard order (a source
+    /// app's own text precedes any form UIKit derives from HTML), size-bounded.
     static func pasteboardPlainText(_ pasteboard: UIPasteboard) -> PasteboardText {
         let plainTypes = plainTextTypes(in: pasteboard)
         if !plainTypes.isEmpty {

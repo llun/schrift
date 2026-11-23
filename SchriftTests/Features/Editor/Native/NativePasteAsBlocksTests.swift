@@ -868,7 +868,7 @@ final class NativePasteAsBlocksTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: 2)
     }
 
-    // MARK: - 18. HTML-only pasteboard disables Paste and Match Style without decoding HTML
+    // MARK: - 18. HTML-only pasteboard: Paste and Match Style pastes its text literally
 
     func testHTMLOnlyPasteboardMatchStylePastesTheHTMLTextLiterally() async throws {
         let harness = try await makeHarness([paragraph("p", "Keep")])
@@ -907,7 +907,7 @@ final class NativePasteAsBlocksTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: 1)
     }
 
-    // MARK: - 20. Busy preconditions reject HTML/Markdown paste before parsing
+    // MARK: - 20. Busy input pastes plain text; composition drops the paste
 
     func testActiveBarrierPastesPlainAndCompositionDropsHTMLAndMarkdownPaste() async throws {
         let disk = Latch()
@@ -935,13 +935,15 @@ final class NativePasteAsBlocksTests: NativeEditingTestCase {
         ])
         XCTAssertTrue(harness.input.pasteFromPasteboard())
         XCTAssertNotEqual(harness.input.noticeKey, .native_editor_input_busy)
+        harness.pasteboard.string = "## Literal "
+        XCTAssertTrue(harness.input.pasteFromPasteboard())
 
         disk.open()
         await harness.settle()
         XCTAssertEqual(session.surface.blocks.map(\.node), ["paragraph", "paragraph"])
-        XCTAssertEqual(texts(session), ["Hello", "Queued world"])
+        XCTAssertEqual(texts(session), ["Hello", "Queued## Literal  world"])
         XCTAssertTrue(session.surface.blocks.allSatisfy { $0.runs.allSatisfy(\.marks.isEmpty) })
-        try await assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 3)
 
         // Composition owns view: HTML and Markdown pastes are dropped without mutating.
         try caret(harness, "p1", 2)
@@ -958,7 +960,7 @@ final class NativePasteAsBlocksTests: NativeEditingTestCase {
         XCTAssertFalse(harness.input.pasteFromPasteboard())
         harness.view.unmarkText()
         await harness.settle()
-        XCTAssertEqual(texts(session), ["Heにほんllo", "Queued world"])
-        try await assertConsistent(harness, localCommands: 3)
+        XCTAssertEqual(texts(session), ["Heにほんllo", "Queued## Literal  world"])
+        try await assertConsistent(harness, localCommands: 4)
     }
 }
