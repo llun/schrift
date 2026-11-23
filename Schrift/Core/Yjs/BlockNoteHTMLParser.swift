@@ -203,7 +203,17 @@ enum BlockNoteHTMLParser {
         }
 
         private func marks(adding element: HTMLNode, to current: [Mark]) -> [Mark] {
-            current + InlineFlattener.addedMarks(for: element, current: current, paletteColorsOnly: true)
+            let own = InlineFlattener.addedMarks(for: element, current: [], paletteColorsOnly: true)
+            guard !own.isEmpty else { return current }
+            var merged = current
+            for mark in own {
+                if let index = merged.firstIndex(where: { $0.key == mark.key }) {
+                    merged[index] = mark
+                } else {
+                    merged.append(mark)
+                }
+            }
+            return merged
         }
 
         // MARK: - Block walking
@@ -659,6 +669,7 @@ enum BlockNoteHTMLParser {
             }
 
             var inline = InlineBuffer()
+            var pendingChildInline = InlineBuffer()
             var childBlocks: [BlockNoteWriter.Copy] = []
             var itemHoisted: [BlockNoteWriter.Copy] = []
             var sawFirstParagraph = false
@@ -666,8 +677,10 @@ enum BlockNoteHTMLParser {
             let childDepth = min(depth + 1, BlockNoteWriter.maxNestingDepth)
             try walkListItemChildren(
                 of: li, checkboxNode: checklist.checkboxNode, childDepth: childDepth, marks: inheritedMarks,
-                inline: &inline, childBlocks: &childBlocks, itemHoisted: &itemHoisted,
-                sawFirstParagraph: &sawFirstParagraph)
+                inline: &inline, pendingChildInline: &pendingChildInline, childBlocks: &childBlocks,
+                itemHoisted: &itemHoisted, sawFirstParagraph: &sawFirstParagraph)
+            try flushPendingChildInline(
+                &pendingChildInline, childDepth: childDepth, into: &childBlocks, hoisted: &itemHoisted)
 
             let items = inline.finish()
             var mainParts: [BlockNoteWriter.Copy] = []
@@ -710,20 +723,37 @@ enum BlockNoteHTMLParser {
             }
         }
 
+        private mutating func flushPendingChildInline(
+            _ pendingChildInline: inout InlineBuffer, childDepth: Int, into childBlocks: inout [BlockNoteWriter.Copy],
+            hoisted itemHoisted: inout [BlockNoteWriter.Copy]
+        ) throws {
+            let items = pendingChildInline.finish()
+            guard !items.isEmpty else { return }
+            try emitInlineWithImages(
+                items, node: "paragraph", props: nil, depth: childDepth, into: &childBlocks, hoisted: &itemHoisted)
+        }
+
         private mutating func walkListItemChildren(
             of container: HTMLNode, checkboxNode: HTMLNode?, childDepth: Int, marks currentMarks: [Mark],
-            inline: inout InlineBuffer, childBlocks: inout [BlockNoteWriter.Copy],
-            itemHoisted: inout [BlockNoteWriter.Copy], sawFirstParagraph: inout Bool
+            inline: inout InlineBuffer, pendingChildInline: inout InlineBuffer,
+            childBlocks: inout [BlockNoteWriter.Copy], itemHoisted: inout [BlockNoteWriter.Copy],
+            sawFirstParagraph: inout Bool
         ) throws {
             for child in container.children {
                 if child === checkboxNode { continue }
+                let writingChildBlocks = sawFirstParagraph || !childBlocks.isEmpty || pendingChildInline.hasContent
                 if child.name == "#text" {
-                    let addedMarks = inline.appendText(child.text, marks: currentMarks)
+                    let addedMarks =
+                        writingChildBlocks
+                        ? pendingChildInline.appendText(child.text, marks: currentMarks)
+                        : inline.appendText(child.text, marks: currentMarks)
                     if addedMarks > 0 { try addPayloadBytes(addedMarks) }
                     continue
                 }
                 if Self.droppedElements.contains(child.name) { continue }
                 if child.name == "ul" || child.name == "ol" {
+                    try flushPendingChildInline(
+                        &pendingChildInline, childDepth: childDepth, into: &childBlocks, hoisted: &itemHoisted)
                     try parseList(
                         child, ordered: child.name == "ol", depth: childDepth, inheritedMarks: currentMarks,
                         into: &childBlocks, hoisted: &itemHoisted)
@@ -735,11 +765,21 @@ enum BlockNoteHTMLParser {
                     }
                 } else if child.name == "img" {
                     if let img = makeImage(child) {
+                        if writingChildBlocks {
+                            try flushPendingChildInline(
+                                &pendingChildInline, childDepth: childDepth, into: &childBlocks, hoisted: &itemHoisted)
+                        }
                         itemHoisted.append(try makeImageContainer(url: img.url, alt: img.alt))
                     }
                 } else if child.name == "table" {
+                    if writingChildBlocks {
+                        try flushPendingChildInline(
+                            &pendingChildInline, childDepth: childDepth, into: &childBlocks, hoisted: &itemHoisted)
+                    }
                     try parseTable(child, inheritedMarks: currentMarks, into: &itemHoisted)
                 } else if isBlockLevel(child) {
+                    try flushPendingChildInline(
+                        &pendingChildInline, childDepth: childDepth, into: &childBlocks, hoisted: &itemHoisted)
                     var sub: [BlockNoteWriter.Copy] = []
                     try parseBlock(
                         child, depth: childDepth, inheritedMarks: currentMarks, into: &sub, hoisted: &itemHoisted)
@@ -748,8 +788,10 @@ enum BlockNoteHTMLParser {
                     try walkListItemChildren(
                         of: child, checkboxNode: checkboxNode, childDepth: childDepth,
                         marks: marks(adding: child, to: currentMarks),
-                        inline: &inline, childBlocks: &childBlocks, itemHoisted: &itemHoisted,
-                        sawFirstParagraph: &sawFirstParagraph)
+                        inline: &inline, pendingChildInline: &pendingChildInline, childBlocks: &childBlocks,
+                        itemHoisted: &itemHoisted, sawFirstParagraph: &sawFirstParagraph)
+                } else if writingChildBlocks {
+                    try collectInline(child, marks: currentMarks, skipping: checkboxNode, into: &pendingChildInline)
                 } else {
                     try collectInline(child, marks: currentMarks, skipping: checkboxNode, into: &inline)
                 }
@@ -1067,7 +1109,7 @@ enum BlockNoteHTMLParser {
                 return
             }
             if Self.droppedElements.contains(node.name) { return }
-            let nextMarks = marks + InlineFlattener.addedMarks(for: node, current: marks, paletteColorsOnly: true)
+            let nextMarks = self.marks(adding: node, to: marks)
             for child in node.children {
                 try collectInline(child, marks: nextMarks, skipping: skipping, into: &buffer)
             }

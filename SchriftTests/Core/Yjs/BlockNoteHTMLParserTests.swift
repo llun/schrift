@@ -636,4 +636,113 @@ final class BlockNoteHTMLParserTests: XCTestCase {
         XCTAssertEqual(blocks[1].block.props.first { $0.key == "language" }?.value, .string("swift"))
         XCTAssertEqual(blocks[1].block.runs.map(\.text).joined(), "let x = 1")
     }
+
+    func testListItemPreservesDocumentOrderForTrailingInlineAfterFirstParagraphOrChildBlock() throws {
+        // 1. <ul><li><span><p>First</p>After</span></li></ul> -> bullet("First") + nested paragraph("After")
+        let afterFirstCopies = try BlockNoteHTMLParser.parse("<ul><li><span><p>First</p>After</span></li></ul>")
+        let (afterFirstDoc, afterFirstBlocks) = try project(afterFirstCopies)
+        defer { afterFirstDoc.destroy() }
+        XCTAssertEqual(afterFirstBlocks.map(\.block.node), ["bulletListItem", "paragraph"])
+        XCTAssertEqual(afterFirstBlocks.map(\.depth), [0, 1])
+        XCTAssertEqual(afterFirstBlocks.map { $0.block.runs.map(\.text).joined() }, ["First", "After"])
+
+        // 2. Two paragraphs + trailing inline -> bullet("First") + [p("Second"), p("After")]
+        let afterTwoCopies = try BlockNoteHTMLParser.parse(
+            "<ul><li><span><p>First</p><p>Second</p>After</span></li></ul>")
+        let (afterTwoDoc, afterTwoBlocks) = try project(afterTwoCopies)
+        defer { afterTwoDoc.destroy() }
+        XCTAssertEqual(afterTwoBlocks.map(\.block.node), ["bulletListItem", "paragraph", "paragraph"])
+        XCTAssertEqual(afterTwoBlocks.map(\.depth), [0, 1, 1])
+        XCTAssertEqual(afterTwoBlocks.map { $0.block.runs.map(\.text).joined() }, ["First", "Second", "After"])
+
+        // 3. <ul><li><span><ul><li>Sub</li></ul>After</span></li></ul> -> bullet("") + [bullet("Sub"), p("After")]
+        let afterSubCopies = try BlockNoteHTMLParser.parse(
+            "<ul><li><span><ul><li>Sub</li></ul>After</span></li></ul>")
+        let (afterSubDoc, afterSubBlocks) = try project(afterSubCopies)
+        defer { afterSubDoc.destroy() }
+        XCTAssertEqual(afterSubBlocks.map(\.block.node), ["bulletListItem", "bulletListItem", "paragraph"])
+        XCTAssertEqual(afterSubBlocks.map(\.depth), [0, 1, 1])
+        XCTAssertEqual(afterSubBlocks.map { $0.block.runs.map(\.text).joined() }, ["", "Sub", "After"])
+
+        // 4. Interleaved inline text before another block flushes in document order.
+        let interleavedCopies = try BlockNoteHTMLParser.parse(
+            "<ul><li><span><p>First</p>Middle<p>Second</p>After</span></li></ul>")
+        let (interleavedDoc, interleavedBlocks) = try project(interleavedCopies)
+        defer { interleavedDoc.destroy() }
+        XCTAssertEqual(
+            interleavedBlocks.map(\.block.node), ["bulletListItem", "paragraph", "paragraph", "paragraph"])
+        XCTAssertEqual(interleavedBlocks.map(\.depth), [0, 1, 1, 1])
+        XCTAssertEqual(
+            interleavedBlocks.map { $0.block.runs.map(\.text).joined() }, ["First", "Middle", "Second", "After"])
+    }
+
+    func testInnerExplicitMarksOverrideInheritedWrapperMarksAndAnchorClosesOpenAnchor() throws {
+        // 1. Inner textColor overrides inherited wrapper textColor.
+        let colorHTML =
+            "<span data-style-type=\"textColor\" data-value=\"red\"><div>"
+            + "<p>Red</p>"
+            + "<p><span data-style-type=\"textColor\" data-value=\"blue\">Blue</span></p>"
+            + "</div></span>"
+        let colorCopies = try BlockNoteHTMLParser.parse(colorHTML)
+        let (colorDoc, colorBlocks) = try project(colorCopies)
+        defer { colorDoc.destroy() }
+        XCTAssertEqual(colorBlocks.map(\.block.node), ["paragraph", "paragraph"])
+        if colorBlocks.count == 2 {
+            XCTAssertEqual(colorBlocks[0].block.runs.map(\.text), ["Red"])
+            XCTAssertEqual(colorBlocks[0].block.runs.first?.marks.map(\.key), ["textColor"])
+            XCTAssertEqual(
+                colorBlocks[0].block.runs.first?.marks.first.flatMap { NativeMark.colorName(from: $0.valueJSON) },
+                "red")
+            XCTAssertEqual(colorBlocks[1].block.runs.map(\.text), ["Blue"])
+            XCTAssertEqual(colorBlocks[1].block.runs.first?.marks.map(\.key), ["textColor"])
+            XCTAssertEqual(
+                colorBlocks[1].block.runs.first?.marks.first.flatMap { NativeMark.colorName(from: $0.valueJSON) },
+                "blue")
+        }
+
+        // 2. Inner link overrides inherited wrapper link while outer block keeps outer link.
+        let nestedLinkHTML =
+            "<a href=\"https://outer.example\"><div><h3>Card</h3>"
+            + "<p><a href=\"https://inner.example\">Details</a></p></div></a>"
+        let nestedLinkCopies = try BlockNoteHTMLParser.parse(nestedLinkHTML)
+        let (nestedLinkDoc, nestedLinkBlocks) = try project(nestedLinkCopies)
+        defer { nestedLinkDoc.destroy() }
+        XCTAssertEqual(nestedLinkBlocks.map(\.block.node), ["heading", "paragraph"])
+        if nestedLinkBlocks.count == 2 {
+            XCTAssertEqual(nestedLinkBlocks[0].block.runs.map(\.text), ["Card"])
+            XCTAssertEqual(
+                nestedLinkBlocks[0].block.runs.first?.marks.first.flatMap {
+                    YBlockProjection.linkHref(from: $0.valueJSON)
+                },
+                "https://outer.example")
+            XCTAssertEqual(nestedLinkBlocks[1].block.runs.map(\.text), ["Details"])
+            XCTAssertEqual(
+                nestedLinkBlocks[1].block.runs.first?.marks.first.flatMap {
+                    YBlockProjection.linkHref(from: $0.valueJSON)
+                },
+                "https://inner.example")
+        }
+
+        // 3. Unclosed <a> is closed by a new <a> start tag in block-paste mode, so <h2>Next</h2> has no link.
+        let adoptHTML = "<a href=\"https://a.example\">One<a href=\"https://b.example\">Two</a><h2>Next</h2>"
+        let adoptCopies = try BlockNoteHTMLParser.parse(adoptHTML)
+        let (adoptDoc, adoptBlocks) = try project(adoptCopies)
+        defer { adoptDoc.destroy() }
+        XCTAssertEqual(adoptBlocks.map(\.block.node), ["paragraph", "heading"])
+        if adoptBlocks.count == 2 {
+            let runs = adoptBlocks[0].block.runs
+            XCTAssertEqual(runs.map(\.text), ["One", "Two"])
+            if runs.count == 2 {
+                XCTAssertEqual(
+                    runs[0].marks.first.flatMap { YBlockProjection.linkHref(from: $0.valueJSON) },
+                    "https://a.example")
+                XCTAssertEqual(
+                    runs[1].marks.first.flatMap { YBlockProjection.linkHref(from: $0.valueJSON) },
+                    "https://b.example")
+            }
+            XCTAssertEqual(adoptBlocks[1].block.props.first { $0.key == "level" }?.value, .int(2))
+            XCTAssertEqual(adoptBlocks[1].block.runs.map(\.text), ["Next"])
+            XCTAssertTrue(adoptBlocks[1].block.runs.allSatisfy(\.marks.isEmpty))
+        }
+    }
 }

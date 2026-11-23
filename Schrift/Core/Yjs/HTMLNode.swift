@@ -175,6 +175,15 @@ final class HTMLNode {
                 {
                     stack.removeSubrange(open...)
                 }
+            case "a" where blockImpliedEndTags:
+                if let open = stack.lastIndex(where: {
+                    $0.name == "a" || $0.name == "td" || $0.name == "th" || $0.name == "li"
+                        || Self.closesParagraph.contains($0.name)
+                }),
+                    stack[open].name == "a"
+                {
+                    stack.removeSubrange(open...)
+                }
             case "p" where !blockImpliedEndTags:
                 if let open = stack.lastIndex(where: { ["p", "td", "th", "table", "div"].contains($0.name) }),
                     stack[open].name == "p"
