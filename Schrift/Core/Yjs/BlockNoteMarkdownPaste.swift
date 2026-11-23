@@ -65,6 +65,7 @@ enum BlockNoteMarkdownPaste {
         let lines: [String]
         private var nextID = 1
         private var blockCount = 0
+        private var payloadBytes = 0
         private var sawMarkdown = false
         private var blocks: [BlockNoteWriter.Copy] = []
         private var listRoots: [ListNode] = []
@@ -76,6 +77,19 @@ enum BlockNoteMarkdownPaste {
             guard blockCount <= BlockNoteSubtreePayload.maxBlocks else { throw Error.tooLarge }
             defer { nextID += 1 }
             return "md-\(nextID)"
+        }
+
+        private mutating func addPayloadBytes(_ count: Int) throws {
+            let (sum, overflow) = payloadBytes.addingReportingOverflow(count)
+            guard !overflow, sum <= BlockNoteSubtreePayload.maxBytes else { throw Error.tooLarge }
+            payloadBytes = sum
+        }
+
+        private mutating func accountRuns(_ runs: [InlineRun]) throws {
+            for run in runs {
+                let markBytes = run.marks.reduce(0) { $0 + $1.key.utf8.count + $1.valueJSON.utf8.count }
+                try addPayloadBytes(run.text.utf8.count + markBytes)
+            }
         }
 
         mutating func parse() throws -> [BlockNoteWriter.Copy] {
@@ -105,6 +119,7 @@ enum BlockNoteMarkdownPaste {
                         index += 1
                     }
                     let text = codeLines.joined(separator: "\n")
+                    try addPayloadBytes(text.utf8.count)
                     let id = try mintID()
                     let content: [BlockNoteWriter.Copy] = text.isEmpty ? [] : [.text([.run(InlineRun(text))])]
                     blocks.append(
@@ -156,7 +171,7 @@ enum BlockNoteMarkdownPaste {
                 }
 
                 // 6. List item (checklist, bullet, numbered) with nesting
-                if let item = parseListItem(line) {
+                if let item = parseListItem(line, listOpen: !listRoots.isEmpty) {
                     sawMarkdown = true
                     try appendListItem(item)
                     index += 1
@@ -168,6 +183,8 @@ enum BlockNoteMarkdownPaste {
                     sawMarkdown = true
                     flushList()
                     if let url = BlockNoteHTMLParser.pastedHTTPSImageURL(standalone.url) {
+                        try addPayloadBytes(
+                            url.utf8.count + BlockNoteHTMLParser.sanitizedImageName(standalone.alt).utf8.count)
                         let id = try mintID()
                         blocks.append(BlockNoteHTMLParser.imageBlock(id: id, url: url, alt: standalone.alt))
                     }
@@ -302,9 +319,9 @@ enum BlockNoteMarkdownPaste {
             let text: String
         }
 
-        private func parseListItem(_ line: String) -> ParsedListItem? {
+        private func parseListItem(_ line: String, listOpen: Bool) -> ParsedListItem? {
             let (indent, rest) = leadingIndent(line)
-            guard !rest.isEmpty else { return nil }
+            guard !rest.isEmpty, listOpen || indent <= 3 else { return nil }
 
             // Bare checklist: `[ ] text` or `[x] text` / `[X] text` (must have space after `]`).
             if let bare = parseCheckboxPrefix(rest) {
@@ -375,6 +392,7 @@ enum BlockNoteMarkdownPaste {
         private mutating func appendListItem(_ item: ParsedListItem) throws {
             let (cleanedText, hoistedImages) = extractInlineImages(item.text)
             let runs = sanitizedInlineRuns(cleanedText)
+            try accountRuns(runs)
             let content: [BlockNoteWriter.Copy] = runs.isEmpty ? [] : [.text(runs.map { .run($0) })]
 
             while let lastIndent = indentAt(path: listPath), item.indent <= lastIndent {
@@ -419,6 +437,8 @@ enum BlockNoteMarkdownPaste {
                 // Keep images at root level so `nestsTable` never rejects them.
                 flushList()
                 for img in hoistedImages {
+                    try addPayloadBytes(
+                        img.url.utf8.count + BlockNoteHTMLParser.sanitizedImageName(img.alt).utf8.count)
                     let imgID = try mintID()
                     blocks.append(BlockNoteHTMLParser.imageBlock(id: imgID, url: img.url, alt: img.alt))
                 }
@@ -471,8 +491,16 @@ enum BlockNoteMarkdownPaste {
 
         // MARK: - GFM tables
 
+        private func startsBlockConstruct(_ line: String) -> Bool {
+            parseFenceOpen(line) != nil
+                || isDivider(line)
+                || parseHeading(line) != nil
+                || parseQuote(line) != nil
+                || parseListItem(line, listOpen: false) != nil
+        }
+
         private mutating func parseTable(startingAt start: Int) throws -> (BlockNoteWriter.Copy, Int)? {
-            guard start + 1 < lines.count else { return nil }
+            guard start + 1 < lines.count, !startsBlockConstruct(lines[start]) else { return nil }
             let firstTwo = lines[start] + "\n" + lines[start + 1]
             guard parseMarkdownTable(firstTwo) != nil else { return nil }
 
@@ -480,7 +508,8 @@ enum BlockNoteMarkdownPaste {
             while end < lines.count {
                 let candidate = lines[end]
                 if candidate.trimmingCharacters(in: .whitespaces).isEmpty
-                    || candidate.hasPrefix("    ") || candidate.hasPrefix("\t")
+                    || leadingIndent(candidate).columns > 3
+                    || startsBlockConstruct(candidate)
                     || markdownTableRowCells(candidate) == nil
                 {
                     break
@@ -514,6 +543,11 @@ enum BlockNoteMarkdownPaste {
                     row.enumerated().map { col, text in
                         makeCell(text, isHeader: false, alignment: table.alignments[col])
                     })
+            }
+            for row in pastedRows {
+                for cell in row {
+                    try accountRuns(cell.runs)
+                }
             }
             let id = try mintID()
             do {
@@ -682,11 +716,14 @@ enum BlockNoteMarkdownPaste {
                 for piece in scan.pieces {
                     switch piece {
                     case .image(let url, let alt):
+                        try addPayloadBytes(
+                            url.utf8.count + BlockNoteHTMLParser.sanitizedImageName(alt).utf8.count)
                         let id = try mintID()
                         blocks.append(BlockNoteHTMLParser.imageBlock(id: id, url: url, alt: alt))
                     case .text(let chunk):
                         guard !chunk.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
                         let runs = sanitizedInlineRuns(chunk)
+                        try accountRuns(runs)
                         let id = try mintID()
                         let resolved = props ?? BlockNoteWriter.nativePropSchemas[node] ?? []
                         let content: [BlockNoteWriter.Copy] = runs.isEmpty ? [] : [.text(runs.map { .run($0) })]
@@ -699,6 +736,7 @@ enum BlockNoteMarkdownPaste {
             }
 
             let runs = sanitizedInlineRuns(text)
+            try accountRuns(runs)
             if trackMarkdown {
                 let isPlain =
                     (text.isEmpty && runs.isEmpty)
@@ -1055,7 +1093,7 @@ enum BlockNoteMarkdownPaste {
 
                 // Link: [label](url), keeping only sanitized hrefs; rejected links stay literal source text.
                 if c == "[", !marks.contains(where: { $0.key == "link" }), let link = matchLink(from: i, limit: n) {
-                    if sanitizedLinkURL(link.url) == link.url {
+                    if link.url.utf16.count <= MediaBlock.maxURL, sanitizedLinkURL(link.url) == link.url {
                         scan(link.labelRange, marks: adding("link", NativeMark.linkValue(link.url), to: marks))
                     } else {
                         emit(String(chars[i..<link.next]), marks: marks)

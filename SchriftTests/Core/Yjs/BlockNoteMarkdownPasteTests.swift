@@ -545,4 +545,97 @@ final class BlockNoteMarkdownPasteTests: XCTestCase {
             XCTAssertEqual(prefBlocks[1].block.props.first { $0.key == "name" }?.value, .string("ok"))
         }
     }
+
+    func testFourSpaceIndentedOperatorsStayPlainTextAndPreserveBlankLines() throws {
+        let plain = "result = a\n    + b\n    - c\n\ndone"
+        let plainCopies = try BlockNoteMarkdownPaste.parse(plain)
+        let (plainDoc, plainBlocks) = try project(plainCopies)
+        defer { plainDoc.destroy() }
+
+        XCTAssertEqual(
+            plainBlocks.map(\.block.node), ["paragraph", "paragraph", "paragraph", "paragraph", "paragraph"])
+        XCTAssertEqual(
+            plainBlocks.map { $0.block.runs.map(\.text).joined() },
+            ["result = a", "    + b", "    - c", "", "done"])
+        XCTAssertTrue(plainBlocks.allSatisfy { $0.block.runs.allSatisfy(\.marks.isEmpty) })
+
+        // Even when Markdown is present elsewhere, 4-space/tab indented lines outside an open list stay paragraphs.
+        let mixed = "# Heading\n    + b\n    - c\n    1. d\n\t- e"
+        let mixedCopies = try BlockNoteMarkdownPaste.parse(mixed)
+        let (mixedDoc, mixedBlocks) = try project(mixedCopies)
+        defer { mixedDoc.destroy() }
+
+        XCTAssertEqual(mixedBlocks.map(\.block.node), ["heading", "paragraph", "paragraph", "paragraph", "paragraph"])
+        XCTAssertEqual(
+            mixedBlocks.map { $0.block.runs.map(\.text).joined() },
+            ["Heading", "    + b", "    - c", "    1. d", "\t- e"])
+    }
+
+    func testTableEndsBeforeFollowingBlockConstructsContainingPipes() throws {
+        let tablePrefix = "| H1 | H2 |\n| --- | --- |\n| a | b |\n"
+
+        // Heading with `|` after table keeps the heading and all segments (`C` is not dropped).
+        let headingCopies = try BlockNoteMarkdownPaste.parse(tablePrefix + "# Section A | B | C")
+        let (headingDoc, headingBlocks) = try project(headingCopies)
+        defer { headingDoc.destroy() }
+        XCTAssertEqual(headingBlocks.map(\.block.node), ["table", "heading"])
+        if headingBlocks.count == 2 {
+            let table = try XCTUnwrap(TableGrid.tables(in: headingDoc).values.first)
+            XCTAssertEqual(table.rows.map { $0.map { $0.runs.map(\.text).joined() } }, [["H1", "H2"], ["a", "b"]])
+            XCTAssertEqual(headingBlocks[1].block.props.first { $0.key == "level" }?.value, .int(1))
+            XCTAssertEqual(headingBlocks[1].block.runs.map(\.text).joined(), "Section A | B | C")
+        }
+
+        // Bullet list, numbered list, quote, fence and divider with `|` each terminate the table.
+        let followUps: [(suffix: String, expectedNode: String, expectedText: String)] = [
+            ("- Item A | B | C", "bulletListItem", "Item A | B | C"),
+            ("1. Item A | B | C", "numberedListItem", "Item A | B | C"),
+            ("> Quote A | B | C", "quote", "Quote A | B | C"),
+            ("```a|b\ncode\n```", "codeBlock", "code"),
+            ("---", "divider", ""),
+        ]
+        for entry in followUps {
+            let copies = try BlockNoteMarkdownPaste.parse(tablePrefix + entry.suffix)
+            let (doc, blocks) = try project(copies)
+            defer { doc.destroy() }
+            XCTAssertEqual(blocks.map(\.block.node), ["table", entry.expectedNode], entry.suffix)
+            if blocks.count == 2 {
+                let table = try XCTUnwrap(TableGrid.tables(in: doc).values.first)
+                XCTAssertEqual(
+                    table.rows.map { $0.map { $0.runs.map(\.text).joined() } }, [["H1", "H2"], ["a", "b"]], entry.suffix
+                )
+                XCTAssertEqual(blocks[1].block.runs.map(\.text).joined(), entry.expectedText, entry.suffix)
+            }
+        }
+    }
+
+    func testOversizedMarkdownLinkURLAndMarkAmplificationStayBounded() throws {
+        let prefix = "https://example.com/"
+        let exactHref = prefix + String(repeating: "a", count: MediaBlock.maxURL - prefix.count)
+        let overHref = exactHref + "b"
+
+        let overSource = "[Over](\(overHref))"
+        let overCopies = try BlockNoteMarkdownPaste.parse(overSource)
+        let (overDoc, overBlocks) = try project(overCopies)
+        defer { overDoc.destroy() }
+        XCTAssertEqual(overBlocks.map(\.block.node), ["paragraph"])
+        XCTAssertEqual(overBlocks[0].block.runs.map(\.text), [overSource])
+        XCTAssertTrue(overBlocks[0].block.runs.allSatisfy(\.marks.isEmpty))
+
+        // 24 lines repeating a maxURL link mark across 1,500 alternating bold/plain runs (~72 MB)
+        // must fail fast with .tooLarge.
+        let amplifiedLine = "[" + String(repeating: "**a** a ", count: 750) + "](\(exactHref))"
+        let amplified = Array(repeating: amplifiedLine, count: 24).joined(separator: "\n")
+        let start = ThreadCPUClock.now
+        do {
+            _ = try BlockNoteMarkdownPaste.parse(amplified)
+            XCTFail("expected tooLarge when Markdown link marks exceed payload byte bound")
+        } catch let error as BlockNoteMarkdownPaste.Error {
+            XCTAssertEqual(error, .tooLarge)
+        }
+        let elapsed = ThreadCPUClock.now - start
+        XCTAssertLessThan(
+            elapsed, .milliseconds(500),
+            "Markdown mark-byte amplification must fail fast during parse, took \(elapsed)")
+    }
 }

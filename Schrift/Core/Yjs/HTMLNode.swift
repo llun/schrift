@@ -410,7 +410,10 @@ enum InlineFlattener {
         case "s", "del", "strike": add("strike")
         case "code": add("code")
         case "a":
-            if let href = element.attributes["href"], sanitizedLinkURL(href) == href {
+            if let href = element.attributes["href"],
+                href.utf16.count <= MediaBlock.maxURL,
+                sanitizedLinkURL(href) == href
+            {
                 add("link", NativeMark.linkValue(href))
             }
         case "span":

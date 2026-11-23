@@ -327,4 +327,199 @@ final class BlockNoteHTMLParserTests: XCTestCase {
         XCTAssertLessThan(
             elapsedTable, .milliseconds(250), "bounding table size must reject before fixTable, took \(elapsedTable)")
     }
+
+    func testGoogleDocsInlineWrapperAroundBlocksPreservesBlockStructure() throws {
+        let html =
+            "<b style=\"font-weight:normal;\" id=\"docs-internal-guid-x\">"
+            + "<h1>Title</h1><p>First</p><p>Second</p>"
+            + "<ul><li>One</li><li>Two</li></ul><hr>"
+            + "<table><tr><td>A</td><td>B</td></tr></table></b>"
+        let copies = try BlockNoteHTMLParser.parse(html)
+        let (doc, blocks) = try project(copies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(
+            blocks.map(\.block.node),
+            ["heading", "paragraph", "paragraph", "bulletListItem", "bulletListItem", "divider", "table"])
+        guard blocks.count == 7 else { return }
+        XCTAssertEqual(blocks[0].block.props.first { $0.key == "level" }?.value, .int(1))
+        XCTAssertEqual(blocks[0].block.runs.map(\.text).joined(), "Title")
+        XCTAssertEqual(blocks[1].block.runs.map(\.text).joined(), "First")
+        XCTAssertEqual(blocks[2].block.runs.map(\.text).joined(), "Second")
+        XCTAssertEqual(blocks[3].block.runs.map(\.text).joined(), "One")
+        XCTAssertEqual(blocks[4].block.runs.map(\.text).joined(), "Two")
+        XCTAssertEqual(blocks[3].depth, 0)
+        XCTAssertEqual(blocks[4].depth, 0)
+        let table = try XCTUnwrap(TableGrid.tables(in: doc).values.first)
+        XCTAssertEqual(table.rows.map { $0.map { $0.runs.map(\.text).joined() } }, [["A", "B"]])
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
+
+        // Nested inline wrappers around block elements are also transparent.
+        let nestedCopies = try BlockNoteHTMLParser.parse("<span><b><p>Alpha</p><p>Beta</p></b></span>")
+        let (nestedDoc, nestedBlocks) = try project(nestedCopies)
+        defer { nestedDoc.destroy() }
+        XCTAssertEqual(nestedBlocks.map(\.block.node), ["paragraph", "paragraph"])
+        XCTAssertEqual(nestedBlocks.map { $0.block.runs.map(\.text).joined() }, ["Alpha", "Beta"])
+    }
+
+    func testBlockNoteContainerAlwaysWalksNestedBlockGroupWhenContentEmitsNothing() throws {
+        let html = """
+            <div data-node-type="blockContainer">
+              <div data-content-type="paragraph"><p></p></div>
+              <div data-node-type="blockGroup">
+                <div data-node-type="blockContainer">
+                  <div data-content-type="paragraph"><p>From empty</p></div>
+                </div>
+              </div>
+            </div>
+            <div data-node-type="blockContainer">
+              <div data-content-type="image"><img src="http://insecure.example/x.png" alt="Dropped"></div>
+              <div data-node-type="blockGroup">
+                <div data-node-type="blockContainer">
+                  <div data-content-type="paragraph"><p>From dropped image</p></div>
+                </div>
+              </div>
+            </div>
+            <div data-node-type="blockContainer">
+              <div data-content-type="bulletListItem"><p>Outer</p></div>
+              <div data-node-type="blockGroup">
+                <div data-node-type="blockContainer">
+                  <div data-content-type="image"><img src="https://images.example/a.png" alt="Hoisted"></div>
+                  <div data-node-type="blockGroup">
+                    <div data-node-type="blockContainer">
+                      <div data-content-type="paragraph"><p>From hoisted media</p></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            """
+        let copies = try BlockNoteHTMLParser.parse(html)
+        let (doc, blocks) = try project(copies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(
+            blocks.map(\.block.node),
+            ["paragraph", "paragraph", "bulletListItem", "paragraph", "image"])
+        XCTAssertEqual(blocks.map(\.depth), [0, 0, 0, 1, 0])
+        XCTAssertEqual(
+            blocks.map { $0.block.runs.map(\.text).joined() },
+            ["From empty", "From dropped image", "Outer", "From hoisted media", ""])
+        guard blocks.count == 5 else { return }
+        XCTAssertEqual(blocks[4].block.props.first { $0.key == "url" }?.value, .string("https://images.example/a.png"))
+        XCTAssertEqual(blocks[4].block.props.first { $0.key == "name" }?.value, .string("Hoisted"))
+    }
+
+    func testPreCollectsMultipleCodeChildrenAndBlockNoteCodeBlockReadsNestedLanguage() throws {
+        let html =
+            "<pre><code>line 1</code>\n<code>line 2</code></pre>"
+            + "<div data-content-type=\"codeBlock\"><pre><code class=\"language-swift\">let x = 1\n</code></pre></div>"
+        let copies = try BlockNoteHTMLParser.parse(html)
+        let (doc, blocks) = try project(copies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(blocks.map(\.block.node), ["codeBlock", "codeBlock"])
+        guard blocks.count == 2 else { return }
+        XCTAssertEqual(blocks[0].block.props.first { $0.key == "language" }?.value, .string("text"))
+        XCTAssertEqual(blocks[0].block.runs.map(\.text).joined(), "line 1\nline 2")
+        XCTAssertEqual(blocks[1].block.props.first { $0.key == "language" }?.value, .string("swift"))
+        XCTAssertEqual(blocks[1].block.runs.map(\.text).joined(), "let x = 1")
+    }
+
+    func testListPreservesStrayParagraphAndLooseTextChildren() throws {
+        let html = "<ul><p>Intro</p><li>Item</li></ul><ul>Loose text<li>Next</li></ul>"
+        let copies = try BlockNoteHTMLParser.parse(html)
+        let (doc, blocks) = try project(copies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(blocks.map(\.block.node), ["paragraph", "bulletListItem", "paragraph", "bulletListItem"])
+        XCTAssertEqual(blocks.map(\.depth), [0, 0, 0, 0])
+        XCTAssertEqual(blocks.map { $0.block.runs.map(\.text).joined() }, ["Intro", "Item", "Loose text", "Next"])
+    }
+
+    func testBlockquoteRecursesThroughDivWrappers() throws {
+        let html = "<blockquote><div><p>First</p><p>Second</p></div></blockquote>"
+        let copies = try BlockNoteHTMLParser.parse(html)
+        let (doc, blocks) = try project(copies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(blocks.map(\.block.node), ["quote", "quote"])
+        XCTAssertEqual(blocks.map { $0.block.runs.map(\.text).joined() }, ["First", "Second"])
+    }
+
+    func testBlockNoteSelfTaggedTableAndInvalidBeforeValidImage() throws {
+        let html =
+            "<table data-content-type=\"table\"><tr><td>Cell 1</td><td>Cell 2</td></tr></table>"
+            + "<div data-content-type=\"image\">"
+            + "<img src=\"http://insecure.example/bad.png\" alt=\"Bad\">"
+            + "<img src=\"https://images.example/good.png\" alt=\"Good\"></div>"
+        let copies = try BlockNoteHTMLParser.parse(html)
+        let (doc, blocks) = try project(copies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(blocks.map(\.block.node), ["table", "image"])
+        guard blocks.count == 2 else { return }
+        let table = try XCTUnwrap(TableGrid.tables(in: doc).values.first)
+        XCTAssertEqual(table.rows.map { $0.map { $0.runs.map(\.text).joined() } }, [["Cell 1", "Cell 2"]])
+        XCTAssertEqual(
+            blocks[1].block.props.first { $0.key == "url" }?.value, .string("https://images.example/good.png"))
+        XCTAssertEqual(blocks[1].block.props.first { $0.key == "name" }?.value, .string("Good"))
+    }
+
+    func testOversizedHrefAndMarkByteAmplificationStayBounded() throws {
+        // Exact boundary: href at MediaBlock.maxURL keeps the link mark; +1 drops only the mark, keeping text.
+        let prefix = "https://example.com/"
+        let exactHref = prefix + String(repeating: "a", count: MediaBlock.maxURL - prefix.count)
+        let overHref = exactHref + "b"
+        let boundaryCopies = try BlockNoteHTMLParser.parse(
+            "<p><a href=\"\(exactHref)\">Exact</a> <a href=\"\(overHref)\">Over</a></p>")
+        let (boundaryDoc, boundaryBlocks) = try project(boundaryCopies)
+        defer { boundaryDoc.destroy() }
+        XCTAssertEqual(boundaryBlocks.count, 1)
+        let boundaryRuns = boundaryBlocks[0].block.runs
+        XCTAssertEqual(boundaryRuns.map(\.text), ["Exact", " Over"])
+        if boundaryRuns.count == 2 {
+            XCTAssertEqual(boundaryRuns[0].marks.map(\.key), ["link"])
+            XCTAssertEqual(YBlockProjection.linkHref(from: boundaryRuns[0].marks[0].valueJSON), exactHref)
+            XCTAssertTrue(boundaryRuns[1].marks.isEmpty)
+        }
+
+        // 1 MB href over 1,999 <br> must strip the overlong href and produce a tiny payload quickly (never ~2 GB).
+        let oneMBHref = prefix + String(repeating: "a", count: 1_000_000)
+        let oneMBHTML = "<a href=\"" + oneMBHref + "\">" + String(repeating: "x<br>", count: 1_999) + "x</a>"
+        let startLarge = ThreadCPUClock.now
+        let largePayload = try XCTUnwrap(try BlockNoteHTMLParser.payload(oneMBHTML))
+        let elapsedLarge = ThreadCPUClock.now - startLarge
+        XCTAssertLessThan(
+            elapsedLarge, .milliseconds(500),
+            "1 MB href over 1,999 <br> should strip overlong href quickly, took \(elapsedLarge)")
+        XCTAssertLessThan(
+            largePayload.count, oneMBHref.utf8.count,
+            "payload (\(largePayload.count) bytes) must not keep or amplify the 1 MB href")
+        let decodedLarge = try BlockNoteSubtreePayload.decode(largePayload)
+        XCTAssertEqual(decodedLarge.count, 2_000)
+        for container in decodedLarge {
+            guard case .element("blockContainer", _, let kids) = container,
+                case .element("paragraph", _, let inline)? = kids.first,
+                case .text(let values)? = inline.first,
+                case .run(let run)? = values.first
+            else { return XCTFail("expected plain paragraph block for every split line") }
+            XCTAssertEqual(run.text, "x")
+            XCTAssertTrue(run.marks.isEmpty, "overlong href link mark must be stripped")
+        }
+
+        // Legal maxURL href duplicated over 1,999 <br> (~4 MB of mark bytes) must throw .tooLarge quickly.
+        let amplifiedHTML = "<a href=\"" + exactHref + "\">" + String(repeating: "x<br>", count: 1_999) + "x</a>"
+        let startAmplified = ThreadCPUClock.now
+        do {
+            _ = try BlockNoteHTMLParser.parse(amplifiedHTML)
+            XCTFail("expected tooLarge when duplicated link marks exceed payload byte bound")
+        } catch let error as BlockNoteHTMLParser.Error {
+            XCTAssertEqual(error, .tooLarge)
+        }
+        let elapsedAmplified = ThreadCPUClock.now - startAmplified
+        XCTAssertLessThan(
+            elapsedAmplified, .milliseconds(250),
+            "mark-byte amplification must fail fast during parse, took \(elapsedAmplified)")
+    }
 }
