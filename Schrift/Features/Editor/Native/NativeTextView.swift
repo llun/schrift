@@ -21,7 +21,7 @@ final class NativeTextView: UITextView {
     override func willMove(toWindow newWindow: UIWindow?) {
         super.willMove(toWindow: newWindow)
         if newWindow == nil {
-            blockDragController?.cancelDrag()
+            blockDragController?.tearDown()
         }
     }
 
@@ -892,7 +892,7 @@ final class NativeTextView: UITextView {
         super.layoutSubviews()
         blockControls?.completeAspectRatioRefresh(anchor)
         blockControls?.layoutControls()
-        blockDragController?.layoutHandle()
+        blockDragController?.textViewDidLayout()
         // After the viewport settled: collaborators' cursors on screen (PR10).
         cursorOverlay.layout(in: self)
         chipAccessibilityOverlay.frame = bounds
@@ -1059,9 +1059,13 @@ final class NativeTextView: UITextView {
         (textLayoutManager?.textContentManager as? NSTextContentStorage)?.delegate = blockControls
         accessibilityCustomRotors = [blockControls.headingRotor]
         // Chrome colours resolve at draw time: light/dark only redraws.
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: NativeTextView, _) in
+        registerForTraitChanges([
+            UITraitUserInterfaceStyle.self,
+            UITraitPreferredContentSizeCategory.self,
+            UITraitHorizontalSizeClass.self,
+        ]) { (view: NativeTextView, _) in
             view.blockControls.invalidateChrome()
-            view.blockDragController?.applyTheme()
+            view.blockDragController?.traitEnvironmentDidChange()
         }
         isEditable = false
         isSelectable = true

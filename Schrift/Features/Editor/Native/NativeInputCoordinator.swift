@@ -1843,9 +1843,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// Moves `id` and its nested subtree to `destination` as one durable,
     /// undoable command. Selection inside `id` keeps its offsets; otherwise the
     /// caret follows `id` to its new position. Unavailable moves are quiet
-    /// no-ops, matching `moveUp`/`moveDown`.
+    /// no-ops, matching `moveUp`/`moveDown`. `onSettled` runs once the engine
+    /// result arrives (`true` when applied, `false` when refused or dropped).
     @discardableResult
-    func moveBlock(_ id: String, to destination: NativeMoveDestination) -> Bool {
+    func moveBlock(
+        _ id: String, to destination: NativeMoveDestination, onSettled: ((Bool) -> Void)? = nil
+    ) -> Bool {
         directInsertion = nil
         guard sourceKind == nil, let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else {
             return false
@@ -1873,8 +1876,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             inBlock ? (id, range.location - entry.textRange.location, range.length) : nil
         return applyStructural(
             id, .moveBlock(destination), refusal: nil, remapping: remapping,
-            retry: again { [weak self] in self?.moveBlock(id, to: destination) ?? false },
-            readsSelection: false)
+            retry: again { [weak self] in self?.moveBlock(id, to: destination, onSettled: onSettled) ?? false },
+            readsSelection: false, onSettled: onSettled)
     }
 
     private func moveBlock(_ kind: NativeEditCommand.Kind) -> Bool {

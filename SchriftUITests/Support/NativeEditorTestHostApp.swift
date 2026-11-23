@@ -836,6 +836,8 @@ private struct DragControls: View {
             HStack(spacing: 6) {
                 Button("Focus p1") { Self.placeCaret(in: "drag-p1") }
                     .accessibilityIdentifier("drag.caret.p1")
+                Button("Focus p2") { Self.placeCaret(in: "drag-p2") }
+                    .accessibilityIdentifier("drag.caret.p2")
                 Button("Focus p3") { Self.placeCaret(in: "drag-p3") }
                     .accessibilityIdentifier("drag.caret.p3")
                 Button("Read drag") { summary = Self.readOrder() }

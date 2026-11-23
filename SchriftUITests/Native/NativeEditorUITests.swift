@@ -650,7 +650,18 @@ final class NativeEditorUITests: XCTestCase {
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
         focusFirstParagraph(of: editor, in: app)
+
+        let handle = app.buttons["nativeEditor.dragHandle"]
+        app.buttons["drag.caret.p2"].tap()
+        XCTAssertTrue(handle.waitForExistence(timeout: 5), "the drag handle must appear beside the active block")
+        XCTAssertTrue(handle.waitForStableFrame())
+        let secondParagraphY = handle.frame.midY
+
         app.buttons["drag.caret.p1"].tap()
+        XCTAssertTrue(handle.waitForStableFrame())
+        let firstParagraphY = handle.frame.midY
+        let rowPitch = secondParagraphY - firstParagraphY
+        XCTAssertGreaterThan(rowPitch, 10, "p2 must sit below p1 (p1=\(firstParagraphY), p2=\(secondParagraphY))")
 
         let order = app.staticTexts["drag.order"]
         app.buttons["drag.read"].tap()
@@ -658,12 +669,9 @@ final class NativeEditorUITests: XCTestCase {
             order.label,
             "First paragraph:0|Second paragraph:0|Parent list item:0|Nestable paragraph:0")
 
-        let handle = app.buttons["nativeEditor.dragHandle"]
-        XCTAssertTrue(handle.waitForExistence(timeout: 5), "the drag handle must appear beside the active block")
-        XCTAssertTrue(handle.waitForStableFrame())
-
         let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        let destination = start.withOffset(CGVector(dx: 0, dy: 52))
+        // Drop just past p2's midpoint into the gap between p2 and the list item.
+        let destination = start.withOffset(CGVector(dx: 0, dy: rowPitch * 1.5))
         start.press(forDuration: 0.3, thenDragTo: destination)
 
         let reordered = "Second paragraph:0|First paragraph:0|Parent list item:0|Nestable paragraph:0"
@@ -700,7 +708,9 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(handle.waitForStableFrame())
 
         let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        let destination = start.withOffset(CGVector(dx: 64, dy: 0))
+        // Derive horizontal slide from element frames (well past one list indent step).
+        let slideX = min(editor.frame.width * 0.25, max(handle.frame.height * 1.4, handle.frame.width * 2.5))
+        let destination = start.withOffset(CGVector(dx: slideX, dy: 0))
         start.press(forDuration: 0.3, thenDragTo: destination)
 
         let nested = "First paragraph:0|Second paragraph:0|Parent list item:0|Nestable paragraph:1"

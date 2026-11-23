@@ -873,6 +873,19 @@ final class ColumnTextContainer: UIScrollView {
         }
     }
 
+    /// The valid vertical scroll-offset range for `textView`'s column region so
+    /// auto-scroll during a drag stays inside the active column.
+    func scrollBounds(for textView: NativeTextView) -> ClosedRange<CGFloat>? {
+        guard let region = regions[ObjectIdentifier(textView)] else { return nil }
+        let topSafe = adjustedContentInset.top - contentInset.top
+        let bottomSafe = adjustedContentInset.bottom - contentInset.bottom
+        let containerMin = -adjustedContentInset.top
+        let containerMax = max(containerMin, contentSize.height + adjustedContentInset.bottom - bounds.height)
+        let minOffset = max(containerMin, min(containerMax, region.minY - topSafe))
+        let maxOffset = max(minOffset, min(containerMax, region.maxY - bounds.height + bottomSafe))
+        return minOffset...maxOffset
+    }
+
     /// The part of `region` on screen; off screen, a screen of it (at most)
     /// at the edge nearest the screen, so the text view stays a real viewport.
     static func viewport(_ region: CGRect, visible: CGRect) -> CGRect {

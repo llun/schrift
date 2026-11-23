@@ -559,6 +559,545 @@ final class NativeBlockDragControllerTests: NativeEditingTestCase {
         XCTAssertTrue(settled)
         XCTAssertEqual(colSession.surface.blocks.map(\.id), ["c1-b", "c1-c", "c1-a"])
     }
+
+    // MARK: - Round 1 Review Regression Coverage
+
+    /// Finding #1 & #10: a peer edit mid-drag re-resolves the target and drop line
+    /// when the dragged block survives, and cancels when the dragged block is removed.
+    func testPeerSurfaceChangeMidDragReResolvesTargetAndCancelsWhenDraggedBlockRemoved() async throws {
+        let initialBlocks = [
+            paragraph("p1", "First"),
+            paragraph("p2", "Second"),
+            paragraph("p3", "Third"),
+            paragraph("p4", "Fourth"),
+        ]
+        let state = BlockNoteYjs.encode(initialBlocks, clientID: 1)
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+        _ = mount(harness.session.textView)
+        let drag = try XCTUnwrap(harness.session.textView.blockDragController)
+
+        let p1Pt = try blockCenterWindowPoint(
+            in: harness.session.textView, surface: harness.session.surface, blockID: "p1")
+        let p3Pt = try blockCenterWindowPoint(
+            in: harness.session.textView, surface: harness.session.surface, blockID: "p3")
+
+        XCTAssertTrue(drag.beginDrag(blockID: "p1", atWindowPoint: p1Pt))
+        drag.updateDrag(atWindowPoint: CGPoint(x: p1Pt.x, y: p3Pt.y - 4))
+        XCTAssertEqual(drag.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .after("p2"), depth: 0))
+
+        // Peer deletes `p2` while the user's finger holds steady mid-drag.
+        let peer = YDoc(clientID: 2, gc: true)
+        defer { peer.destroy() }
+        try peer.applyUpdate(YUpdateDecoder.decode(state))
+        let writer = BlockNoteWriter(doc: peer, schemas: BlockNoteWriter.nativePropSchemas)
+        let removeP2 = try writer.deleteBlock(try writer.find("p2").item, id: "p2")
+        try await harness.session.integrateServerState(removeP2)
+        await harness.settle()
+
+        XCTAssertTrue(drag.isDragging, "drag survives when another block changes")
+        XCTAssertNotEqual(
+            drag.currentCandidate?.dropTarget.destination, .after("p2"),
+            "candidate must re-resolve instead of pointing to deleted p2")
+        XCTAssertEqual(drag.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .after("p3"), depth: 0))
+
+        // Peer deletes the dragged block `p1` itself -> drag cancels cleanly.
+        let removeP1 = try writer.deleteBlock(try writer.find("p1").item, id: "p1")
+        try await harness.session.integrateServerState(removeP1)
+        await harness.settle()
+        XCTAssertFalse(drag.isDragging)
+        XCTAssertFalse(drag.isDropLineVisible)
+    }
+
+    /// Finding #2: scrolling the caret block off-screen hides the handle view
+    /// without clearing `handleBlockID`, so scrolling back restores it without a
+    /// new selection change.
+    func testHandleSurvivesScrollingOffScreenAndBackWithoutSelectionChange() async throws {
+        let blocks = (0..<60).map { paragraph("p\($0)", "Paragraph number \($0) with enough text.") }
+        let harness = try await makeHarness(blocks)
+        addTeardownBlock { await harness.close() }
+        _ = mount(harness.session.textView, size: CGSize(width: 390, height: 320))
+        let view = harness.session.textView
+        let drag = try XCTUnwrap(view.blockDragController)
+
+        setSelection(harness, NSRange(location: try location(harness.session, "p0", 0), length: 0))
+        view.layoutIfNeeded()
+        XCTAssertTrue(drag.isHandleVisible)
+        XCTAssertEqual(drag.handleBlockID, "p0")
+
+        // Scroll far below so p0 leaves the TextKit 2 viewport.
+        let maxY = max(0, view.contentSize.height - view.bounds.height)
+        XCTAssertGreaterThan(maxY, 300)
+        view.contentOffset.y = maxY
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        XCTAssertEqual(drag.handleBlockID, "p0", "handleBlockID stays retained when fragment leaves viewport")
+
+        // Scroll back to top without touching selection -> handle reappears.
+        view.contentOffset.y = 0
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        XCTAssertEqual(drag.handleBlockID, "p0")
+        XCTAssertTrue(drag.isHandleVisible, "handle must reappear on layout when caret block scrolls back in")
+    }
+
+    /// Finding #3: drop haptic and VoiceOver announcement wait for `applyStructural`'s
+    /// `onSettled(true)` and do NOT fire when the engine refuses the move.
+    func testDropHapticAndAnnouncementWaitForSettleAndSkipOnEngineRefusal() async throws {
+        let initialBlocks = [
+            paragraph("p1", "First"),
+            paragraph("p2", "Second"),
+            paragraph("p3", "Third"),
+        ]
+        let state = BlockNoteYjs.encode(initialBlocks, clientID: 1)
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+        _ = mount(harness.session.textView)
+        let drag = try XCTUnwrap(harness.session.textView.blockDragController)
+        let spy = SpyDragHaptics()
+        drag.haptics = spy
+        var announcements: [String] = []
+        drag.postAnnouncement = { announcements.append($0) }
+
+        let p1Pt = try blockCenterWindowPoint(
+            in: harness.session.textView, surface: harness.session.surface, blockID: "p1")
+        let p3Pt = try blockCenterWindowPoint(
+            in: harness.session.textView, surface: harness.session.surface, blockID: "p3")
+
+        XCTAssertTrue(drag.beginDrag(blockID: "p1", atWindowPoint: p1Pt))
+        drag.updateDrag(atWindowPoint: CGPoint(x: p1Pt.x, y: p3Pt.y - 4))
+        XCTAssertEqual(drag.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .after("p2"), depth: 0))
+
+        // Before the replica settles, neither drop haptic nor announcement has fired.
+        XCTAssertTrue(drag.endDrag())
+        XCTAssertEqual(spy.drops, 0, "drop haptic must wait for onSettled(true)")
+        XCTAssertTrue(announcements.isEmpty, "VoiceOver announcement must wait for onSettled(true)")
+        await harness.settle()
+        XCTAssertEqual(spy.drops, 1)
+        XCTAssertEqual(announcements, ["Moved after Second"])
+
+        // Now force an engine-side refusal: lock `p1` directly on the replica so the
+        // surface still thinks `p1` is draggable, then drop -> engine refuses -> no haptic/announcement.
+        spy.drops = 0
+        announcements = []
+        let p1Now = try blockCenterWindowPoint(
+            in: harness.session.textView, surface: harness.session.surface, blockID: "p1")
+        let p2Now = try blockCenterWindowPoint(
+            in: harness.session.textView, surface: harness.session.surface, blockID: "p2")
+        XCTAssertTrue(drag.beginDrag(blockID: "p1", atWindowPoint: p1Now))
+        drag.updateDrag(atWindowPoint: CGPoint(x: p1Now.x, y: p2Now.y - 10))
+        XCTAssertEqual(drag.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .before("p2"), depth: 0))
+
+        // Delete `p2` on the replica while surface hasn't yet received a patch, or
+        // lock `p1` via replica doc mutation inside a no-patch inspect: lock `p1`
+        // by setting an unknown prop via `DocumentEngine`? Even simpler: submit an
+        // invalid move via a peer update queued right ahead of our move on a paused mailbox!
+        // Here we lock `p1` directly on the replica so `DocumentEngine.prepareBlockCommand` refuses it.
+        _ = await harness.session.replicaDoc { doc in
+            if let element = try? BlockNoteWriter(doc: doc, schemas: BlockNoteWriter.nativePropSchemas).find("p1")
+                .element
+            {
+                try? doc.transact(origin: .remote) { tx in
+                    try YWrite.mapSet(tx, on: element, key: "unknownLockProp", .any([.string("locked")]))
+                }
+            }
+        }
+        // Surface hasn't seen `.unknownLockProp` yet (it's still in-flight or refused by engine).
+        _ = drag.endDrag()
+        await harness.settle()
+        XCTAssertEqual(spy.drops, 0, "refused move must not fire drop haptic")
+        XCTAssertTrue(announcements.isEmpty, "refused move must not post VoiceOver announcement")
+    }
+
+    /// Finding #4: `showSourceDim` unions only laid-out viewport fragments in the
+    /// dragged subtree, never `.zero` frames that stretch the dim up to y=0.
+    func testSourceDimUsesOnlyLaidOutSubtreeFragmentsWithoutStretchingToTop() async throws {
+        var blocks: [BlockNoteBlock] = (0..<25).map { paragraph("top-\($0)", "Top paragraph \($0)") }
+        var parent = paragraph("parent", "Parent with many children")
+        parent.children = (0..<40).map { paragraph("child-\($0)", "Nested child paragraph \($0)") }
+        blocks.append(parent)
+        blocks.append(paragraph("tail", "Tail"))
+
+        let harness = try await makeHarness(blocks)
+        addTeardownBlock { await harness.close() }
+        _ = mount(harness.session.textView, size: CGSize(width: 390, height: 240))
+        let view = harness.session.textView
+        let drag = try XCTUnwrap(view.blockDragController)
+
+        // Scroll so `parent` sits mid-viewport with many blocks above it and many children below.
+        let parentPos = try XCTUnwrap(harness.session.surface.rangeIndex.position(for: "parent"))
+        let layout = try XCTUnwrap(view.textLayoutManager)
+        let content = try XCTUnwrap(layout.textContentManager)
+        let parentLoc = try XCTUnwrap(
+            content.location(
+                content.documentRange.location,
+                offsetBy: harness.session.surface.rangeIndex.entries[parentPos].range.location))
+        let relocatedY = layout.textViewportLayoutController.relocateViewport(to: parentLoc)
+        view.contentOffset.y = max(0, relocatedY - 80)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        layout.textViewportLayoutController.layoutViewport()
+
+        let parentRect = try XCTUnwrap(
+            NativeDropLayoutHelper.fragmentFrame(
+                forBlockAt: parentPos, entries: harness.session.surface.rangeIndex.entries, contentManager: content,
+                layoutManager: layout, docStart: content.documentRange.location))
+        let expectedMinY = view.textContainerInset.top + parentRect.minY
+        XCTAssertGreaterThan(expectedMinY, 200, "parent should sit far below document y=0")
+
+        let parentPt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "parent")
+        XCTAssertTrue(drag.beginDrag(blockID: "parent", atWindowPoint: parentPt))
+        let dimFrame = try XCTUnwrap(drag.sourceDimFrame)
+        XCTAssertEqual(
+            dimFrame.minY, expectedMinY, accuracy: 2.0,
+            "dim must start at parent's laid-out minY, not stretch to y=0 from un-laid-out children")
+        drag.cancelDrag()
+    }
+
+    /// Finding #5: `handleView` stays in `orderAuxiliarySubviews`'s reading order
+    /// (before the footer) and does not thrash subviews across repeated layout passes.
+    func testHandleStaysInReadingOrderBeforeFooterAcrossLayoutPasses() async throws {
+        let harness = try await makeHarness([paragraph("p1", "First"), paragraph("p2", "Second")])
+        addTeardownBlock { await harness.close() }
+        let view = harness.session.textView
+        let footer = UIView(frame: CGRect(x: 0, y: 400, width: 390, height: 60))
+        view.addSubview(footer)
+        view.footerAccessoryView = footer
+        _ = mount(view)
+
+        let drag = try XCTUnwrap(view.blockDragController)
+        setSelection(harness, NSRange(location: try location(harness.session, "p1", 0), length: 0))
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        XCTAssertTrue(drag.isHandleVisible)
+        let handleIdx = try XCTUnwrap(view.subviews.firstIndex { $0 === drag.handleView })
+        let footerIdx = try XCTUnwrap(view.subviews.firstIndex { $0 === footer })
+        XCTAssertLessThan(handleIdx, footerIdx, "drag handle must sit before footer in VoiceOver reading order")
+        XCTAssertGreaterThan(drag.handleView.layer.zPosition, 0, "zPosition keeps handle visually above text")
+
+        let orderBefore = view.subviews.map(ObjectIdentifier.init)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        XCTAssertEqual(view.subviews.map(ObjectIdentifier.init), orderBefore, "subview order must stay stable")
+    }
+
+    /// Finding #6: a bounds size change cancels an active drag; a content shift
+    /// at unchanged size re-resolves the drop target and drop line.
+    func testLayoutSizeChangeCancelsDragAndContentShiftReResolvesTarget() async throws {
+        let blocks = (0..<20).map { paragraph("p\($0)", "Paragraph \($0)") }
+        let harness = try await makeHarness(blocks)
+        addTeardownBlock { await harness.close() }
+        let window = mount(harness.session.textView, size: CGSize(width: 390, height: 400))
+        let view = harness.session.textView
+        let drag = try XCTUnwrap(view.blockDragController)
+
+        // 1) Content shift (scroll / geometry shift without bounds size change) re-resolves target.
+        let p0Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p0")
+        let p2Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p2")
+        XCTAssertTrue(drag.beginDrag(blockID: "p0", atWindowPoint: p0Pt))
+        drag.updateDrag(atWindowPoint: CGPoint(x: p0Pt.x, y: p2Pt.y - 4))
+        let beforeTarget = drag.currentCandidate?.dropTarget
+        XCTAssertEqual(beforeTarget, NativeBlockDropTarget(destination: .after("p1"), depth: 0))
+
+        view.contentOffset.y = 140
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        XCTAssertTrue(drag.isDragging, "content shift at unchanged size keeps drag active")
+        XCTAssertNotEqual(
+            drag.currentCandidate?.dropTarget, beforeTarget,
+            "content shift must re-resolve target against new geometry")
+
+        // 2) Bounds size change (rotation / Split View) cancels the drag.
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: window.bounds.height)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        XCTAssertFalse(drag.isDragging, "bounds size change must cancel active drag")
+        XCTAssertFalse(drag.isDropLineVisible)
+    }
+
+    /// Finding #7 & #10: auto-scroll advances `contentOffset.y`, re-resolves the drop
+    /// target on a long document, and inside a stacked `ColumnTextContainer` lays out
+    /// before resolving and clamps strictly to the active column's region.
+    func testAutoScrollAdvancesOffsetReResolvesTargetAndClampsInsideColumnContainer() async throws {
+        // Part A: standalone long NativeTextView auto-scrolls and updates drop target.
+        let longBlocks = (0..<40).map { paragraph("p\($0)", "Scrollable paragraph \($0)") }
+        let harness = try await makeHarness(longBlocks)
+        addTeardownBlock { await harness.close() }
+        let window = mount(harness.session.textView, size: CGSize(width: 390, height: 320))
+        let view = harness.session.textView
+        let drag = try XCTUnwrap(view.blockDragController)
+
+        let p0Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p0")
+        XCTAssertTrue(drag.beginDrag(blockID: "p0", atWindowPoint: p0Pt))
+        // Move finger into bottom 56 pt edge zone.
+        let bottomEdgePt = CGPoint(x: p0Pt.x, y: window.bounds.maxY - 8)
+        drag.updateDrag(atWindowPoint: bottomEdgePt)
+        let targetBeforeScroll = drag.currentCandidate?.dropTarget
+        let offsetBefore = view.contentOffset.y
+
+        for _ in 0..<8 {
+            XCTAssertTrue(drag.performAutoScrollStep(dt: 1.0 / 30.0))
+        }
+        XCTAssertGreaterThan(view.contentOffset.y, offsetBefore + 40, "auto-scroll must advance offset")
+        XCTAssertNotEqual(
+            drag.currentCandidate?.dropTarget, targetBeforeScroll,
+            "auto-scroll must re-resolve drop target each frame")
+        drag.cancelDrag()
+
+        // Part B: stacked ColumnTextContainer lays out active column and clamps to col-1's region.
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        let base = BlockNoteYjs.encode([paragraph("root", "Root")], clientID: 1)
+        try doc.applyUpdate(YUpdateDecoder.decode(base))
+        let root = try XCTUnwrap(doc.share[BlockNoteYjs.fragmentField])
+        guard case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content else {
+            return XCTFail("missing root group")
+        }
+        try doc.transact { tx in
+            let cl = YType(typeRef: .xmlElement(nodeName: "columnList"))
+            _ = try YWrite.insertAfter(tx, into: group, after: nil, [.type(cl)])
+            try YWrite.mapSet(tx, on: cl, key: "id", .any([.string("cl")]))
+            var lastCol: YItem?
+            for colID in ["col-1", "col-2"] {
+                let col = YType(typeRef: .xmlElement(nodeName: "column"))
+                lastCol = try YWrite.insertAfter(tx, into: cl, after: lastCol, [.type(col)])
+                try YWrite.mapSet(tx, on: col, key: "id", .any([.string(colID)]))
+                try YWrite.mapSet(tx, on: col, key: "width", .any([.int(1)]))
+                var lastBlock: YItem?
+                for idx in 0..<25 {
+                    let c = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+                    lastBlock = try YWrite.insertAfter(tx, into: col, after: lastBlock, [.type(c)])
+                    try YWrite.mapSet(tx, on: c, key: "id", .any([.string("\(colID)-\(idx)")]))
+                    let p = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+                    _ = try YWrite.insertAfter(tx, into: c, after: nil, [.type(p)])
+                    for (k, v) in Self.paragraphProps { try YWrite.mapSet(tx, on: p, key: k, .any([v])) }
+                    let t = YType(typeRef: .xmlText)
+                    _ = try YWrite.insertAfter(tx, into: p, after: nil, [.type(t)])
+                    try t.insert(0, "\(colID) line \(idx)", nil)
+                }
+            }
+        }
+        let colState = try YStateEncoder.encodeStateAsUpdate(doc)
+        let colHarness = try await makeHarness(state: colState)
+        addTeardownBlock { await colHarness.close() }
+        let col1 = try unwrapped(await colHarness.session.openColumn(group: "cl", column: "col-1"))
+        let col2 = try unwrapped(await colHarness.session.openColumn(group: "cl", column: "col-2"))
+        addTeardownBlock {
+            await col1.close().value
+            await col2.close().value
+        }
+
+        let colWindow = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 320))
+        let container = ColumnTextContainer(frame: colWindow.bounds)
+        colWindow.addSubview(container)
+        colWindow.isHidden = false
+        windows.append(colWindow)
+        container.show([col1.textView, col2.textView], widths: [1, 1], active: 0)
+        container.layoutIfNeeded()
+        // Trigger a second pass once TextKit measures content heights.
+        col1.textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+        col2.textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let col1Bounds = try XCTUnwrap(container.scrollBounds(for: col1.textView))
+        XCTAssertLessThan(
+            col1Bounds.upperBound, container.contentSize.height - container.bounds.height - 50,
+            "col-1 bounds must stop well before col-2's bottom")
+
+        let colDrag = try XCTUnwrap(col1.textView.blockDragController)
+        let startColPt = try blockCenterWindowPoint(in: col1.textView, surface: col1.surface, blockID: "col-1-0")
+        XCTAssertTrue(colDrag.beginDrag(blockID: "col-1-0", atWindowPoint: startColPt))
+        colDrag.updateDrag(atWindowPoint: CGPoint(x: startColPt.x, y: colWindow.bounds.maxY - 6))
+        let initialCol1Offset = col1.textView.contentOffset.y
+
+        // Step once: container lays out col1 immediately so col1.textView.contentOffset tracks it.
+        XCTAssertTrue(colDrag.performAutoScrollStep(dt: 1.0 / 30.0))
+        XCTAssertGreaterThan(
+            col1.textView.contentOffset.y, initialCol1Offset,
+            "ColumnTextContainer must lay out col-1 immediately during auto-scroll")
+
+        // Step many times: must clamp at col-1's region and never scroll into col-2.
+        for _ in 0..<80 {
+            _ = colDrag.performAutoScrollStep(dt: 1.0 / 20.0)
+        }
+        XCTAssertLessThanOrEqual(
+            container.contentOffset.y, col1Bounds.upperBound + 0.5,
+            "auto-scroll in col-1 must clamp to col-1's region, never spilling into col-2")
+        colDrag.cancelDrag()
+    }
+
+    /// Finding #8: `willResignActive` cancels an active drag, hiding the handle resets
+    /// pointer-hover highlight, and RTL uses `textContainerInset.right` as leading inset.
+    func testResignActiveCancelsDragHoverResetsOnHideAndRTLUsesTrailingInset() async throws {
+        let harness = try await makeHarness([paragraph("p1", "First"), paragraph("p2", "Second")])
+        addTeardownBlock { await harness.close() }
+        let view = harness.session.textView
+        _ = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+
+        // 1) willResignActive cancels an active drag.
+        let p1Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p1")
+        XCTAssertTrue(drag.beginDrag(blockID: "p1", atWindowPoint: p1Pt))
+        XCTAssertTrue(drag.isDragging)
+        NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+        XCTAssertFalse(drag.isDragging, "willResignActive must cancel an active drag")
+
+        // 2) Pointer hover highlight resets when handle hides.
+        setSelection(harness, NSRange(location: try location(harness.session, "p1", 0), length: 0))
+        view.layoutIfNeeded()
+        drag.handleView.setPointerHoveringForTesting(true)
+        XCTAssertTrue(drag.handleView.isShowingHighlightChrome)
+        view.isEditable = false
+        XCTAssertFalse(drag.handleView.isShowingHighlightChrome, "hover highlight must clear when hidden")
+        view.isEditable = true
+        view.layoutIfNeeded()
+        XCTAssertFalse(drag.handleView.isShowingHighlightChrome, "hover highlight must stay cleared on re-show")
+
+        // 3) RTL uses textContainerInset.right as leading inset (not .left).
+        view.semanticContentAttribute = .forceRightToLeft
+        view.textContainerInset = UIEdgeInsets(top: 16, left: 10, bottom: 16, right: 32)
+        view.layoutIfNeeded()
+        drag.layoutHandle()
+        let expectedRTLX = min(
+            view.bounds.width - NativeBlockDragMetrics.handleWidth,
+            view.bounds.width - view.textContainerInset.right)
+        XCTAssertEqual(drag.handleView.frame.minX, round(expectedRTLX), accuracy: 1.0)
+
+        let line = NativeDropLayoutHelper.makeDropLineView()
+        NativeDropLayoutHelper.layoutDropLine(line, indicatorY: 40, depth: 0, in: view)
+        XCTAssertEqual(line.frame.maxX, view.bounds.width - 32, accuracy: 1.0, "RTL drop line starts at right inset")
+        XCTAssertEqual(line.frame.minX, 10, accuracy: 1.0, "RTL drop line ends at left inset")
+    }
+
+    /// Finding #9: handle keeps 22 pt visual width with a 44×44 hit target, preview
+    /// height grows without a 76 pt cap at AX Dynamic Type, grip icon scales, and
+    /// shadow uses a design-system token instead of raw `UIColor.black`.
+    func testDesignSystemHandleHitTarget44x44DynamicTypePreviewHeightScaledGripAndTokenShadow() async throws {
+        let harness = try await makeHarness([
+            paragraph("p1", "A moderately long paragraph that wraps cleanly onto two lines at large sizes")
+        ])
+        addTeardownBlock { await harness.close() }
+        let view = harness.session.textView
+        _ = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+
+        // Handle visual width is 22 pt, hit target expands to 44×44 pt.
+        setSelection(harness, NSRange(location: try location(harness.session, "p1", 0), length: 0))
+        view.layoutIfNeeded()
+        XCTAssertEqual(drag.handleView.bounds.size, CGSize(width: 22, height: 44))
+        XCTAssertTrue(drag.handleView.point(inside: CGPoint(x: -10, y: 22), with: nil))
+        XCTAssertTrue(drag.handleView.point(inside: CGPoint(x: 32, y: 22), with: nil))
+        XCTAssertFalse(drag.handleView.point(inside: CGPoint(x: -13, y: 22), with: nil))
+        XCTAssertFalse(drag.handleView.point(inside: CGPoint(x: 35, y: 22), with: nil))
+
+        // Preview grows past 76 pt and scales its grip icon at Accessibility Extra Extra Extra Large.
+        let largeControls = NativeBlockControls(textView: view)
+        view.traitOverrides.preferredContentSizeCategory = .large
+        view.updateTraitsIfNeeded()
+        let defaultPreview = NativeBlockDragPreviewView(
+            block: harness.session.surface.blocks[0], childCount: 2, controls: largeControls, maxWidth: 320)
+
+        view.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        view.updateTraitsIfNeeded()
+        let axPreview = NativeBlockDragPreviewView(
+            block: harness.session.surface.blocks[0], childCount: 2, controls: largeControls, maxWidth: 320)
+
+        XCTAssertGreaterThan(axPreview.frame.height, 76, "AX Dynamic Type preview must not clip at 76 pt")
+        XCTAssertGreaterThan(axPreview.gripPointSize, defaultPreview.gripPointSize, "preview grip icon must scale")
+
+        let expectedShadow = largeControls.color(\.surfaceScrim).withAlphaComponent(1).cgColor
+        XCTAssertEqual(axPreview.layer.shadowColor, expectedShadow, "shadow must come from surfaceScrim token")
+    }
+
+    /// Finding #10: card long-press path accepts attachment cards and dividers while
+    /// refusing prose blocks so text selection is never contested.
+    func testCardLongPressAcceptsCardsAndDividerAndRejectsProse() async throws {
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        let base = BlockNoteYjs.encode(
+            [
+                paragraph("p1", "Plain prose paragraph"),
+                BlockNoteBlock(node: "divider", props: [], runs: [], id: "div1"),
+            ], clientID: 1)
+        try doc.applyUpdate(YUpdateDecoder.decode(base))
+        let root = try XCTUnwrap(doc.share[BlockNoteYjs.fragmentField])
+        guard case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content else {
+            return XCTFail("missing root group")
+        }
+        try doc.transact { tx in
+            let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            let last = YBlockProjection.children(of: group, includeFormats: false).last
+            _ = try YWrite.insertAfter(tx, into: group, after: last, [.type(container)])
+            try YWrite.mapSet(tx, on: container, key: "id", .any([.string("tbl1")]))
+            let table = YType(typeRef: .xmlElement(nodeName: "table"))
+            _ = try YWrite.insertAfter(tx, into: container, after: nil, [.type(table)])
+            try YWrite.mapSet(tx, on: table, key: "textColor", .any([.string("default")]))
+            let row = YType(typeRef: .xmlElement(nodeName: "tableRow"))
+            _ = try YWrite.insertAfter(tx, into: table, after: nil, [.type(row)])
+            let cell = YType(typeRef: .xmlElement(nodeName: "tableCell"))
+            _ = try YWrite.insertAfter(tx, into: row, after: nil, [.type(cell)])
+            for (k, v) in [
+                ("backgroundColor", YAnyValue.string("default")), ("colspan", .int(1)), ("rowspan", .int(1)),
+                ("textAlignment", .string("left")), ("textColor", .string("default")),
+            ] {
+                try YWrite.mapSet(tx, on: cell, key: k, .any([v]))
+            }
+            let para = YType(typeRef: .xmlElement(nodeName: "tableParagraph"))
+            _ = try YWrite.insertAfter(tx, into: cell, after: nil, [.type(para)])
+            let t = YType(typeRef: .xmlText)
+            _ = try YWrite.insertAfter(tx, into: para, after: nil, [.type(t)])
+            try t.insert(0, "Cell", nil)
+        }
+        let harness = try await makeHarness(state: try YStateEncoder.encodeStateAsUpdate(doc))
+        addTeardownBlock { await harness.close() }
+        let view = harness.session.textView
+        _ = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+
+        let p1Local = view.convert(
+            try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p1"), from: nil)
+        let divLocal = view.convert(
+            try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "div1"), from: nil)
+        let tblLocal = view.convert(
+            try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "tbl1"), from: nil)
+
+        XCTAssertNil(drag.cardBlockID(at: p1Local))
+        XCTAssertFalse(drag.canBeginCardLongPress(at: p1Local), "prose paragraph must reject card long-press")
+
+        XCTAssertEqual(drag.cardBlockID(at: divLocal), "div1")
+        XCTAssertTrue(drag.canBeginCardLongPress(at: divLocal), "divider must accept card long-press")
+
+        XCTAssertEqual(drag.cardBlockID(at: tblLocal), "tbl1")
+        XCTAssertTrue(drag.canBeginCardLongPress(at: tblLocal), "table card must accept card long-press")
+    }
+
+    /// Finding #10: sliding left on a nested block un-nests it to depth 0 and one undo restores it.
+    func testHorizontalSlideLeftUnnestsChildBlockAndUndoesInOneStep() async throws {
+        var parent = bullet("b1", "Parent bullet")
+        parent.children = [paragraph("c1", "Nested child")]
+        let harness = try await makeHarness([parent, paragraph("p2", "Trailing")])
+        addTeardownBlock { await harness.close() }
+        let view = harness.session.textView
+        _ = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+
+        XCTAssertEqual(harness.session.surface.blocks.map(\.depth), [0, 1, 0])
+        let c1Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "c1")
+        XCTAssertTrue(drag.beginDrag(blockID: "c1", atWindowPoint: c1Pt))
+        drag.updateDrag(atWindowPoint: CGPoint(x: c1Pt.x - 48, y: c1Pt.y))
+        XCTAssertEqual(drag.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .after("b1"), depth: 0))
+        XCTAssertTrue(drag.endDrag())
+        await harness.settle()
+
+        XCTAssertEqual(harness.session.surface.blocks.map(\.id), ["b1", "c1", "p2"])
+        XCTAssertEqual(harness.session.surface.blocks.map(\.depth), [0, 0, 0])
+
+        XCTAssertTrue(harness.input.undo())
+        await harness.settle()
+        XCTAssertEqual(harness.session.surface.blocks.map(\.depth), [0, 1, 0])
+    }
 }
 
 @MainActor
