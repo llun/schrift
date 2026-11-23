@@ -745,4 +745,28 @@ final class BlockNoteHTMLParserTests: XCTestCase {
             XCTAssertTrue(adoptBlocks[1].block.runs.allSatisfy(\.marks.isEmpty))
         }
     }
+
+    func testANestedLinkClosesOnlyTheOpenLink() throws {
+        // Bold opened inside the first link stays bold across the second link.
+        let (boldDoc, bold) = try project(
+            BlockNoteHTMLParser.parse(
+                "<p><a href=\"https://a.test\"><b>one <a href=\"https://b.test\">two</a> three</b></p>"))
+        defer { boldDoc.destroy() }
+        let runs = try XCTUnwrap(bold.first).block.runs
+        XCTAssertEqual(runs.map(\.text).joined(), "one two three")
+        XCTAssertTrue(runs.allSatisfy { run in run.marks.contains { $0.key == "bold" } })
+        // A link inside a dropped <svg> stays dropped.
+        let (svgDoc, svg) = try project(
+            BlockNoteHTMLParser.parse(
+                "<p><a href=\"https://a.test\">Click <svg><a href=\"https://b.test\"><text>icon</text></a>"
+                    + " extra</svg></a></p>"))
+        defer { svgDoc.destroy() }
+        XCTAssertEqual(try XCTUnwrap(svg.first).block.runs.map(\.text).joined(), "Click")
+        // <details>/<summary> keep their block break.
+        let details = try BlockNoteHTMLParser.parse(
+            "<a href=\"https://a.test\"><details><summary><a href=\"https://b.test\">Title</a></summary>Body"
+                + "</details></a>")
+        XCTAssertEqual(details.count, 2)
+    }
+
 }

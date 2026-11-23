@@ -182,7 +182,8 @@ final class HTMLNode {
                 }),
                     stack[open].name == "a"
                 {
-                    stack.removeSubrange(open...)
+                    // Only the open link stops being a parent; formatting and containers opened inside it stay open.
+                    stack.remove(at: open)
                 }
             case "p" where !blockImpliedEndTags:
                 if let open = stack.lastIndex(where: { ["p", "td", "th", "table", "div"].contains($0.name) }),
