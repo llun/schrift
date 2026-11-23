@@ -1,0 +1,43 @@
+SchriftTests/Core/Yjs/BlockNoteTableClipboardOracleTests.swift
+  s_17b6192f00c988::t_bd477754ba4cc8 192-223
+Schrift/Core/Yjs/BlockNoteHTMLParser.swift
+  s_17b6192f00c988::t_b4c7fd34581008 22,95-117,595-597,654,726,786,788-790,793,795,798-799,832-837,839-845,847,854-856,858-859,883,893-926,928-935,942,945
+Schrift/Core/Yjs/BlockNoteMarkdownPaste.swift
+  s_17b6192f00c988::t_a36781379218fb 21-24,30,484,490,547-548,558-569,571-579,583,586-588,590-642,644-661,665-674,676-680,683-688,690-697,699,701-702,704-708,713,716-731,739-755,758,774-777,780-781,783-784,807-1154
+Schrift/Core/Yjs/BlockNoteSubtreePayload.swift
+  s_17b6192f00c988::t_3feb82eae5694d 47-50,53-57,208-211,220-234,238,243-244,321-418
+Schrift/Core/Yjs/BlockNoteTableClipboard.swift
+  s_17b6192f00c988::t_919f3233b5dee0 69,75,292,324-325
+Schrift/Core/Yjs/BlockNoteWriter.swift
+  s_17b6192f00c988::t_224dcd18e78ee9 687-689,830-834,837,877-906,1350-1351,1355,1365-1376,1385-1403,1413,1415,1420,1434,1443,1466,1468,1474,1480-1481,1484
+Schrift/Core/Yjs/HTMLNode.swift
+  s_17b6192f00c988::t_0ed0d67702bc2d 31-38,160-161,173,178-183,185,283,323,345,347-349,352,354,357-358,380,390-396,418,420-427
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_17b6192f00c988::t_27ec29cfd78a14 2014-2015,2059,2120-2121,2124-2125,2162-2164,2169,2176
+Schrift/Features/Editor/MarkdownTable.swift
+  s_17b6192f00c988::t_e5cb04c41ed72e 69-72
+SchriftTests/Core/Yjs/BlockNoteHTMLParserTests.swift
+  s_17b6192f00c988::t_54d905dcdb85e6 28-29,40-46,49,51,55,250-329
+SchriftTests/Core/Yjs/BlockNoteMarkdownPasteTests.swift
+  s_17b6192f00c988::t_eaafb495de1874 225-305
+SchriftTests/Features/Editor/Engine/DocumentEngineBlockPasteTests.swift
+  s_17b6192f00c988::t_7fa4275b57ddde 396-514
+docs/standards/document-engine.md
+  s_17b6192f00c988::t_0c3353f6bfee82 684-695
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28fafc55a0e10e19306406c01b9eb46ac6b54790",
+  "prompts": {},
+  "sessions": {
+    "s_17b6192f00c988": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "605bac20-8140-42f7-b812-cf5592e1f657",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
