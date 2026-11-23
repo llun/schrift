@@ -58,17 +58,22 @@ final class DocumentSaveCoordinatorReplaySubpageTests: DocumentSaveCoordinatorRe
             title: "Child", parentID: parent, ownerUserID: user)
         // The POST is forbidden, and the probe that follows is held open so the delete can
         // land inside its window.
+        let probeGate = MockURLProtocol.ResponseGate()
         stubUsersMeThen(log: log) { request in
             if request.httpMethod == "POST" {
                 return .init(statusCode: 403, headers: [:], body: Data(), error: nil)
             }
-            return .init(statusCode: 404, headers: [:], body: Data(), error: nil, delay: 0.3)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil, releasedBy: probeGate)
         }
 
         let coordinator = env.coordinator
         let pass = Task { await coordinator.syncPendingDrafts() }
-        await waitUntil { log.count(ofMethod: "GET", urlContaining: parent.uuidString.lowercased()) == 1 }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount >= 1
+                && log.count(ofMethod: "GET", urlContaining: parent.uuidString.lowercased()) == 1
+        }
         coordinator.discardPendingWork(documentID: local.id)
+        probeGate.open()
         await pass.value
 
         XCTAssertNil(env.creates.create(for: local.id), "the delete stands — nothing is written back")

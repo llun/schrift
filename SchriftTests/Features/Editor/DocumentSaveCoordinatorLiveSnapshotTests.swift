@@ -86,18 +86,21 @@ final class DocumentSaveCoordinatorLiveSnapshotTests: DocumentSaveCoordinatorTes
     /// whole reconcile/replay machinery keys off the projected markdown, never the bytes.
     func testEnqueueLiveSnapshotWritesTheDraftWithProjectedMarkdownAndBaseline() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, saveDelay: 0.3)  // hold the save open so we can read the draft
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)  // hold the save open so we can read the draft
         let (coordinator, draftStore, _) = makeCoordinator()
         let baseline = DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 0), markdown: "# Base", title: "Doc")
 
         coordinator.enqueueLiveSnapshot(
             documentID: documentID, snapshot: Data([0x09]), projectedMarkdown: "# Projected", title: "Doc",
             baseline: baseline)
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
 
         let draft = draftStore.draft(for: documentID)
         XCTAssertEqual(draft?.markdown, "# Projected", "the draft body is the projected markdown, not the bytes")
         XCTAssertEqual(draft?.title, "Doc")
         XCTAssertEqual(draft?.baseline, baseline, "the baseline is threaded through unchanged")
+        patchGate.open()
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
     }
 
@@ -140,11 +143,13 @@ final class DocumentSaveCoordinatorLiveSnapshotTests: DocumentSaveCoordinatorTes
     /// in-flight save collapse to the newest, which is the only one that reaches the wire.
     func testLiveSnapshotCoalescesToLatestWhileInFlight() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, saveDelay: 0.2)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
         let (coordinator, _, _) = makeCoordinator()
 
         coordinator.enqueueLiveSnapshot(
             documentID: documentID, snapshot: Data([0x01]), projectedMarkdown: "v1", title: "Doc")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.enqueueLiveSnapshot(
             documentID: documentID, snapshot: Data([0x02]), projectedMarkdown: "v2", title: "Doc")
         coordinator.enqueueLiveSnapshot(
@@ -152,6 +157,7 @@ final class DocumentSaveCoordinatorLiveSnapshotTests: DocumentSaveCoordinatorTes
 
         XCTAssertEqual(coordinator.pendingSave(documentID: documentID)?.markdown, "v3")
 
+        patchGate.open()
         await waitUntil(timeout: 5) { self.isSaved(coordinator.state(for: self.documentID)) }
         // Two saves total (the first, then the coalesced v3), each one content PATCH.
         XCTAssertEqual(savesInFlight(log), 2)
@@ -361,12 +367,13 @@ final class DocumentSaveCoordinatorLiveSnapshotTests: DocumentSaveCoordinatorTes
     func testACoalescedQueuedRestartOfALiveSnapshotStillCarriesTheWebsocketFlag() async {
         let bodies = ContentPatchRecorder()
         let log = RequestRecorder()
+        let patchGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             bodies.record(request)
             let url = request.url?.absoluteString ?? ""
             if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
-                return .init(statusCode: 204, headers: [:], body: Data(), error: nil, delay: 0.2)
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil, releasedBy: patchGate)
             }
             return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
         }
@@ -374,11 +381,13 @@ final class DocumentSaveCoordinatorLiveSnapshotTests: DocumentSaveCoordinatorTes
 
         coordinator.enqueueLiveSnapshot(
             documentID: documentID, snapshot: Data([0x01]), projectedMarkdown: "v1", title: "Doc")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         // Coalesces behind the in-flight v1 (no conflict, so this is `finish`'s plain restart —
         // not `releaseHeldSave`).
         coordinator.enqueueLiveSnapshot(
             documentID: documentID, snapshot: Data([0x02]), projectedMarkdown: "v2", title: "Doc")
 
+        patchGate.open()
         await waitUntil(timeout: 5) {
             self.isSaved(coordinator.state(for: self.documentID)) && bodies.websocketFlags.count == 2
         }

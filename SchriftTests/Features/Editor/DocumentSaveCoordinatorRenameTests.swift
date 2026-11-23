@@ -104,16 +104,18 @@ final class DocumentSaveCoordinatorRenameTests: DocumentSaveCoordinatorTestCase 
     /// the server — so adopting must leave it (and its draft) alone.
     func testAdoptingAServerTitleIsIgnoredWhileASaveIsInFlight() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, saveDelay: 0.3)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
         let (coordinator, draftStore, _) = makeCoordinator()
         coordinator.enqueue(documentID: documentID, title: "Old title", markdown: "# Mine")
-        await waitUntil { self.savesInFlight(log) >= 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
 
         coordinator.adoptServerTitle(documentID: documentID, title: "Renamed on the web")
 
         XCTAssertEqual(
             draftStore.draft(for: documentID)?.title, "Old title",
             "the in-flight save's draft is not rewritten under it")
+        patchGate.open()
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
     }
 

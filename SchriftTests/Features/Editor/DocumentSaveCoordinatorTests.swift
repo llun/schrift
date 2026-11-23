@@ -28,15 +28,18 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
 
     func testEnqueueWhileInFlightCoalescesToLatestContent() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, saveDelay: 0.2)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
         let (coordinator, draftStore, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "v1")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "v2")
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "v3")
 
         XCTAssertEqual(coordinator.pendingSave(documentID: documentID)?.markdown, "v3")
 
+        patchGate.open()
         await waitUntil(timeout: 5) {
             self.isSaved(coordinator.state(for: self.documentID)) && self.savesInFlight(log) == 2
         }
@@ -49,12 +52,15 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
 
     func testReenqueueingIdenticalContentWhileInFlightSkipsFollowUp() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, saveDelay: 0.2)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
         let (coordinator, _, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "same")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "same")
 
+        patchGate.open()
         await waitUntil(timeout: 5) { self.isSaved(coordinator.state(for: self.documentID)) }
         await waitAndConfirmNever { self.savesInFlight(log) > 1 }
 
@@ -280,7 +286,8 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
     func testRecoverDraftsPreservesTheBaselineOnReplay() async {
         let log = RequestRecorder()
         // Hold the content PATCH open so the replayed draft can be read in flight.
-        stubSavePipeline(log: log, saveDelay: 0.3)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
         let (coordinator, draftStore, _) = makeCoordinator()
         // No older than the 2026-01-15 fixture, so `draftSyncDecision` rule 2 pushes
         // (the server has not moved past the baseline) and re-enqueues the draft —
@@ -292,10 +299,12 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
                 baseline: DraftBaseline(serverUpdatedAt: serverDate, markdown: "# Server base")))
 
         await coordinator.recoverDrafts()
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
 
         let baseline = draftStore.draft(for: documentID)?.baseline
         XCTAssertEqual(baseline?.markdown, "# Server base", "the replayed draft keeps its baseline")
         XCTAssertEqual(baseline?.serverUpdatedAt, serverDate)
+        patchGate.open()
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
     }
 
@@ -365,14 +374,20 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
         let log = RequestRecorder()
         let (coordinator, draftStore, _) = makeCoordinator()
         draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Old", updatedAt: Date()))
+        let getGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
-            return MockURLProtocol.Stub(statusCode: 404, headers: [:], body: Data(), error: nil, delay: 0.3)
+            return MockURLProtocol.Stub(
+                statusCode: 404, headers: [:], body: Data(), error: nil, releasedBy: getGate)
         }
 
         async let sync: Void = coordinator.syncPendingDrafts()
-        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1 }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount >= 1
+                && log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1
+        }
         coordinator.discardPendingWork(documentID: documentID)
+        getGate.open()
         await sync
 
         XCTAssertEqual(coordinator.state(for: documentID), .idle)
@@ -431,18 +446,25 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
         let formattedBody = Self.formattedBody
         // Hold the GET open so the first sync is still awaiting it when the second
         // starts and sees the re-entrancy guard set.
+        let getGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             let url = request.url?.absoluteString ?? ""
             if request.httpMethod == "GET", url.contains("formatted-content") {
-                return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: formattedBody, error: nil, delay: 0.3)
+                return MockURLProtocol.Stub(
+                    statusCode: 200, headers: [:], body: formattedBody, error: nil, releasedBy: getGate)
             }
             return MockURLProtocol.Stub(statusCode: 204, headers: [:], body: Data(), error: nil)
         }
 
         async let first: Void = coordinator.syncPendingDrafts()
-        async let second: Void = coordinator.syncPendingDrafts()
-        _ = await (first, second)
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount >= 1
+                && log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1
+        }
+        await coordinator.syncPendingDrafts()
+        getGate.open()
+        await first
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
 
         // Exactly one replay — the draft was fetched once, not twice.
@@ -530,12 +552,15 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
     func testSaveLandingAfterADeleteNeverRecreatesTheCacheEntry() async {
         let log = RequestRecorder()
         let (coordinator, draftStore, contentCache) = makeCoordinator(backgroundTasks: .noop)
-        stubSavePipeline(log: log, saveDelay: 0.2)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
 
         // The delete happens while the save's PATCH is still on the wire.
         contentCache.remove(documentID: documentID)
         coordinator.discardPendingWork(documentID: documentID)
+        patchGate.open()
 
         await waitUntil { coordinator.state(for: self.documentID) != .saving }
 
@@ -551,12 +576,15 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
     func testSuppressedWriteThroughSkipsTheCacheAndKeepsAnUnsavedDraft() async {
         let log = RequestRecorder()
         let (coordinator, draftStore, contentCache) = makeCoordinator(backgroundTasks: .noop)
-        stubSavePipeline(log: log, saveDelay: 0.2, contentStatus: 400)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate, contentStatus: 400)
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
 
         // The document becomes unavailable while the save's PATCH is on the wire.
         contentCache.remove(documentID: documentID)
         coordinator.suppressLocalWriteThrough(documentID: documentID)
+        patchGate.open()
 
         await waitUntil { coordinator.state(for: self.documentID) != .saving }
 
@@ -570,11 +598,14 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
     func testSuppressedWriteThroughDropsADraftTheServerConfirmed() async {
         let log = RequestRecorder()
         let (coordinator, draftStore, contentCache) = makeCoordinator(backgroundTasks: .noop)
-        stubSavePipeline(log: log, saveDelay: 0.2)  // 204: the PATCH lands
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)  // 204: the PATCH lands
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
 
         contentCache.remove(documentID: documentID)
         coordinator.suppressLocalWriteThrough(documentID: documentID)
+        patchGate.open()
 
         await waitUntil { coordinator.state(for: self.documentID) != .saving }
 

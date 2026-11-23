@@ -54,7 +54,8 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
     /// would then report the user's *own* earlier save as a sync conflict.
     func testEnqueueOnAFreshCoordinatorPreservesTheStoredLastPushedMarkdown() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, saveDelay: 0.3)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
         // A draft left by a previous process, already stamped with what that process pushed.
         let (coordinator, draftStore, _) = makeCoordinator()  // fresh: the in-memory map is empty
         draftStore.save(
@@ -65,10 +66,12 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
                 lastPushedMarkdown: "# Pushed last process"))
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Draft edited")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
 
         XCTAssertEqual(
             draftStore.draft(for: documentID)?.lastPushedMarkdown, "# Pushed last process",
             "a fresh process must carry the persisted stamp forward, not erase it")
+        patchGate.open()
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
     }
 
@@ -230,17 +233,23 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
         draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Draft", updatedAt: Date()))
 
         // Pass 1: the GET is held open, then fails — so the draft is not replayed.
+        let firstPassGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             return .init(
-                statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet), delay: 0.3)
+                statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet),
+                releasedBy: firstPassGate)
         }
         async let firstPass: Void = coordinator.syncPendingDrafts()
 
-        // A reconnect lands *during* that pass (pinned on the recorded in-flight GET).
-        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1 }
+        // A reconnect lands *during* that pass (pinned on the held in-flight GET).
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount >= 1
+                && log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1
+        }
         stubSavePipeline(log: log)  // the network is healthy again
         await coordinator.syncPendingDrafts()  // must be coalesced, not dropped
+        firstPassGate.open()
         await firstPass
 
         // The coalesced pass re-fetched and replayed the draft the failing pass gave up on.
@@ -256,15 +265,18 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
     /// landed save, and "keep the server version" would discard their real unsaved work.
     func testASaveLandingWhileTheDocumentIs404StillRecordsThePushOnTheSurvivingDraft() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, saveDelay: 0.3)  // hold the content PATCH open
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)  // hold the content PATCH open
         let (coordinator, draftStore, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Landed")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         // The user keeps typing, so a NEWER draft is outstanding when the document 404s.
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Newer")
         coordinator.suppressLocalWriteThrough(documentID: documentID)  // 404/403: keeps the draft
 
         // The first save then lands on the server.
+        patchGate.open()
         await waitUntil { draftStore.draft(for: self.documentID)?.lastPushedMarkdown != nil }
 
         XCTAssertEqual(
@@ -311,14 +323,19 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
                 documentID: documentID, title: "Doc", markdown: "# Stale",
                 updatedAt: Date(timeIntervalSince1970: 0)))
         let body = Self.formattedBody
+        let getGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
-            return .init(statusCode: 200, headers: [:], body: body, error: nil, delay: 0.3)
+            return .init(statusCode: 200, headers: [:], body: body, error: nil, releasedBy: getGate)
         }
 
         async let midSession: Void = coordinator.syncPendingDrafts()
-        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1 }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount >= 1
+                && log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1
+        }
         await coordinator.recoverDrafts()
+        getGate.open()
         await midSession
 
         XCTAssertEqual(
@@ -505,12 +522,14 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
             {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
             """.utf8)
         // The content PATCH is held open, then fails: NOTHING reaches the server.
+        let patchGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             let url = request.url?.absoluteString ?? ""
             if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
                 return .init(
-                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet), delay: 0.3)
+                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet),
+                    releasedBy: patchGate)
             }
             return .init(statusCode: 200, headers: [:], body: coauthor, error: nil)
         }
@@ -518,6 +537,7 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
         coordinator.enqueue(
             documentID: documentID, title: "Doc", markdown: "# A",
             baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 0), markdown: "# Base"))
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.enqueue(
             documentID: documentID, title: "Doc", markdown: "# B",
             baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 0), markdown: "# Base"))
@@ -529,6 +549,7 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
             markdown: "# Co-author")
 
         // A fails → `finish` re-decides, records the conflict … and must NOT start B.
+        patchGate.open()
         await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
 
         XCTAssertNotNil(coordinator.conflict(for: documentID), "the failed save's observation is re-decided")
@@ -548,24 +569,28 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
         let serverBody = Self.formattedBody
         // Every content PATCH is held open, then fails (offline) — so save A can be discarded
         // mid-flight and save B can reach `finish`'s re-decide block.
+        let patchGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             let url = request.url?.absoluteString ?? ""
             if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
                 return .init(
-                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet), delay: 0.3)
+                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet),
+                    releasedBy: patchGate)
             }
             return .init(statusCode: 200, headers: [:], body: serverBody, error: nil)
         }
 
         // Save A is on the wire; a revalidation observes a wildly-diverged server body…
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# A")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.noteServerObservedDuringSave(
             documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 4_100_000_000),
             markdown: "# Some unrelated server body")
         // …but then the document 404s, so A is discarded (its `finish` takes the early return,
         // settling to `.idle` and dropping the observation at the top of `finish`).
         coordinator.suppressLocalWriteThrough(documentID: documentID)
+        patchGate.open()
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
         XCTAssertNil(coordinator.conflict(for: documentID), "the discarded save records nothing")
 
@@ -593,12 +618,14 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
         let log = RequestRecorder()
         let (coordinator, draftStore, _) = makeCoordinator()
         // The content PATCH is held open, then fails: the observation reaches `finish`'s re-decide.
+        let patchGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             let url = request.url?.absoluteString ?? ""
             if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
                 return .init(
-                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet), delay: 0.3)
+                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet),
+                    releasedBy: patchGate)
             }
             return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
         }
@@ -606,10 +633,12 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
         coordinator.enqueue(
             documentID: documentID, title: "Doc", markdown: "# Mine",
             baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 0), markdown: "# Base"))
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         // The revalidation saw a server body EQUAL TO OUR OWN (rule 0), with a newer `updated_at`.
         coordinator.noteServerObservedDuringSave(
             documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 4_100_000_000), markdown: "# Mine")
 
+        patchGate.open()
         await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
 
         XCTAssertNil(
@@ -624,13 +653,16 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
     func testAnObservationIsDiscardedWhenTheSaveActuallyLanded() async {
         let log = RequestRecorder()
         let (coordinator, _, _) = makeCoordinator()
-        stubSavePipeline(log: log, saveDelay: 0.3)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.noteServerObservedDuringSave(
             documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 4_100_000_000),
             markdown: "# Some other body")
 
+        patchGate.open()
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
 
         XCTAssertNil(

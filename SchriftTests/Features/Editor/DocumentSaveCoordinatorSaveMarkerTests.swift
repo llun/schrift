@@ -15,12 +15,15 @@ final class DocumentSaveCoordinatorSaveMarkerTests: DocumentSaveCoordinatorTestC
     func testSaveMarkerTakenWhileASaveIsInFlightPredates() async {
         let log = RequestRecorder()
         let (coordinator, _, _) = makeCoordinator(backgroundTasks: .noop)
-        stubSavePipeline(log: log, saveDelay: 0.2)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
         coordinator.enqueue(documentID: documentID, title: "A", markdown: "a")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
 
         let marker = coordinator.saveMarker(documentID: documentID)
 
         XCTAssertTrue(coordinator.mayPredateSave(marker), "in flight when the marker was taken")
+        patchGate.open()
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
         XCTAssertTrue(coordinator.mayPredateSave(marker), "still true once it lands")
     }

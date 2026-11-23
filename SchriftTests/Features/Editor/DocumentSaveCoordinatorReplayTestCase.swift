@@ -76,7 +76,7 @@ class DocumentSaveCoordinatorReplayTestCase: XCTestCase {
         serverUpdatedAt: String = "2026-03-01T12:00:00Z",
         createStatus: Int = 201,
         title: String = "Untitled document",
-        postDelay: TimeInterval = 0
+        releasedBy gate: MockURLProtocol.ResponseGate? = nil
     ) {
         let userBody = Data(
             """
@@ -107,7 +107,7 @@ class DocumentSaveCoordinatorReplayTestCase: XCTestCase {
                 return .init(statusCode: 200, headers: [:], body: createdBody, error: nil)
             case "POST":
                 return .init(
-                    statusCode: createStatus, headers: [:], body: createdBody, error: nil, delay: postDelay)
+                    statusCode: createStatus, headers: [:], body: createdBody, error: nil, releasedBy: gate)
             default:
                 return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
             }

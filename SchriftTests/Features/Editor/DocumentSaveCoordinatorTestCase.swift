@@ -89,7 +89,11 @@ class DocumentSaveCoordinatorTestCase: XCTestCase {
         log.count(ofMethod: "PATCH", urlContaining: "/content/")
     }
 
-    func stubSavePipeline(log: RequestRecorder, saveDelay: TimeInterval = 0, contentStatus: Int = 204) {
+    func stubSavePipeline(
+        log: RequestRecorder,
+        releasedBy gate: MockURLProtocol.ResponseGate? = nil,
+        contentStatus: Int = 204
+    ) {
         let formattedBody = Self.formattedBody
         MockURLProtocol.stubHandler = { request in
             log.record(request)
@@ -98,7 +102,7 @@ class DocumentSaveCoordinatorTestCase: XCTestCase {
             case "GET" where url.contains("formatted-content"):
                 return .init(statusCode: 200, headers: [:], body: formattedBody, error: nil)
             case "PATCH" where url.hasSuffix("/content/"):
-                return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil, delay: saveDelay)
+                return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil, releasedBy: gate)
             case "PATCH":
                 return .init(statusCode: 200, headers: [:], body: Data(), error: nil)  // title
             default:
