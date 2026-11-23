@@ -178,6 +178,13 @@ final class NativeTextView: UITextView {
         if inputCoordinator?.tableMove == nil, isEditable, inputCoordinator?.onDone != nil {
             commands.append(UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(nativeDone)))
         }
+        // ⌘⇧V: Paste and Match Style (literal plain text, skipping HTML/Markdown/internal payloads).
+        commands.append(
+            UIKeyCommand(
+                title: blockControls?.labels.pasteAndMatchStyle ?? NativeEditorLabels().pasteAndMatchStyle,
+                action: #selector(pasteAndMatchStyle(_:)),
+                input: "v",
+                modifierFlags: [.command, .shift]))
         for command in commands { command.wantsPriorityOverSystemBehavior = true }
         return (super.keyCommands ?? []) + commands
     }
@@ -370,16 +377,20 @@ final class NativeTextView: UITextView {
         inputCoordinator.cutSelection()
     }
 
-    /// One command: Schrift's lossless payload at a caret, else plain text
-    /// over the selection (PR06d).
+    /// One command: media/files, Schrift's lossless payloads, same-origin
+    /// interlink, parsed HTML/Markdown blocks, or literal plain text.
     override func paste(_ sender: Any?) {
         guard let inputCoordinator, isEditable, markedTextRange == nil else { return }
         if inputCoordinator.tableKey?(.paste) == true { return }
         inputCoordinator.pasteFromPasteboard()
     }
 
+    /// Literal plain-text paste (Paste and Match Style / ⌘⇧V), bypassing HTML,
+    /// Markdown, media and internal Schrift payloads.
     override func pasteAndMatchStyle(_ sender: Any?) {
-        paste(sender)
+        guard let inputCoordinator, isEditable, markedTextRange == nil else { return }
+        if inputCoordinator.tableKey?(.pastePlain) == true { return }
+        inputCoordinator.pastePlainTextFromPasteboard()
     }
 
     /// Clears UIKit's marked state without committing it: the composition
@@ -413,8 +424,10 @@ final class NativeTextView: UITextView {
             return markedTextRange == nil
                 && inputCoordinator?.onRequestLinkEdit != nil
                 && inputCoordinator?.linkTarget() != nil
-        case "paste:", "pasteAndMatchStyle:":
+        case "paste:":
             return inputCoordinator?.canPasteFromPasteboard() ?? false
+        case "pasteAndMatchStyle:":
+            return inputCoordinator?.canPastePlainTextFromPasteboard() ?? false
         default: break
         }
         return super.canPerformAction(action, withSender: sender)

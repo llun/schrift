@@ -549,6 +549,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case native_editor_block_insert_above = "native.editor.block_insert_above"  // "Insert block above"
     case native_editor_block_insert_below = "native.editor.block_insert_below"  // "Insert block below"
     case native_editor_paste_unavailable = "native.editor.paste_unavailable"
+    case native_editor_paste_and_match_style = "native.editor.paste_and_match_style"  // "Paste and Match Style"
     // Native media (PR13a)
     case editor_slash_image = "editor.slash.image"  // "Image"
     case editor_slash_video = "editor.slash.video"  // "Video"

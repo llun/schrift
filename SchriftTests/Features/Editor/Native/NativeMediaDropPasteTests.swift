@@ -311,7 +311,7 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         harness.input.pasteboard = pb
         let png = try makePNGData()
 
-        // 1. Rich HTML + plain text + fallback PNG snapshot -> pastes text, 0 uploads.
+        // 1. Rich HTML + plain text + fallback PNG snapshot -> pastes parsed HTML text, 0 uploads.
         pb.setItems([
             [
                 UTType.html.identifier: Data("<p>Rich text</p>".utf8),
@@ -326,10 +326,10 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         let richApplied = await harness.run { harness.input.pasteFromPasteboard() }
         XCTAssertTrue(richApplied)
         XCTAssertEqual(harness.session.surface.blocks.map(\.node), ["paragraph"])
-        XCTAssertEqual(harness.session.surface.blocks[0].visibleText, "Copied rich text")
+        XCTAssertEqual(harness.session.surface.blocks[0].visibleText, "Rich text")
         XCTAssertTrue(env.attachments.allAttachments().isEmpty)
 
-        // 2. HTML + fallback PNG without plain-text representation -> must NOT upload PNG as image.
+        // 2. HTML + fallback PNG without plain-text representation -> pastes HTML, never uploads PNG.
         pb.setItems([
             [
                 UTType.html.identifier: Data("<p>Only HTML</p>".utf8),
@@ -340,9 +340,10 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         } else {
             return XCTFail("HTML + PNG without fileURL must not classify as image upload")
         }
-        _ = harness.input.pasteFromPasteboard()
-        await harness.settle()
+        let htmlOnlyApplied = await harness.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(htmlOnlyApplied)
         XCTAssertTrue(harness.session.surface.blocks.allSatisfy { $0.node == "paragraph" })
+        XCTAssertTrue(harness.session.surface.blocks[0].visibleText.contains("Only HTML"))
         XCTAssertTrue(env.attachments.allAttachments().isEmpty)
 
         // 3. Plain external web URL -> stays text paste, never uploads a file.

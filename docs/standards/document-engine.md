@@ -385,7 +385,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `` `x` `` code, `~~x~~` strike: closing delimiter removes both delimiters and formats the
   body in one transaction, with code clearing other marks and the new mark off for subsequent
   typing; works in prose blocks and table cells, never in code blocks, code-marked text or
-  opaque cards); only typing converts, never paste or IME composition. The engine has no
+  opaque cards); typing shortcuts fire only on typing, never on IME composition or Paste and Match Style. The engine has no
   `NSRange`/UIKit (`DocumentEngineBoundaryTests`); the writer has `Range<Int>` overloads. Return in a code block, and pasting
   lines into one, is one `.replace` that keeps "\n" in the block (the engine accepts "\n"
   only for `codeBlock`). Under `nativeMarks` the projection also models `callout`,
@@ -701,14 +701,26 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   payload when `NativeClipboard.wholeBlocks` finds whole sibling subtrees (from a block's
   text start to a block's text end, nothing shallower than the first block, later
   descendants of the last root only if folded); Copy block writes the subtree's payload and
-  its visible plain text. Paste at a caret prefers the payload (`pasteBlocks`: one
-  `.insertSubtrees` after the caret's block, replacing it when it is an empty paragraph
-  without children; a refusal shows `native_editor_paste_too_large` (`.payloadTooLarge`) or
-  `native_editor_paste_unavailable`; caret at the end of the last pasted block); over a selection, or with
-  no payload, the plain text as before. Partial-block copies stay plain text (marks are not
-  carried). Drag to reorder is not built. Tests: `NativeBlockCommandsTests`,
-  `NativeClipboardTests` (round trip byte-identical but for ids, malformed/oversized
-  payloads), `BlockNoteTreeOracleTests.testMovesMatchTheBlockNoteCaptures`
+  its visible plain text. Paste priority in `NativeInputCoordinator.pasteFromPasteboard`:
+  media/files, internal subtree payload (`.insertSubtrees` after the caret's block or replacing
+  an empty paragraph at a collapsed caret; `.insertSubtrees(payload:replacing:)` over a
+  selection or in a single table cell; refusals show `native_editor_paste_too_large` or
+  `native_editor_paste_unavailable`), internal inline payload, same-origin document URL
+  interlinking, bounded `public.html` via `BlockNoteHTMLParser` ->
+  `.insertSubtrees(payload:replacing:)` (falling back to plain text on empty/oversized HTML,
+  showing `native_editor_paste_too_large` when oversized without plain fallback),
+  Markdown-looking plain text via `BlockNoteMarkdownPaste.markdownPayload` ->
+  `.insertSubtrees(payload:replacing:)`, and plain text without Markdown via
+  `replace(range:with:)`. Code blocks and source editors (`sourceKind != nil`) stay literal
+  plain text; in tables, multi-cell `CellSelection` and HTML tables stay with
+  `TableEditorViewController`, while a single cell gets table-cell flattening.
+  `pasteAndMatchStyle(_:)` (offered beside Paste in the edit menu and via `⌘⇧V`) pastes
+  `pasteboard.string` literally via the plain-text path (and fills a multi-cell
+  `CellSelection` with plain text). Partial-block copies without inline objects stay plain
+  text. Drag to reorder is not built. Tests: `NativeBlockCommandsTests`,
+  `NativeClipboardTests`, `NativePasteAsBlocksTests` (round trip byte-identical but for ids,
+  malformed/oversized payloads, web HTML, Markdown, slice merge, table cells, code blocks,
+  source editors, Paste and Match Style + `⌘⇧V` + edit menu, single-step undo), `BlockNoteTreeOracleTests.testMovesMatchTheBlockNoteCaptures`
   (`BlockNoteMoveCaptures`, from the installed 0.56 `moveBlocksUp`/`moveBlocksDown` through
   the S3 harness in node/jsdom) and the host UI test
   `testDuplicateFromTheBlockMenuSurvivesRelaunch` (`--native-tree`, whose host controls also

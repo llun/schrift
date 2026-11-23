@@ -604,19 +604,31 @@ final class NativeInlineMarkShortcutTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: 1)
     }
 
-    func testPasteOfDelimitedTextDoesNotConvert() async throws {
+    func testPlainPasteOfDelimitedTextDoesNotTriggerTypingShortcut() async throws {
         let harness = try await makeHarness([paragraph("p", "")])
         let session = harness.session
         try caret(harness, "p", 0)
         harness.pasteboard.string = "**bold**"
-        let pasted = await harness.run { harness.input.pasteFromPasteboard() }
-        XCTAssertTrue(pasted)
+        // Paste and Match Style inserts literal plain text without firing inline typing shortcuts.
+        harness.view.pasteAndMatchStyle(nil)
+        await harness.settle()
 
-        let b = try block(session, "p")
-        XCTAssertEqual(text(of: b), "**bold**")
-        XCTAssertTrue(b.runs.allSatisfy(\.marks.isEmpty))
+        let plain = try block(session, "p")
+        XCTAssertEqual(text(of: plain), "**bold**")
+        XCTAssertTrue(plain.runs.allSatisfy(\.marks.isEmpty))
         XCTAssertTrue(markShortcutCommands(harness).isEmpty)
         try await assertConsistent(harness, localCommands: 1)
+
+        // Regular paste parses Markdown into formatted blocks via `.insertSubtrees`, not `.markShortcut`.
+        let undone = await harness.run { harness.input.undo() }
+        XCTAssertTrue(undone)
+        let pasted = await harness.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(pasted)
+        let formatted = session.surface.blocks[0]
+        XCTAssertEqual(text(of: formatted), "bold")
+        XCTAssertEqual(formatted.runs.map(markKeys), [["bold"]])
+        XCTAssertTrue(markShortcutCommands(harness).isEmpty)
+        try await assertConsistent(harness, localCommands: 3)
     }
 
     func testShortcutConvertsOnBarrierPathWithInlineObject() async throws {

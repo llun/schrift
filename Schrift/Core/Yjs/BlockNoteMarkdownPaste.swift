@@ -27,14 +27,22 @@ enum BlockNoteMarkdownPaste {
     /// or table size exceed clipboard bounds. Returns `[]` for empty input or
     /// input whose only elements were dropped (such as non-`https` images).
     static func parse(_ raw: String) throws -> [BlockNoteWriter.Copy] {
+        try parseDetailed(raw).blocks
+    }
+
+    /// Parses `raw` into blocks and reports whether any Markdown syntax was
+    /// recognized (`sawMarkdown`). Plain text without Markdown syntax returns
+    /// `sawMarkdown == false` so callers can keep the existing plain-text path.
+    static func parseDetailed(_ raw: String) throws -> (blocks: [BlockNoteWriter.Copy], sawMarkdown: Bool) {
         guard !NativeClipboard.isTooLarge(raw) else { throw Error.tooLarge }
         let stripped = NativeClipboard.strippingObjectReplacementCharacters(raw)
         let normalized = NativeClipboard.normalizingLineBreaks(stripped)
         guard !NativeClipboard.isTooLarge(normalized) else { throw Error.tooLarge }
-        guard !normalized.isEmpty else { return [] }
+        guard !normalized.isEmpty else { return ([], false) }
         let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         var parser = Parser(lines: lines)
-        return try parser.parse()
+        let blocks = try parser.parse()
+        return (blocks, parser.sawMarkdown)
     }
 
     /// Parses Markdown and encodes the resulting blocks as a
@@ -44,6 +52,19 @@ enum BlockNoteMarkdownPaste {
         guard !blocks.isEmpty else { return nil }
         do {
             return try BlockNoteSubtreePayload.encode(blocks)
+        } catch BlockNoteSubtreePayload.Error.tooLarge {
+            throw Error.tooLarge
+        }
+    }
+
+    /// Parses `raw` and encodes a `BlockNoteSubtreePayload` only when Markdown
+    /// syntax was recognized and yielded at least one block. Returns `nil` for
+    /// plain text (no Markdown seen) or when every construct was dropped.
+    static func markdownPayload(_ raw: String) throws -> Data? {
+        let result = try parseDetailed(raw)
+        guard result.sawMarkdown, !result.blocks.isEmpty else { return nil }
+        do {
+            return try BlockNoteSubtreePayload.encode(result.blocks)
         } catch BlockNoteSubtreePayload.Error.tooLarge {
             throw Error.tooLarge
         }
@@ -66,7 +87,7 @@ enum BlockNoteMarkdownPaste {
         private var nextID = 1
         private var blockCount = 0
         private var payloadBytes = 0
-        private var sawMarkdown = false
+        private(set) var sawMarkdown = false
         private var blocks: [BlockNoteWriter.Copy] = []
         private var listRoots: [ListNode] = []
         /// Path of indices into `listRoots` representing the open ancestor chain.
