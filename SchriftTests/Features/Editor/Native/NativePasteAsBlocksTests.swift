@@ -909,7 +909,7 @@ final class NativePasteAsBlocksTests: NativeEditingTestCase {
 
     // MARK: - 20. Busy preconditions reject HTML/Markdown paste before parsing
 
-    func testActiveBarrierAndCompositionRejectHTMLAndMarkdownPaste() async throws {
+    func testActiveBarrierPastesPlainAndCompositionDropsHTMLAndMarkdownPaste() async throws {
         let disk = Latch()
         let interrupt: @Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void = {
             operation, boundary in
@@ -922,29 +922,26 @@ final class NativePasteAsBlocksTests: NativeEditingTestCase {
         }
         let session = harness.session
 
-        // Active barrier: HTML and Markdown pastes fail immediately with busy notice.
+        // Active barrier: HTML and Markdown paste as plain text, queued behind the barrier as before.
         try caret(harness, "p1", 5)
         harness.view.insertText("\n")
         await waitUntil { disk.waiting == 1 }
 
         harness.pasteboard.setItems([
             [
-                TableClipboard.htmlType: Data("<h1><strong>Blocked</strong></h1>".utf8),
-                UTType.utf8PlainText.identifier: "Blocked",
+                TableClipboard.htmlType: Data("<h1><strong>Queued</strong></h1>".utf8),
+                UTType.utf8PlainText.identifier: "Queued",
             ]
         ])
-        XCTAssertFalse(harness.input.pasteFromPasteboard())
-        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_busy)
-
-        harness.input.refuse(.native_editor_input_unavailable)
-        harness.pasteboard.string = "## Blocked Markdown"
-        XCTAssertFalse(harness.input.pasteFromPasteboard())
-        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_busy)
+        XCTAssertTrue(harness.input.pasteFromPasteboard())
+        XCTAssertNotEqual(harness.input.noticeKey, .native_editor_input_busy)
 
         disk.open()
         await harness.settle()
-        XCTAssertEqual(texts(session), ["Hello", " world"])
-        try await assertConsistent(harness, localCommands: 1)
+        XCTAssertEqual(session.surface.blocks.map(\.node), ["paragraph", "paragraph"])
+        XCTAssertEqual(texts(session), ["Hello", "Queued world"])
+        XCTAssertTrue(session.surface.blocks.allSatisfy { $0.runs.allSatisfy(\.marks.isEmpty) })
+        try await assertConsistent(harness, localCommands: 2)
 
         // Composition owns view: HTML and Markdown pastes are dropped without mutating.
         try caret(harness, "p1", 2)
@@ -961,7 +958,7 @@ final class NativePasteAsBlocksTests: NativeEditingTestCase {
         XCTAssertFalse(harness.input.pasteFromPasteboard())
         harness.view.unmarkText()
         await harness.settle()
-        XCTAssertEqual(texts(session), ["Heにほんllo", " world"])
-        try await assertConsistent(harness, localCommands: 2)
+        XCTAssertEqual(texts(session), ["Heにほんllo", "Queued world"])
+        try await assertConsistent(harness, localCommands: 3)
     }
 }

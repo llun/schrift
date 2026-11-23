@@ -2904,11 +2904,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let plainOnly = isPlainTextOnlyTarget(for: view.selectedRange)
         var htmlFallbackToPlain = false
         var htmlTooLarge = false
-        if !plainOnly, pasteboard.types.contains(TableClipboard.htmlType) {
-            guard !hasActiveBarrier else {
-                noticeKey = .native_editor_input_busy
-                return false
-            }
+        // While a barrier is in flight, paste plain text: it queues behind the barrier, as before.
+        let asBlocks = !plainOnly && !hasActiveBarrier
+        if asBlocks, pasteboard.types.contains(TableClipboard.htmlType) {
             switch Self.pasteboardHTML(pasteboard) {
             case .none:
                 break
@@ -2944,23 +2942,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
             raw = string
         }
-        if !plainOnly, !htmlFallbackToPlain {
-            if hasActiveBarrier {
-                if BlockNoteMarkdownPaste.mayContainMarkdown(raw) {
-                    noticeKey = .native_editor_input_busy
-                    return false
+        if asBlocks, !htmlFallbackToPlain {
+            do {
+                if let payload = try BlockNoteMarkdownPaste.markdownPayload(raw) {
+                    return pasteBlocks(payload, replacing: view.selectedRange)
                 }
-            } else {
-                do {
-                    if let payload = try BlockNoteMarkdownPaste.markdownPayload(raw) {
-                        return pasteBlocks(payload, replacing: view.selectedRange)
-                    }
-                } catch BlockNoteMarkdownPaste.Error.tooLarge {
-                    noticeKey = .native_editor_paste_too_large
-                    return false
-                } catch {
-                    // Fall back to plain text on unexpected encoding errors.
-                }
+            } catch BlockNoteMarkdownPaste.Error.tooLarge {
+                noticeKey = .native_editor_paste_too_large
+                return false
+            } catch {
+                // Fall back to plain text on unexpected encoding errors.
             }
         }
         return pastePlainText(raw, replacing: view.selectedRange, tooLargeFallback: htmlTooLarge)
