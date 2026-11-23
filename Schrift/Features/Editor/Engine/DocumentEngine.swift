@@ -2011,7 +2011,8 @@ final class DocumentEngine {
         case .insertSubtrees(let payload, _):
             // The payload is untrusted (any app's pasteboard): decoded, bounded
             // and validated here, and every container gets a fresh id.
-            let copies = try BlockNoteSubtreePayload.validatingPastable(BlockNoteSubtreePayload.decode(payload))
+            let copies = try BlockNoteSubtreePayload.splittingProseHardBreaks(
+                BlockNoteSubtreePayload.validatingPastable(BlockNoteSubtreePayload.decode(payload)))
             let shape = try BlockNoteSubtreePayload.validate(copies)
             let newIDs = (0..<shape.blocks).map { _ in UUID().uuidString }
             // A pasted group (PR12b) lands at the root only: never in a column or a block's children.
@@ -2055,7 +2056,7 @@ final class DocumentEngine {
         else { throw DocumentEngineError.unsupportedNativeInput }
 
         let copies = try BlockNoteSubtreePayload.validatingPastable(BlockNoteSubtreePayload.decode(payload))
-        let shape = try BlockNoteSubtreePayload.validate(copies)
+        _ = try BlockNoteSubtreePayload.validate(copies)
         guard Self.payloadUTF16Count(of: copies) <= NativeClipboard.maxPasteUTF16 else {
             throw BlockNoteSubtreePayload.Error.tooLarge
         }
@@ -2116,10 +2117,12 @@ final class DocumentEngine {
         }
 
         // Prose block(s): ProseMirror-style slice merge in one transaction.
+        let proseCopies = try BlockNoteSubtreePayload.splittingProseHardBreaks(copies)
+        let proseShape = try BlockNoteSubtreePayload.validate(proseCopies)
         let same = range.endBlockID == command.blockID
         let singleTextblock =
-            copies.count == 1 && BlockNoteWriter.isMergeableTextblock(copies[0])
-            && BlockNoteWriter.nestedGroupOfContainer(copies[0]) == nil
+            proseCopies.count == 1 && BlockNoteWriter.isMergeableTextblock(proseCopies[0])
+            && BlockNoteWriter.nestedGroupOfContainer(proseCopies[0]) == nil
         let startAllowance: LossyAllowance = !same ? .none : (singleTextblock ? .any : .styled)
         let (startNode, startUnits) = try structuralTarget(
             command.blockID, allowCode: false, allowLossy: startAllowance)
@@ -2156,21 +2159,21 @@ final class DocumentEngine {
             throw DocumentEngineError.unsupportedNativeInput
         }
 
-        let pastesGroup = copies.contains { if case .element("columnList", _, _) = $0 { true } else { false } }
-        guard entry.depth + shape.depth <= BlockNoteWriter.maxNestingDepth,
-            !Self.nestsTable(copies, depth: entry.depth),
+        let pastesGroup = proseCopies.contains { if case .element("columnList", _, _) = $0 { true } else { false } }
+        guard entry.depth + proseShape.depth <= BlockNoteWriter.maxNestingDepth,
+            !Self.nestsTable(proseCopies, depth: entry.depth),
             !pastesGroup || (entry.depth == 0 && index.columnOf[command.blockID] == nil)
         else { throw DocumentEngineError.unsupportedNativeInput }
 
         let used = usedIDs()
-        let newIDs = (0..<shape.blocks).map { _ in newBlockID() }
+        let newIDs = (0..<proseShape.blocks).map { _ in newBlockID() }
         let trailingID = newBlockID()
         let allIDs = newIDs + [trailingID]
         guard Set(allIDs).count == allIDs.count, allIDs.allSatisfy({ isUnused($0, in: used) }) else {
             throw DocumentEngineError.unsupportedNativeInput
         }
         var idSlice = newIDs[...]
-        let fresh = try copies.map { try $0.replacingIDs(&idSlice) }
+        let fresh = try proseCopies.map { try $0.replacingIDs(&idSlice) }
         let firstItem = entry.containerItem
         let lastItem = endEntry.containerItem
         var outcome: (blockID: String, offset: Int?) = (command.blockID, range.startOffset)

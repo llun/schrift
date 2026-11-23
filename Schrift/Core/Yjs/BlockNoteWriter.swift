@@ -684,7 +684,9 @@ struct BlockNoteWriter {
                 throw Error.unsupportedBlockType(target.node)
             }
         }
-        guard !copies.isEmpty, !trailingBlockID.isEmpty, start.group === end.group else {
+        guard !copies.isEmpty, !trailingBlockID.isEmpty, start.group === end.group,
+            !Self.containsUnsupportedProseInline(in: copies)
+        else {
             throw Error.malformedBlock(start.id)
         }
         var middle: [YItem] = []
@@ -825,18 +827,14 @@ struct BlockNoteWriter {
                     caretOffset = Self.inlineWidth(of: Self.contentOfTextblock(last))
                 } else if hasSuffix {
                     _ = try insertCopy(tx, last, into: start.group, after: cursor)
-                    if same {
-                        if upper > 0 {
-                            try remove(tx, parts: startParts, range: 0..<upper, element: start.element, block: start.id)
-                        }
-                    } else {
-                        try remove(
-                            tx, parts: startParts, range: 0..<startLength, element: start.element, block: start.id)
-                        try append(tx, suffix, into: start.element)
-                        for item in middle { item.delete(tx) }
-                        end.item.delete(tx)
+                    if upper > 0 {
+                        try remove(tx, parts: endParts, range: 0..<upper, element: end.element, block: end.id)
                     }
-                    caretBlockID = start.id
+                    if !same {
+                        start.item.delete(tx)
+                        for item in middle { item.delete(tx) }
+                    }
+                    caretBlockID = end.id
                     caretOffset = 0
                 } else {
                     _ = try insertCopy(tx, last, into: start.group, after: cursor)
@@ -874,6 +872,36 @@ struct BlockNoteWriter {
             if !same { end.item.delete(tx) }
         }
         return BlockPasteResult(update: update, caretBlockID: caretBlockID, caretOffset: caretOffset)
+    }
+
+    private static func containsUnsupportedProseInline(in copies: [Copy]) -> Bool {
+        for copy in copies {
+            switch copy {
+            case .element("columnList", _, let columns):
+                for case .element("column", _, let kids) in columns {
+                    if containsUnsupportedProseInline(in: kids) { return true }
+                }
+            case .element("blockContainer", _, let children):
+                if case .element(let node, _, let content)? = children.first,
+                    mergeableTextblockNodes.contains(node)
+                {
+                    for item in content {
+                        if case .element(let inlineNode, _, _) = item,
+                            !NativeInlineObject.nodeNames.contains(inlineNode)
+                        {
+                            return true
+                        }
+                    }
+                }
+                if children.count == 2, case .element("blockGroup", _, let kids) = children[1],
+                    containsUnsupportedProseInline(in: kids)
+                {
+                    return true
+                }
+            default: break
+            }
+        }
+        return false
     }
 
     private static func inlineWidth(of copies: [Copy]) -> Int {
@@ -1319,9 +1347,12 @@ struct BlockNoteWriter {
     /// (preserving supported marks and separating blocks with `hardBreak`) for
     /// pasting into a single table cell paragraph.
     static func flattenForTableCell(_ blocks: [Copy]) throws -> [Copy] {
+        enum PendingSeparator { case none, space, hardBreak }
+
         var result: [Copy] = []
         var utf16 = 0
         var breaks = 0
+        var pending: PendingSeparator = .none
 
         func addUnits(_ count: Int) throws {
             let (sum, overflow) = utf16.addingReportingOverflow(count)
@@ -1331,13 +1362,43 @@ struct BlockNoteWriter {
             utf16 = sum
         }
 
-        func appendBreak() throws {
+        func appendTextValue(_ value: TextValue) {
+            let lastIsText: Bool =
+                if case .text? = result.last { true } else { false }
+            if lastIsText, case .text(var existing)? = result.popLast() {
+                existing.append(value)
+                result.append(.text(existing))
+            } else {
+                result.append(.text([value]))
+            }
+        }
+
+        func emitBreak() throws {
             breaks += 1
             guard breaks < NativeClipboard.maxPasteLines else {
                 throw BlockNoteSubtreePayload.Error.tooLarge
             }
             try addUnits(1)
             result.append(.element("hardBreak", [], []))
+        }
+
+        func flushPendingSeparator() throws {
+            let sep = pending
+            pending = .none
+            switch sep {
+            case .none:
+                break
+            case .space:
+                try addUnits(1)
+                appendTextValue(.run(InlineRun(" ")))
+            case .hardBreak:
+                try emitBreak()
+            }
+        }
+
+        func appendBreak() throws {
+            try flushPendingSeparator()
+            try emitBreak()
         }
 
         func appendRun(_ run: InlineRun) throws {
@@ -1349,18 +1410,14 @@ struct BlockNoteWriter {
             for (index, piece) in pieces.enumerated() {
                 if index > 0 { try appendBreak() }
                 guard !piece.isEmpty else { continue }
+                try flushPendingSeparator()
                 try addUnits(piece.utf16.count)
-                let value = TextValue.run(InlineRun(piece, marks: supportedMarks))
-                if case .text(let existing)? = result.last {
-                    result[result.count - 1] = .text(existing + [value])
-                } else {
-                    result.append(.text([value]))
-                }
+                appendTextValue(.run(InlineRun(piece, marks: supportedMarks)))
             }
         }
 
         func appendInline(_ content: [Copy], plainOnly: Bool) throws -> Bool {
-            let before = result.count
+            let beforeUTF16 = utf16
             for item in content {
                 switch item {
                 case .text(let values):
@@ -1374,6 +1431,7 @@ struct BlockNoteWriter {
                     if !plainOnly, NativeInlineObject.nodeNames.contains(node) {
                         let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
                         if let inline = NativeInlineObject.pastable(node: node, props: projected, children: children) {
+                            try flushPendingSeparator()
                             try addUnits(1)
                             result.append(.element(inline.nodeName, inline.canonicalProps, inline.canonicalChildren))
                         }
@@ -1382,7 +1440,7 @@ struct BlockNoteWriter {
                     }
                 }
             }
-            return result.count > before
+            return utf16 > beforeUTF16
         }
 
         var hasEmittedBlock = false
@@ -1405,29 +1463,25 @@ struct BlockNoteWriter {
                                     }
                                     guard !cellCopies.isEmpty else { continue }
                                     if rowHasContent {
-                                        try appendRun(InlineRun(" "))
+                                        pending = .space
                                     } else if hasEmittedBlock {
-                                        try appendBreak()
+                                        pending = .hardBreak
                                     }
                                     if try appendInline(cellCopies, plainOnly: false) {
                                         rowHasContent = true
                                         hasEmittedBlock = true
                                     }
+                                    pending = .none
                                 }
                             }
                         } else if !MediaBlock.isMediaLike(node), node != "divider", node != "pageBreak" {
                             let plainOnly = node == "codeBlock" || SourceBlock.isSource(node)
                             if !content.isEmpty {
-                                let savedCount = result.count
-                                if hasEmittedBlock { try appendBreak() }
-                                let emitted = try appendInline(content, plainOnly: plainOnly)
-                                if emitted {
+                                if hasEmittedBlock { pending = .hardBreak }
+                                if try appendInline(content, plainOnly: plainOnly) {
                                     hasEmittedBlock = true
-                                } else if result.count > savedCount {
-                                    result.removeLast()
-                                    breaks -= 1
-                                    utf16 -= 1
                                 }
+                                pending = .none
                             }
                         }
                     }

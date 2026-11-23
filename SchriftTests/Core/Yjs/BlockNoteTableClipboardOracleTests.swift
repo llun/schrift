@@ -189,4 +189,36 @@ final class BlockNoteTableClipboardOracleTests: XCTestCase {
         XCTAssertThrowsError(try apply(engine, .paste(cells: cells, anchor: TableSlot(row: 2, column: 2), head: nil)))
         XCTAssertEqual(YXMLString.fragment(doc), before)
     }
+
+    func testTableHTMLPreservesLegacyColorSpanImpliedEndTagAndCRLFBehaviour() throws {
+        // #13a: non-palette data-style-type colour values stay kept on the table clipboard path.
+        let colorHTML =
+            "<table><tr><td><span data-style-type=\"textColor\" data-value=\"hotpink\">X</span></td></tr></table>"
+        let colorCells = try XCTUnwrap(TableClipboard.cells(html: colorHTML))
+        let colorRun = try XCTUnwrap(colorCells[0][0].runs.first)
+        XCTAssertEqual(colorRun.text, "X")
+        XCTAssertEqual(colorRun.marks.map(\.key), ["textColor"])
+        XCTAssertEqual(colorRun.marks.first.flatMap { NativeMark.colorName(from: $0.valueJSON) }, "hotpink")
+
+        // #13b: block tags like <div> do not implicitly close <p> inside a table cell, so inline marks survive.
+        let divInPCells = try XCTUnwrap(
+            TableClipboard.cells(html: "<table><tr><td><p><b>A<div>B</div></b></p></td></tr></table>"))
+        XCTAssertEqual(divInPCells[0][0].runs.map(\.text).joined(), "AB")
+        XCTAssertTrue(
+            divInPCells[0][0].runs.allSatisfy { $0.marks.contains { $0.key == "bold" } },
+            "inline bold must survive across <div> inside <p> on the table clipboard path")
+
+        // #13c: a second <li> does not implicitly close the first on the table clipboard path.
+        let unclosedLICells = try XCTUnwrap(
+            TableClipboard.cells(html: "<table><tr><td><ul><li><b>A<li>B</b></ul></td></tr></table>"))
+        XCTAssertEqual(unclosedLICells[0][0].runs.map(\.text).joined(), "AB")
+        XCTAssertTrue(
+            unclosedLICells[0][0].runs.allSatisfy { $0.marks.contains { $0.key == "bold" } },
+            "inline bold must survive across an unclosed <li> on the table clipboard path")
+
+        // #7: CRLF around and inside a pasted table collapses like LF.
+        let crlfCells = try XCTUnwrap(
+            TableClipboard.cells(html: "<html><body>\r\n<table><tr><td>A\r\nB</td></tr></table>\r\n</body></html>"))
+        XCTAssertEqual(crlfCells[0][0].runs.map(\.text).joined(), "A B")
+    }
 }

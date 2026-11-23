@@ -222,4 +222,85 @@ final class BlockNoteMarkdownPasteTests: XCTestCase {
         // Dropped-only image input returns empty cleanly.
         XCTAssertTrue(try BlockNoteMarkdownPaste.parse("![bad](http://insecure.example/x.png)").isEmpty)
     }
+
+    func testArithmeticStarsStayLiteralAndPreserveBlankLines() throws {
+        let md = "2*3*4\n\n2 * 3 * 4\n2**3**4\n2 ** 3 ** 4\na~~b~~c\na ~~ b ~~ c"
+        let copies = try BlockNoteMarkdownPaste.parse(md)
+        let (doc, blocks) = try project(copies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(
+            blocks.map { $0.block.runs.map(\.text).joined() },
+            ["2*3*4", "", "2 * 3 * 4", "2**3**4", "2 ** 3 ** 4", "a~~b~~c", "a ~~ b ~~ c"])
+        XCTAssertTrue(blocks.allSatisfy { $0.block.runs.allSatisfy(\.marks.isEmpty) })
+
+        // Real flanked emphasis still works, including punctuation-adjacent and combined bold+italic.
+        let formatted = try BlockNoteMarkdownPaste.parse("(**bold**) *em*, ***both*** ~~gone~~")
+        let (fDoc, fBlocks) = try project(formatted)
+        defer { fDoc.destroy() }
+        let runs = fBlocks[0].block.runs
+        XCTAssertEqual(runs.first { $0.text == "bold" }?.marks.map(\.key), ["bold"])
+        XCTAssertEqual(runs.first { $0.text == "em" }?.marks.map(\.key), ["italic"])
+        XCTAssertEqual(Set(runs.first { $0.text == "both" }?.marks.map(\.key) ?? []), ["bold", "italic"])
+        XCTAssertEqual(runs.first { $0.text == "gone" }?.marks.map(\.key), ["strike"])
+    }
+
+    func testEscapedImagesAndDoubleBacktickCodeSpansDoNotProduceImageBlocks() throws {
+        let md = """
+            \\![a](https://images.example/a.png)
+            ``![b](https://images.example/b.png)``
+            - \\![c](https://images.example/c.png)
+            - ``![d](https://images.example/d.png)``
+            """
+        let copies = try BlockNoteMarkdownPaste.parse(md)
+        let (doc, blocks) = try project(copies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(blocks.map(\.block.node), ["paragraph", "paragraph", "bulletListItem", "bulletListItem"])
+        XCTAssertFalse(blocks.contains { $0.block.node == "image" })
+        guard blocks.count == 4 else { return }
+        XCTAssertEqual(blocks[1].block.runs.first?.text, "![b](https://images.example/b.png)")
+        XCTAssertEqual(blocks[1].block.runs.first?.marks.map(\.key), ["code"])
+        XCTAssertEqual(blocks[3].block.runs.first?.text, "![d](https://images.example/d.png)")
+        XCTAssertEqual(blocks[3].block.runs.first?.marks.map(\.key), ["code"])
+    }
+
+    func testSizeBoundCheckedBeforeStrippingAndPathologicalScansAreLinear() throws {
+        // #12: input over maxPasteUTF16 made entirely of U+FFFC must be rejected before stripping.
+        let objectReplacements = String(repeating: "\u{FFFC}", count: NativeClipboard.maxPasteUTF16 + 1)
+        do {
+            _ = try BlockNoteMarkdownPaste.parse(objectReplacements)
+            XCTFail("expected tooLarge before stripping U+FFFC")
+        } catch let error as BlockNoteMarkdownPaste.Error {
+            XCTAssertEqual(error, .tooLarge)
+        }
+
+        // #4: repeated failed image, backtick and link openers must stay linear.
+        let pathological = [
+            String(repeating: "![", count: 10_000),
+            String(repeating: "![", count: 10_000) + "]",
+            String(repeating: "`", count: 10_000),
+            String(repeating: "[", count: 20_000),
+        ]
+        for input in pathological {
+            let start = ThreadCPUClock.now
+            let copies = try BlockNoteMarkdownPaste.parse(input)
+            let elapsed = ThreadCPUClock.now - start
+            XCTAssertEqual(copies.count, 1)
+            XCTAssertLessThan(elapsed, .milliseconds(500), "pathological scan should stay linear, took \(elapsed)")
+        }
+
+        // #10: table followed by a bare `|` line and many trailing pipe rows must not backtrack quadratically.
+        let pipeTable =
+            (["| H |", "| - |"]
+            + Array(repeating: "| a |", count: 900)
+            + ["|"]
+            + Array(repeating: "| a |", count: 900)).joined(separator: "\n")
+        let startTable = ThreadCPUClock.now
+        let tableCopies = try BlockNoteMarkdownPaste.parse(pipeTable)
+        let elapsedTable = ThreadCPUClock.now - startTable
+        XCTAssertEqual(tableCopies.count, 902)
+        XCTAssertLessThan(
+            elapsedTable, .milliseconds(500), "table scan hitting a bare pipe should be linear, took \(elapsedTable)")
+    }
 }

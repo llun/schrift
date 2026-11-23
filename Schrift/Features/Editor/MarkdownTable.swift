@@ -66,6 +66,10 @@ func parseMarkdownTable(_ text: String) -> MarkdownTable? {
 /// pipe at all — it is not a table row. `\|` is a literal pipe inside a cell
 /// (GFM requires the escape even inside a code span) and is unescaped here;
 /// every other backslash escape is left for the inline markdown renderer.
+func markdownTableRowCells(_ line: String) -> [String]? {
+    tableRowCells(line)
+}
+
 private func tableRowCells(_ line: String) -> [String]? {
     var cells: [String] = []
     var current = ""

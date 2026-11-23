@@ -19,7 +19,7 @@ enum BlockNoteHTMLParser {
     /// exceed clipboard bounds. Returns `[]` when no supported content remains.
     static func parse(_ html: String) throws -> [BlockNoteWriter.Copy] {
         guard html.utf8.count <= TableClipboard.maxHTMLBytes else { throw Error.tooLarge }
-        guard let root = HTMLNode.parse(html) else { throw Error.tooLarge }
+        guard let root = HTMLNode.parse(html, blockImpliedEndTags: true) else { throw Error.tooLarge }
         var parser = Parser()
         var output: [BlockNoteWriter.Copy] = []
         var hoisted: [BlockNoteWriter.Copy] = []
@@ -92,6 +92,29 @@ enum BlockNoteHTMLParser {
     /// normalized grid exceeds `TableGrid.maxCells`.
     static func tableBlock(id: String, rows: [[TablePastedCell]]) throws -> BlockNoteWriter.Copy? {
         guard !rows.isEmpty else { return nil }
+        // Check the normalized bounding grid before `fixTable()` materializes
+        // missing cells for wide ragged rows.
+        let height = rows.count
+        guard height <= TableGrid.maxCells else { throw Error.tooLarge }
+        var widthDeltas = [Int](repeating: 0, count: height + 1)
+        for (rowIndex, cells) in rows.enumerated() {
+            for cell in cells {
+                let colspan = max(1, cell.colspan)
+                let rowspan = max(1, cell.rowspan)
+                let end = min(height, rowIndex + rowspan)
+                widthDeltas[rowIndex] += colspan
+                widthDeltas[end] -= colspan
+            }
+        }
+        var runningWidth = 0
+        var maxWidth = 0
+        for rowIndex in 0..<height {
+            runningWidth += widthDeltas[rowIndex]
+            maxWidth = max(maxWidth, runningWidth)
+        }
+        let (boundingCells, overflow) = maxWidth.multipliedReportingOverflow(by: height)
+        guard !overflow, boundingCells <= TableGrid.maxCells else { throw Error.tooLarge }
+
         let modelRows = rows.map { cells in
             TableModel.Row(
                 source: nil,
@@ -569,7 +592,9 @@ enum BlockNoteHTMLParser {
 
             if !mainParts.isEmpty {
                 if !childBlocks.isEmpty {
-                    if depth + 1 <= BlockNoteWriter.maxNestingDepth {
+                    if depth + 1 <= BlockNoteWriter.maxNestingDepth,
+                        canTakeNestedChildren(mainParts[mainParts.count - 1])
+                    {
                         mainParts[mainParts.count - 1] = attachingChildren(
                             childBlocks, to: mainParts[mainParts.count - 1])
                         output += mainParts
@@ -626,7 +651,7 @@ enum BlockNoteHTMLParser {
             guard depth < 4 else { return nil }
             for child in node.children {
                 if child.name == "#text" {
-                    if child.text.contains(where: { !" \t\n\r\u{0C}".contains($0) }) { return nil }
+                    if child.text.unicodeScalars.contains(where: { !HTMLNode.isASCIIWhitespace($0) }) { return nil }
                     continue
                 }
                 if child.name == "input", child.attributes["type"]?.lowercased() == "checkbox" {
@@ -698,7 +723,7 @@ enum BlockNoteHTMLParser {
 
         private mutating func parseTable(_ table: HTMLNode, into output: inout [BlockNoteWriter.Copy]) throws {
             let rows: [[TablePastedCell]]
-            switch TableClipboard.cells(table: table) {
+            switch TableClipboard.cells(table: table, paletteColorsOnly: true) {
             case .empty: return
             case .tooLarge: throw Error.tooLarge
             case .cells(let parsed): rows = parsed
@@ -758,20 +783,20 @@ enum BlockNoteHTMLParser {
             var hasContent: Bool { !items.isEmpty }
 
             mutating func appendText(_ raw: String, marks: [(key: String, valueJSON: String)]) {
-                let collapsible: Set<Character> = [" ", "\t", "\n", "\r", "\u{0C}"]
-                var text = ""
+                var scalars = String.UnicodeScalarView()
                 var inSpace = false
-                for character in raw {
-                    if character == "\u{FFFC}" { continue }
-                    if collapsible.contains(character) {
+                for scalar in raw.unicodeScalars {
+                    if scalar.value == 0xFFFC { continue }
+                    if HTMLNode.isASCIIWhitespace(scalar) {
                         inSpace = true
                     } else {
-                        if inSpace { text.append(" ") }
+                        if inSpace { scalars.append(" ") }
                         inSpace = false
-                        text.append(character)
+                        scalars.append(scalar)
                     }
                 }
-                if inSpace { text.append(" ") }
+                if inSpace { scalars.append(" ") }
+                var text = String(scalars)
                 if text == " ", !hasContent { return }
                 if text.hasPrefix(" "), lastWasSpaceOrBreak { text.removeFirst() }
                 guard !text.isEmpty else { return }
@@ -804,24 +829,34 @@ enum BlockNoteHTMLParser {
                 return result
             }
 
+            private static func marksEqual(
+                _ lhs: [(key: String, valueJSON: String)], _ rhs: [(key: String, valueJSON: String)]
+            ) -> Bool {
+                lhs.count == rhs.count && zip(lhs, rhs).allSatisfy { $0.key == $1.key && $0.valueJSON == $1.valueJSON }
+            }
+
             private mutating func appendRun(_ text: String, marks: [(key: String, valueJSON: String)]) {
-                if case .run(var last)? = items.last,
-                    InlineRun("", marks: last.marks) == InlineRun("", marks: marks)
-                {
+                let canCoalesce: Bool =
+                    if case .run(let peek)? = items.last {
+                        Self.marksEqual(peek.marks, marks)
+                    } else {
+                        false
+                    }
+                if canCoalesce, case .run(var last)? = items.popLast() {
                     last.text += text
-                    items[items.count - 1] = .run(last)
+                    items.append(.run(last))
                 } else {
                     items.append(.run(InlineRun(text, marks: marks)))
                 }
             }
 
             private mutating func trimTrailingSpace() {
-                if case .run(var last)? = items.last, last.text.hasSuffix(" ") {
+                let hasTrailingSpace: Bool =
+                    if case .run(let peek)? = items.last { peek.text.hasSuffix(" ") } else { false }
+                if hasTrailingSpace, case .run(var last)? = items.popLast() {
                     last.text.removeLast()
-                    if last.text.isEmpty {
-                        items.removeLast()
-                    } else {
-                        items[items.count - 1] = .run(last)
+                    if !last.text.isEmpty {
+                        items.append(.run(last))
                     }
                 }
             }
@@ -845,7 +880,7 @@ enum BlockNoteHTMLParser {
                 return
             }
             if Self.droppedElements.contains(node.name) { return }
-            let nextMarks = marks + InlineFlattener.addedMarks(for: node, current: marks)
+            let nextMarks = marks + InlineFlattener.addedMarks(for: node, current: marks, paletteColorsOnly: true)
             for child in node.children {
                 try collectInline(child, marks: nextMarks, skipping: skipping, into: &buffer)
             }
@@ -855,39 +890,59 @@ enum BlockNoteHTMLParser {
             _ items: [InlineItem], node: String, props: [(key: String, value: YAnyValue)]?, depth: Int,
             into output: inout [BlockNoteWriter.Copy], hoisted: inout [BlockNoteWriter.Copy]
         ) throws {
-            var currentCopies: [BlockNoteWriter.Copy] = []
-            func flushCopies() throws {
-                // Trim leading/trailing stray hardBreaks created right next to split images.
-                while case .element("hardBreak", _, _)? = currentCopies.first { currentCopies.removeFirst() }
-                while case .element("hardBreak", _, _)? = currentCopies.last { currentCopies.removeLast() }
-                guard !currentCopies.isEmpty else { return }
-                output.append(try makeTextContainer(node: node, props: props, inline: currentCopies))
-                currentCopies = []
+            var emittedTextBlock = false
+            func nextProps() -> [(key: String, value: YAnyValue)]? {
+                defer { emittedTextBlock = true }
+                if emittedTextBlock, node == "numberedListItem" {
+                    return numberedProps(start: nil)
+                }
+                return props
             }
-            for item in items {
-                switch item {
-                case .run(let run):
-                    try addUTF16(run.text.utf16.count)
-                    let value = BlockNoteWriter.TextValue.run(run)
-                    if case .text(let existing)? = currentCopies.last {
-                        currentCopies[currentCopies.count - 1] = .text(existing + [value])
-                    } else {
-                        currentCopies.append(.text([value]))
+
+            // Splits a contiguous run of text/hardBreak items into separate
+            // blocks of the same type so prose blocks never contain `hardBreak`.
+            func emitChunk(_ chunk: ArraySlice<InlineItem>) throws {
+                var start = chunk.startIndex
+                var end = chunk.endIndex
+                while start < end, case .hardBreak = chunk[start] { start += 1 }
+                while end > start, case .hardBreak = chunk[end - 1] { end -= 1 }
+                guard start < end else { return }
+
+                var currentRuns: [BlockNoteWriter.TextValue] = []
+                func flushLine() throws {
+                    let inline: [BlockNoteWriter.Copy] = currentRuns.isEmpty ? [] : [.text(currentRuns)]
+                    output.append(try makeTextContainer(node: node, props: nextProps(), inline: inline))
+                    currentRuns.removeAll(keepingCapacity: true)
+                }
+
+                for item in chunk[start..<end] {
+                    switch item {
+                    case .run(let run):
+                        try addUTF16(run.text.utf16.count)
+                        currentRuns.append(.run(run))
+                    case .hardBreak:
+                        try flushLine()
+                    case .image:
+                        break
                     }
-                case .hardBreak:
-                    try addUTF16(1)
-                    currentCopies.append(.element("hardBreak", [], []))
-                case .image(let url, let alt):
-                    try flushCopies()
+                }
+                try flushLine()
+            }
+
+            var chunkStart = items.startIndex
+            for index in items.indices {
+                if case .image(let url, let alt) = items[index] {
+                    try emitChunk(items[chunkStart..<index])
                     let image = try makeImageContainer(url: url, alt: alt)
                     if depth == 0 {
                         output.append(image)
                     } else {
                         hoisted.append(image)
                     }
+                    chunkStart = index + 1
                 }
             }
-            try flushCopies()
+            try emitChunk(items[chunkStart..<items.endIndex])
         }
 
         // MARK: - Block container builders

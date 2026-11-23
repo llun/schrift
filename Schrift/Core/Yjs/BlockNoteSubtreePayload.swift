@@ -44,11 +44,16 @@ enum BlockNoteSubtreePayload {
         "mathBlock", "diagram",
     ]
 
-    /// Nodes inside a content element: table structure and inline nodes.
-    static let inlineNodes: Set<String> = [
-        "tableRow", "tableCell", "tableHeader", "tableParagraph", "hardBreak", "userMentionInline",
-        "interlinkingLinkInline", "mentionSearchInline", "math",
+    /// Inline nodes valid inside a textblock or `tableParagraph` (never table
+    /// structural nodes).
+    static let proseInlineNodes: Set<String> = [
+        "hardBreak", "userMentionInline", "interlinkingLinkInline", "mentionSearchInline", "math",
     ]
+
+    /// Nodes inside a content element: table structure and inline nodes.
+    static let inlineNodes: Set<String> = proseInlineNodes.union([
+        "tableRow", "tableCell", "tableHeader", "tableParagraph",
+    ])
 
     /// The update bytes for `copies`, each a whole `blockContainer`.
     static func encode(_ copies: [BlockNoteWriter.Copy]) throws -> Data {
@@ -200,8 +205,11 @@ enum BlockNoteSubtreePayload {
                 for item in content {
                     if case .element = item { throw Error.malformed }
                 }
+            } else if node == "table" {
+                try tableContent(content)
+            } else {
+                try inline(content)
             }
-            try inline(content)
             if children.count == 2 {
                 guard case .element("blockGroup", let groupProps, let kids) = children[1], groupProps.isEmpty,
                     !kids.isEmpty
@@ -209,16 +217,32 @@ enum BlockNoteSubtreePayload {
                 for kid in kids { try container(kid, depth: depth + 1) }
             }
         }
+        func tableContent(_ rows: [BlockNoteWriter.Copy]) throws {
+            for row in rows {
+                guard case .element(let rowNode, _, let cells) = row else { continue }
+                guard rowNode == "tableRow" else { throw Error.malformed }
+                for cell in cells {
+                    guard case .element(let cellNode, _, let paragraphs) = cell else { continue }
+                    guard cellNode == "tableCell" || cellNode == "tableHeader" else { throw Error.malformed }
+                    for paragraph in paragraphs {
+                        guard case .element(let paraNode, _, let content) = paragraph else { continue }
+                        guard paraNode == "tableParagraph" else { throw Error.malformed }
+                        try inline(content)
+                    }
+                }
+            }
+        }
         func inline(_ copies: [BlockNoteWriter.Copy]) throws {
             for copy in copies {
                 guard case .element(let node, let props, let children) = copy else { continue }
-                guard inlineNodes.contains(node) else { throw Error.malformed }
+                guard proseInlineNodes.contains(node) else { throw Error.malformed }
                 if NativeInlineObject.nodeNames.contains(node) {
                     let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
                     guard NativeInlineObject.read(node: node, props: projected, children: children) != nil
                     else { throw Error.malformed }
+                } else {
+                    try inline(children)
                 }
-                try inline(children)
             }
         }
         // A root column group (PR12b): its columns hold containers, each one
@@ -293,6 +317,104 @@ extension BlockNoteSubtreePayload {
 
     static func validatingMedia(_ copies: [BlockNoteWriter.Copy]) throws -> [BlockNoteWriter.Copy] {
         try validatingPastable(copies)
+    }
+
+    /// Splits any prose textblock containing `hardBreak` into separate blocks
+    /// of the same type so prose paste never writes `hardBreak` into blocks
+    /// `YBlockProjection.foldInline` cannot project (table cells keep their
+    /// `hardBreak`s intact).
+    static func splittingProseHardBreaks(_ copies: [BlockNoteWriter.Copy]) throws -> [BlockNoteWriter.Copy] {
+        var totalBlocks = 0
+
+        func countBlock() throws {
+            totalBlocks += 1
+            guard totalBlocks <= maxBlocks else { throw Error.tooLarge }
+        }
+
+        func isHardBreak(_ copy: BlockNoteWriter.Copy) -> Bool {
+            if case .element("hardBreak", _, _) = copy { true } else { false }
+        }
+
+        func splitList(_ list: [BlockNoteWriter.Copy]) throws -> [BlockNoteWriter.Copy] {
+            var out: [BlockNoteWriter.Copy] = []
+            for copy in list {
+                switch copy {
+                case .element("columnList", let props, let columns):
+                    try countBlock()
+                    var nextColumns: [BlockNoteWriter.Copy] = []
+                    for column in columns {
+                        guard case .element("column", let columnProps, let kids) = column else {
+                            nextColumns.append(column)
+                            continue
+                        }
+                        try countBlock()
+                        nextColumns.append(.element("column", columnProps, try splitList(kids)))
+                    }
+                    out.append(.element("columnList", props, nextColumns))
+
+                case .element("blockContainer", let containerProps, let children):
+                    guard let first = children.first,
+                        case .element(let node, let nodeProps, let content) = first
+                    else {
+                        try countBlock()
+                        out.append(copy)
+                        continue
+                    }
+                    let nestedGroup: BlockNoteWriter.Copy?
+                    if children.count == 2, case .element("blockGroup", let groupProps, let kids) = children[1] {
+                        nestedGroup = .element("blockGroup", groupProps, try splitList(kids))
+                    } else {
+                        nestedGroup = children.count == 2 ? children[1] : nil
+                    }
+
+                    guard BlockNoteWriter.mergeableTextblockNodes.contains(node),
+                        content.contains(where: isHardBreak)
+                    else {
+                        try countBlock()
+                        var rebuilt: [BlockNoteWriter.Copy] = [first]
+                        if let nestedGroup { rebuilt.append(nestedGroup) }
+                        out.append(.element("blockContainer", containerProps, rebuilt))
+                        continue
+                    }
+
+                    var chunks: [[BlockNoteWriter.Copy]] = []
+                    if content.allSatisfy(isHardBreak) {
+                        chunks = [[]]
+                    } else {
+                        var current: [BlockNoteWriter.Copy] = []
+                        for item in content {
+                            if isHardBreak(item) {
+                                chunks.append(current)
+                                current = []
+                            } else {
+                                current.append(item)
+                            }
+                        }
+                        chunks.append(current)
+                    }
+
+                    let continuationProps: [(key: String, value: YAnyValue)] =
+                        node == "numberedListItem"
+                        ? nodeProps.map { $0.key == "start" ? ("start", .undefined) : $0 }
+                        : nodeProps
+                    for (index, chunk) in chunks.enumerated() {
+                        try countBlock()
+                        let resolvedProps = index == 0 ? nodeProps : continuationProps
+                        var rebuilt: [BlockNoteWriter.Copy] = [.element(node, resolvedProps, chunk)]
+                        if index == chunks.count - 1, let nestedGroup {
+                            rebuilt.append(nestedGroup)
+                        }
+                        out.append(.element("blockContainer", containerProps, rebuilt))
+                    }
+
+                default:
+                    out.append(copy)
+                }
+            }
+            return out
+        }
+
+        return try splitList(copies)
     }
 }
 

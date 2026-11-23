@@ -25,7 +25,8 @@ final class BlockNoteHTMLParserTests: XCTestCase {
             <div>Div A</div><div>Div B</div>
             """
         let copies = try BlockNoteHTMLParser.parse(html)
-        XCTAssertEqual(copies.count, 10)
+        XCTAssertEqual(copies.count, 11)
+        guard copies.count == 11 else { return }
 
         let levels = copies.prefix(6).compactMap { copy -> Int? in
             guard case .element("blockContainer", _, let kids) = copy,
@@ -36,24 +37,22 @@ final class BlockNoteHTMLParserTests: XCTestCase {
         }
         XCTAssertEqual(levels, [1, 2, 3, 3, 3, 3])
 
-        // <p>Line 1<br>Line 2</p> contains an explicit hardBreak element between texts.
-        guard case .element("blockContainer", _, let brKids) = copies[6],
-            case .element("paragraph", _, let brInline)? = brKids.first
-        else { return XCTFail("expected paragraph at index 6") }
-        XCTAssertEqual(brInline.count, 3)
-        if case .element("hardBreak", _, _) = brInline[1] {
-        } else {
-            XCTFail("expected hardBreak element, got \(brInline[1])")
-        }
+        // <p>Line 1<br>Line 2</p> splits into two modeled paragraphs (never hardBreak in prose).
+        let (brDoc, brBlocks) = try project(Array(copies[6...7]))
+        defer { brDoc.destroy() }
+        XCTAssertEqual(brBlocks.map(\.block.node), ["paragraph", "paragraph"])
+        XCTAssertEqual(brBlocks.map(\.block.fidelity), [.modeled, .modeled])
+        XCTAssertEqual(brBlocks.map { $0.block.runs.map(\.text).joined() }, ["Line 1", "Line 2"])
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(brDoc))
 
         // <p><br></p> produces an empty paragraph, not a stray hardBreak.
-        guard case .element("blockContainer", _, let emptyKids) = copies[7],
+        guard case .element("blockContainer", _, let emptyKids) = copies[8],
             case .element("paragraph", _, let emptyInline)? = emptyKids.first
-        else { return XCTFail("expected empty paragraph at index 7") }
+        else { return XCTFail("expected empty paragraph at index 8") }
         XCTAssertTrue(emptyInline.isEmpty)
 
         // <div>Div A</div><div>Div B</div> produces two separate paragraphs.
-        let (doc, blocks) = try project(Array(copies[8...9]))
+        let (doc, blocks) = try project(Array(copies[9...10]))
         defer { doc.destroy() }
         XCTAssertEqual(blocks.map { $0.block.runs.map(\.text).joined() }, ["Div A", "Div B"])
     }
@@ -247,5 +246,85 @@ final class BlockNoteHTMLParserTests: XCTestCase {
 
         // Script-only input produces empty blocks cleanly.
         XCTAssertTrue(try BlockNoteHTMLParser.parse("<script>1</script><style>a{}</style>").isEmpty)
+    }
+
+    func testCRLFIsCollapsedAcrossContainersChecklistsAndTables() throws {
+        let html =
+            "<div>\r\n<p>Hello\r\nworld</p>\r\n</div>"
+            + "<ul><li>\r\n<input type=\"checkbox\" checked> Done</li></ul>"
+            + "<table><tr><td>A\r\nB</td></tr></table>"
+        let copies = try BlockNoteHTMLParser.parse(html)
+        let (doc, blocks) = try project(copies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(blocks.map(\.block.node), ["paragraph", "checkListItem", "table"])
+        guard blocks.count == 3 else { return }
+        XCTAssertEqual(blocks[0].block.runs.map(\.text).joined(), "Hello world")
+        XCTAssertEqual(blocks[1].block.props.first { $0.key == "checked" }?.value, .bool(true))
+        XCTAssertEqual(blocks[1].block.runs.map(\.text).joined(), "Done")
+        let table = try XCTUnwrap(TableGrid.tables(in: doc).values.first)
+        XCTAssertEqual(table.rows[0][0].runs.map(\.text).joined(), "A B")
+    }
+
+    func testTopLevelListItemWithImageAndNestedListDoesNotAttachChildrenToImage() throws {
+        let html = """
+            <ul>
+              <li>
+                <p>Lead <img src="https://images.example/a.png" alt="Pic"></p>
+                <ul><li>Child</li></ul>
+              </li>
+              <li>
+                <p><img src="https://images.example/b.png" alt="Only"></p>
+                <ul><li>Sibling</li></ul>
+              </li>
+            </ul>
+            """
+        let copies = try BlockNoteHTMLParser.parse(html)
+        let (doc, blocks) = try project(copies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(
+            blocks.map(\.block.node),
+            ["bulletListItem", "image", "bulletListItem", "image", "bulletListItem"])
+        XCTAssertEqual(blocks.map(\.depth), [0, 0, 0, 0, 0])
+        // Neither image may carry nested children (the engine refuses root-only blocks with children).
+        for copy in copies {
+            guard case .element("blockContainer", _, let kids) = copy,
+                case .element("image", _, _)? = kids.first
+            else { continue }
+            XCTAssertEqual(kids.count, 1, "image container must never have a nested blockGroup")
+        }
+    }
+
+    func testManyInlineRunsAndWideRaggedTableStayWithinLinearTimeBounds() throws {
+        // #5: alternating bold/plain runs and coalesced runs must append in place, not quadratically.
+        let alternating = "<p>" + String(repeating: "<b>a</b>a", count: 15_000) + "</p>"
+        let startAlt = ThreadCPUClock.now
+        let altCopies = try BlockNoteHTMLParser.parse(alternating)
+        let elapsedAlt = ThreadCPUClock.now - startAlt
+        XCTAssertEqual(altCopies.count, 1)
+        XCTAssertLessThan(elapsedAlt, .milliseconds(500), "alternating runs should parse linearly, took \(elapsedAlt)")
+
+        let coalesced = "<p>" + String(repeating: "<span>aaaaaaaaaa</span>", count: 15_000) + "</p>"
+        let startCoal = ThreadCPUClock.now
+        let coalCopies = try BlockNoteHTMLParser.parse(coalesced)
+        let elapsedCoal = ThreadCPUClock.now - startCoal
+        XCTAssertEqual(coalCopies.count, 1)
+        XCTAssertLessThan(elapsedCoal, .milliseconds(500), "coalesced runs should append in place, took \(elapsedCoal)")
+
+        // #8: 500-wide row + 500 one-cell rows must fail bounding size check before materializing 250k cells.
+        let wideRagged =
+            "<table><tr><td colspan=\"500\">a</td></tr>"
+            + String(repeating: "<tr><td>x</td></tr>", count: 500) + "</table>"
+        let startTable = ThreadCPUClock.now
+        do {
+            _ = try BlockNoteHTMLParser.parse(wideRagged)
+            XCTFail("expected tooLarge for 500x501 ragged table")
+        } catch let error as BlockNoteHTMLParser.Error {
+            XCTAssertEqual(error, .tooLarge)
+        }
+        let elapsedTable = ThreadCPUClock.now - startTable
+        XCTAssertLessThan(
+            elapsedTable, .milliseconds(250), "bounding table size must reject before fixTable, took \(elapsedTable)")
     }
 }

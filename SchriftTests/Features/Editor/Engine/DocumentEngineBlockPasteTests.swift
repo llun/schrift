@@ -393,4 +393,123 @@ final class DocumentEngineBlockPasteTests: DocumentEngineTestCase {
         }
         XCTAssertFalse(emojiEngine.nativeWriteFailed)
     }
+
+    func testPasteHTMLHardBreakAndPayloadHardBreakSplitProseAndRejectTableNodesInProse() throws {
+        // #1a: pasting <p>Line 1<br>Line 2</p> mid-paragraph produces modeled paragraphs, valid caret, and shadow.
+        let doc = try makeDoc([paragraph("p1", "Hello world")], clientID: 2)
+        defer { doc.destroy() }
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        defer { engine.detach() }
+
+        let htmlPayload = try XCTUnwrap(try BlockNoteHTMLParser.payload("<p>Line 1<br>Line 2</p>"))
+        let caret = try paste(engine, payload: htmlPayload, blockID: "p1", startOffset: 6)
+        assertSurfaceMatchesProjection(surface, doc, "HTML br split")
+        XCTAssertEqual(surface.blocks.map(\.node), ["paragraph", "paragraph"])
+        XCTAssertEqual(NativeBlockProjection.project(doc).blocks.map(\.block.fidelity), [.modeled, .modeled])
+        XCTAssertEqual(surface.blocks.map(text(of:)), ["Hello Line 1", "Line 2world"])
+        if surface.blocks.count == 2 {
+            XCTAssertEqual(caret, EditorPosition(blockID: surface.blocks[1].id, offset: 6, assoc: -1))
+        }
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
+
+        // #1b: a raw payload containing a hardBreak inside a prose block also splits rather than producing opaque.
+        let hardBreakCopy: BlockNoteWriter.Copy = .element(
+            "blockContainer", [("id", .string("hb1"))],
+            [
+                .element(
+                    "paragraph", BlockNoteWriter.nativePropSchemas["paragraph"] ?? [],
+                    [
+                        .text([.run(InlineRun("One"))]),
+                        .element("hardBreak", [], []),
+                        .text([.run(InlineRun("Two"))]),
+                    ])
+            ])
+        let hbPayload = try BlockNoteSubtreePayload.encode([hardBreakCopy])
+        let doc2 = try makeDoc([paragraph("p1", "Start End")], clientID: 2)
+        defer { doc2.destroy() }
+        let surface2 = HeadlessSurface(blocks: projection(doc2))
+        let engine2 = DocumentEngine(doc: doc2, surface: surface2)
+        defer { engine2.detach() }
+        let caret2 = try paste(engine2, payload: hbPayload, blockID: "p1", startOffset: 6)
+        assertSurfaceMatchesProjection(surface2, doc2, "payload hardBreak split")
+        XCTAssertEqual(surface2.blocks.map(\.node), ["paragraph", "paragraph"])
+        XCTAssertEqual(NativeBlockProjection.project(doc2).blocks.map(\.block.fidelity), [.modeled, .modeled])
+        XCTAssertEqual(surface2.blocks.map(text(of:)), ["Start One", "TwoEnd"])
+        if surface2.blocks.count == 2 {
+            XCTAssertEqual(caret2, EditorPosition(blockID: surface2.blocks[1].id, offset: 3, assoc: -1))
+        }
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc2))
+
+        // #1c: a payload smuggling table structural nodes inside a prose block is refused.
+        let bogusTableInProse: BlockNoteWriter.Copy = .element(
+            "blockContainer", [("id", .string("bad1"))],
+            [
+                .element(
+                    "paragraph", BlockNoteWriter.nativePropSchemas["paragraph"] ?? [],
+                    [.element("tableRow", [], [])])
+            ])
+        do {
+            _ = try BlockNoteSubtreePayload.validate([bogusTableInProse])
+            XCTFail("expected malformed when tableRow sits inside a paragraph")
+        } catch let error as BlockNoteSubtreePayload.Error {
+            XCTAssertEqual(error, .malformed)
+        }
+        // Writer-level guard also refuses hardBreak or table structural nodes in prose copies.
+        let writerDoc = try makeDoc([paragraph("p1", "Hello")], clientID: 2)
+        defer { writerDoc.destroy() }
+        let writer = BlockNoteWriter(doc: writerDoc)
+        let target = try writer.find("p1")
+        for invalid in [hardBreakCopy, bogusTableInProse] {
+            do {
+                _ = try writer.replaceRangeWithBlocks(
+                    from: target, at: 0, to: target, at: 0, blocks: [invalid],
+                    replaceStartWhenEmpty: false, trailingBlockID: "t1")
+                XCTFail("writer must refuse non-prose inline node in prose block")
+            } catch BlockNoteWriter.Error.malformedBlock {
+            }
+        }
+    }
+
+    func testNonTextblockPasteFromOffsetZeroAcrossBlocksKeepsEndBlock() throws {
+        // #2: selecting from offset 0 of a heading into a paragraph and pasting an image keeps the end paragraph.
+        let doc = try makeDoc([heading("h1", level: 1, "Title"), paragraph("p1", "Head tail")], clientID: 2)
+        defer { doc.destroy() }
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        defer { engine.detach() }
+
+        let imagePayload = try XCTUnwrap(try BlockNoteMarkdownPaste.payload("![Cat](https://images.example/cat.png)"))
+        let caret = try paste(
+            engine, payload: imagePayload, blockID: "h1", startOffset: 0, endBlockID: "p1", endOffset: 5)
+
+        assertSurfaceMatchesProjection(surface, doc, "non-textblock from offset 0 keeps end block")
+        XCTAssertEqual(surface.blocks.map(\.node), ["image", "paragraph"])
+        guard surface.blocks.count == 2 else { return }
+        XCTAssertEqual(surface.blocks[1].id, "p1")
+        XCTAssertEqual(text(of: surface.blocks[1]), "tail")
+        XCTAssertEqual(caret, EditorPosition(blockID: "p1", offset: 0, assoc: -1))
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
+    }
+
+    func testFlattenForTableCellDropsSeparatorsForEmptyStrippedCells() throws {
+        // #3: cells that become empty after stripping U+FFFC must not leave duplicate spaces or double hardBreaks.
+        func cell(_ text: String) -> BlockNoteWriter.Copy {
+            .element("tableCell", [], [.element("tableParagraph", [], [.text([.run(InlineRun(text))])])])
+        }
+        let rowWithEmptyMiddle: BlockNoteWriter.Copy = .element(
+            "blockContainer", [("id", .string("t1"))],
+            [.element("table", [], [.element("tableRow", [], [cell("A"), cell("\u{FFFC}"), cell("C")])])])
+        let flat1 = try BlockNoteWriter.flattenForTableCell([rowWithEmptyMiddle])
+        XCTAssertEqual(BlockNoteWriter.plainText(of: [flat1]), "A C")
+
+        let prevPara: BlockNoteWriter.Copy = .element(
+            "blockContainer", [("id", .string("p0"))],
+            [.element("paragraph", [], [.text([.run(InlineRun("Prev"))])])])
+        let rowWithEmptyFirst: BlockNoteWriter.Copy = .element(
+            "blockContainer", [("id", .string("t2"))],
+            [.element("table", [], [.element("tableRow", [], [cell("\u{FFFC}"), cell("B")])])])
+        let flat2 = try BlockNoteWriter.flattenForTableCell([prevPara, rowWithEmptyFirst])
+        XCTAssertEqual(BlockNoteWriter.plainText(of: [flat2]), "Prev\nB")
+    }
 }

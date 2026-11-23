@@ -66,13 +66,13 @@ enum TableClipboard {
 
     /// Parses one `<table>` element into BlockNote cells, bounded by
     /// `TableGrid.maxCells`.
-    static func cells(table: HTMLNode) -> TableParseResult {
+    static func cells(table: HTMLNode, paletteColorsOnly: Bool = false) -> TableParseResult {
         var rows: [[TablePastedCell]] = []
         var area = 0
         for row in table.rows() {
             var cells: [TablePastedCell] = []
             for element in row.children where element.name == "td" || element.name == "th" {
-                guard let cell = parsedCell(element) else { return .tooLarge }
+                guard let cell = parsedCell(element, paletteColorsOnly: paletteColorsOnly) else { return .tooLarge }
                 area += cell.colspan * cell.rowspan
                 guard area <= TableGrid.maxCells else { return .tooLarge }
                 cells.append(cell)
@@ -289,7 +289,7 @@ enum TableClipboard {
     /// A `td`/`th` as BlockNote's schema parses it (`addAttributes`, the
     /// default props' `parseHTML`, `parseTableContent`). Nil for a span the
     /// bound refuses.
-    private static func parsedCell(_ element: HTMLNode) -> TablePastedCell? {
+    private static func parsedCell(_ element: HTMLNode, paletteColorsOnly: Bool) -> TablePastedCell? {
         func span(_ key: String) -> Int? {
             guard let value = element.attributes[key]?.trimmingCharacters(in: .whitespaces), !value.isEmpty else {
                 return 1
@@ -321,7 +321,8 @@ enum TableClipboard {
             }
         }
         return TablePastedCell(
-            node: element.name == "th" ? "tableHeader" : "tableCell", attrs: attrs, runs: InlineFlattener.runs(element))
+            node: element.name == "th" ? "tableHeader" : "tableCell", attrs: attrs,
+            runs: InlineFlattener.runs(element, paletteColorsOnly: paletteColorsOnly))
     }
 
     // MARK: - Copy

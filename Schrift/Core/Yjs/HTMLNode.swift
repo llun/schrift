@@ -28,7 +28,14 @@ final class HTMLNode {
         "section", "article", "header", "footer", "nav", "aside", "main", "figure", "dl", "form",
     ]
 
-    static func parse(_ html: String) -> HTMLNode? {
+    /// ASCII whitespace scalars (HTML's collapsible whitespace set). Checking
+    /// scalars rather than Swift `Character`s handles CRLF (`\r\n`), which is a
+    /// single extended grapheme cluster in Swift.
+    static func isASCIIWhitespace(_ scalar: Unicode.Scalar) -> Bool {
+        scalar == " " || scalar == "\t" || scalar == "\n" || scalar == "\r" || scalar == "\u{0C}"
+    }
+
+    static func parse(_ html: String, blockImpliedEndTags: Bool = false) -> HTMLNode? {
         let root = HTMLNode(name: "#document")
         var stack = [root]
         var nodes = 0
@@ -150,7 +157,8 @@ final class HTMLNode {
                 continue
             }
             // Implied end tags: a cell closes the open cell, a row the open
-            // row, a list item the open list item, and a block tag an open paragraph.
+            // row; table mode only closes an open paragraph on `<p>`, while
+            // block-paste mode also closes `<li>` on `<li>` and `<p>` on block tags.
             switch name {
             case "td", "th":
                 if let open = stack.lastIndex(where: { ["td", "th", "tr", "table"].contains($0.name) }),
@@ -162,13 +170,19 @@ final class HTMLNode {
                 if let open = stack.lastIndex(where: { ["tr", "table"].contains($0.name) }), stack[open].name == "tr" {
                     stack.removeSubrange(open...)
                 }
-            case "li":
+            case "li" where blockImpliedEndTags:
                 if let open = stack.lastIndex(where: { ["li", "ul", "ol"].contains($0.name) }), stack[open].name == "li"
                 {
                     stack.removeSubrange(open...)
                 }
+            case "p" where !blockImpliedEndTags:
+                if let open = stack.lastIndex(where: { ["p", "td", "th", "table", "div"].contains($0.name) }),
+                    stack[open].name == "p"
+                {
+                    stack.removeSubrange(open...)
+                }
             default:
-                if Self.closesParagraph.contains(name),
+                if blockImpliedEndTags, Self.closesParagraph.contains(name),
                     let open = stack.lastIndex(where: {
                         ["p", "td", "th", "table", "div", "li", "blockquote"].contains($0.name)
                     }),
@@ -266,7 +280,7 @@ final class HTMLNode {
                 if child.name == "table" {
                     tables.append(child)
                 } else if child.name == "#text" {
-                    if child.text.contains(where: { !" \t\n\r\u{0C}".contains($0) }) { outside = true }
+                    if child.text.unicodeScalars.contains(where: { !HTMLNode.isASCIIWhitespace($0) }) { outside = true }
                 } else if !HTMLNode.rawText.contains(child.name), child.name != "head" {
                     walk(child)
                 }
@@ -306,7 +320,7 @@ enum InlineFlattener {
     ]
     static let ignored: Set<String> = ["img", "video", "audio", "iframe", "svg", "object", "input", "select", "button"]
 
-    static func runs(_ cell: HTMLNode) -> [InlineRun] {
+    static func runs(_ cell: HTMLNode, paletteColorsOnly: Bool = false) -> [InlineRun] {
         var runs: [InlineRun] = []
         var paragraphOpen = false
         var lastWasSpaceOrBreak = true
@@ -328,20 +342,20 @@ enum InlineFlattener {
         func walk(_ node: HTMLNode, _ marks: [(key: String, valueJSON: String)]) {
             for child in node.children {
                 if child.name == "#text" {
-                    let collapsible: Set<Character> = [" ", "\t", "\n", "\r", "\u{0C}"]
-                    var text = ""
+                    var scalars = String.UnicodeScalarView()
                     var inSpace = false
-                    for character in child.text {
-                        if character == "\u{FFFC}" { continue }
-                        if collapsible.contains(character) {
+                    for scalar in child.text.unicodeScalars {
+                        if scalar.value == 0xFFFC { continue }
+                        if HTMLNode.isASCIIWhitespace(scalar) {
                             inSpace = true
                         } else {
-                            if inSpace { text.append(" ") }
+                            if inSpace { scalars.append(" ") }
                             inSpace = false
-                            text.append(character)
+                            scalars.append(scalar)
                         }
                     }
-                    if inSpace { text.append(" ") }
+                    if inSpace { scalars.append(" ") }
+                    var text = String(scalars)
                     if text == " ", !paragraphOpen { continue }
                     if text.hasPrefix(" "), lastWasSpaceOrBreak { text.removeFirst() }
                     guard !text.isEmpty else { continue }
@@ -363,7 +377,7 @@ enum InlineFlattener {
                     walk(child, marks)
                     endParagraph()
                 } else {
-                    walk(child, marks + addedMarks(for: child, current: marks))
+                    walk(child, marks + addedMarks(for: child, current: marks, paletteColorsOnly: paletteColorsOnly))
                 }
             }
         }
@@ -373,13 +387,13 @@ enum InlineFlattener {
     }
 
     /// The marks an inline element adds (TipTap's and BlockNote's `parseHTML`
-    /// rules); a mark already in force is not added twice. Arbitrary CSS
-    /// colours/fonts are dropped; only BlockNote palette colour names on
-    /// `data-style-type` spans and links that `sanitizedLinkURL` writes
-    /// unchanged are kept.
-    static func addedMarks(for element: HTMLNode, current: [(key: String, valueJSON: String)])
-        -> [(key: String, valueJSON: String)]
-    {
+    /// rules); a mark already in force is not added twice. When
+    /// `paletteColorsOnly` is true (general block paste), only BlockNote
+    /// palette colour names on `data-style-type` spans are kept; table
+    /// clipboard parsing keeps any `data-value` (up to 64 chars) as before.
+    static func addedMarks(
+        for element: HTMLNode, current: [(key: String, valueJSON: String)], paletteColorsOnly: Bool = false
+    ) -> [(key: String, valueJSON: String)] {
         var out: [(key: String, valueJSON: String)] = []
         func add(_ key: String, _ value: String = "{}") {
             if !current.contains(where: { $0.key == key }), !out.contains(where: { $0.key == key }) {
@@ -401,10 +415,16 @@ enum InlineFlattener {
             }
         case "span":
             if let type = element.attributes["data-style-type"], type == "textColor" || type == "backgroundColor",
-                let value = element.attributes["data-value"]?.trimmingCharacters(in: .whitespaces),
-                NativeMark.colors.contains(value)
+                let value = element.attributes["data-value"]
             {
-                add(type, NativeMark.colorValue(value))
+                if paletteColorsOnly {
+                    let trimmed = value.trimmingCharacters(in: .whitespaces)
+                    if NativeMark.colors.contains(trimmed) {
+                        add(type, NativeMark.colorValue(trimmed))
+                    }
+                } else {
+                    add(type, NativeMark.colorValue(String(value.prefix(64))))
+                }
             }
         default: break
         }
