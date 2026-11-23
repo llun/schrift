@@ -19,7 +19,7 @@ enum BlockNoteMarkdownPaste {
     }
 
     // shortcut: lines longer than 8,192 UTF-16 code units skip inline Markdown
-    // parsing and stay plain text so pathological lines cannot stall paste.
+    // and image parsing and stay plain text so pathological lines cannot stall paste.
     static let maxInlineParseUTF16 = 8_192
 
     /// Parses pasted Markdown or plain text into BlockNote `blockContainer`
@@ -539,6 +539,7 @@ enum BlockNoteMarkdownPaste {
         // MARK: - Images
 
         private func parseStandaloneImage(_ line: String) -> (alt: String, url: String)? {
+            guard line.utf16.count <= BlockNoteMarkdownPaste.maxInlineParseUTF16 else { return nil }
             let (indent, rest) = leadingIndent(line)
             guard indent <= 3 else { return nil }
             let trimmed = rest.trimmingCharacters(in: .whitespaces)
@@ -556,8 +557,9 @@ enum BlockNoteMarkdownPaste {
         }
 
         /// Linear-time image syntax matcher: memoizes failed closing brackets
-        /// and unclosed angle destinations, and bounds balanced parenthesis depth
-        /// (matching CommonMark / cmark) so repeated `![` or `![a](` cannot rescan
+        /// and unclosed angle destinations, rejects nested `<` inside `<...>`
+        /// (per CommonMark), and bounds balanced parenthesis depth (matching
+        /// CommonMark / cmark) so repeated `![` or `![a](` cannot rescan
         /// quadratically.
         private struct ImageMatcher {
             private static let maxParenDepth = 32
@@ -601,12 +603,17 @@ enum BlockNoteMarkdownPaste {
                         return nil
                     }
                     i += 1
-                    while i < chars.count, chars[i] != ">" {
+                    while i < chars.count, chars[i] != ">", chars[i] != "<" {
+                        if chars[i] == "\\", i + 1 < chars.count {
+                            url.append(chars[i + 1])
+                            i += 2
+                            continue
+                        }
                         url.append(chars[i])
                         i += 1
                     }
                     guard i < chars.count, chars[i] == ">" else {
-                        noClosingAngle = true
+                        if i == chars.count { noClosingAngle = true }
                         failedBracket = closeBracket
                         return nil
                     }
@@ -671,7 +678,9 @@ enum BlockNoteMarkdownPaste {
         /// backslash escapes (`\![...]`) and arbitrary-length backtick code spans
         /// (`` ``![...]`` ``).
         private func scanInlineImages(_ text: String) -> (pieces: [ImageScanPiece], matchedAny: Bool) {
-            guard text.contains("![") else { return ([.text(text)], false) }
+            guard text.utf16.count <= BlockNoteMarkdownPaste.maxInlineParseUTF16, text.contains("![") else {
+                return ([.text(text)], false)
+            }
             let chars = Array(text)
             let backticks = BacktickIndex(chars)
             var matcher = ImageMatcher(chars: chars)
@@ -858,20 +867,34 @@ enum BlockNoteMarkdownPaste {
 
         private let chars: [Character]
         private let backticks: BacktickIndex
+        private let closeBrackets: [Int]
+        private let closeParens: [Int]
         private var runs: [InlineRun] = []
         private var pendingText = ""
         private var pendingMarks: [(key: String, valueJSON: String)] = []
-
-        // Linear-scan memoization across failed searches.
-        private var noCloseBracket = false
-        private var failedLinkBracket = -1
-        private var noCloseParen = false
         private var noTopLevelCloser: Set<String> = []
 
         init(_ text: String) {
             let chars = Array(text)
             self.chars = chars
             self.backticks = BacktickIndex(chars)
+            var brackets: [Int] = []
+            var parens: [Int] = []
+            var i = 0
+            while i < chars.count {
+                if chars[i] == "\\" {
+                    i += 2
+                    continue
+                }
+                if chars[i] == "]" {
+                    brackets.append(i)
+                } else if chars[i] == ")" {
+                    parens.append(i)
+                }
+                i += 1
+            }
+            self.closeBrackets = brackets
+            self.closeParens = parens
         }
 
         mutating func parse() -> [InlineRun] {
@@ -1116,39 +1139,37 @@ enum BlockNoteMarkdownPaste {
             return nil
         }
 
-        private func indexOf(_ ch: Character, from: Int, limit: Int) -> Int? {
-            var i = from
-            while i < limit {
-                if chars[i] == "\\" {
-                    i += 2
-                    continue
+        private func nextIndex(in positions: [Int], from: Int, limit: Int) -> Int? {
+            var lo = 0
+            var hi = positions.count
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2
+                if positions[mid] < from {
+                    lo = mid + 1
+                } else {
+                    hi = mid
                 }
-                if chars[i] == ch { return i }
-                i += 1
             }
-            return nil
+            guard lo < positions.count else { return nil }
+            let pos = positions[lo]
+            return pos < limit ? pos : nil
         }
 
-        private mutating func matchLink(from open: Int, limit: Int)
+        private func matchLink(from open: Int, limit: Int)
             -> (labelRange: Range<Int>, urlRange: Range<Int>, next: Int)?
         {
-            if noCloseBracket || noCloseParen || open + 1 <= failedLinkBracket { return nil }
-            guard let closeBracket = indexOf("]", from: open + 1, limit: limit) else {
-                if limit == chars.count { noCloseBracket = true }
-                return nil
-            }
-            let parenOpen = closeBracket + 1
-            guard parenOpen < limit, chars[parenOpen] == "(" else {
-                if limit == chars.count { failedLinkBracket = max(failedLinkBracket, closeBracket) }
-                return nil
-            }
-            guard let closeParen = indexOf(")", from: parenOpen + 1, limit: limit) else {
-                if limit == chars.count { noCloseParen = true }
+            guard open + 1 < limit, chars[open + 1] != "]" else { return nil }
+            guard let closeBracket = nextIndex(in: closeBrackets, from: open + 1, limit: limit) else {
                 return nil
             }
             let labelRange = (open + 1)..<closeBracket
+            let parenOpen = closeBracket + 1
+            guard parenOpen < limit, chars[parenOpen] == "(" else { return nil }
+            guard let closeParen = nextIndex(in: closeParens, from: parenOpen + 1, limit: limit) else {
+                return nil
+            }
             let urlRange = (parenOpen + 1)..<closeParen
-            if labelRange.isEmpty || urlRange.isEmpty { return nil }
+            guard !urlRange.isEmpty else { return nil }
             return (labelRange, urlRange, closeParen + 1)
         }
     }

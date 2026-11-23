@@ -303,4 +303,85 @@ final class BlockNoteMarkdownPasteTests: XCTestCase {
         XCTAssertLessThan(
             elapsedTable, .milliseconds(500), "table scan hitting a bare pipe should be linear, took \(elapsedTable)")
     }
+
+    func testLinksBeforeTrailingBracketsSurviveDelimiterLookahead() throws {
+        // Bold emphasis whose lookahead scans past `[note]` before rewinding to scan the inner range.
+        let boldCopies = try BlockNoteMarkdownPaste.parse("**[click](https://example.com) [note]**")
+        let (boldDoc, boldBlocks) = try project(boldCopies)
+        defer { boldDoc.destroy() }
+
+        XCTAssertEqual(boldBlocks.count, 1)
+        XCTAssertEqual(boldBlocks[0].block.node, "paragraph")
+        let boldRuns = boldBlocks[0].block.runs
+        XCTAssertEqual(boldRuns.map(\.text), ["click", " [note]"])
+        if boldRuns.count == 2 {
+            XCTAssertEqual(Set(boldRuns[0].marks.map(\.key)), ["bold", "link"])
+            let boldHref = try XCTUnwrap(boldRuns[0].marks.first { $0.key == "link" }?.valueJSON)
+            XCTAssertEqual(YBlockProjection.linkHref(from: boldHref), "https://example.com")
+            XCTAssertEqual(boldRuns[1].marks.map(\.key), ["bold"])
+        }
+
+        // Unmatched `*` whose lookahead scans past `[1]` before falling back to plain scanning.
+        let plainCopies = try BlockNoteMarkdownPaste.parse("*note: see [click](https://example.com) [1]")
+        let (plainDoc, plainBlocks) = try project(plainCopies)
+        defer { plainDoc.destroy() }
+
+        XCTAssertEqual(plainBlocks.count, 1)
+        XCTAssertEqual(plainBlocks[0].block.node, "paragraph")
+        let plainRuns = plainBlocks[0].block.runs
+        XCTAssertEqual(plainRuns.map(\.text), ["*note: see ", "click", " [1]"])
+        if plainRuns.count == 3 {
+            XCTAssertTrue(plainRuns[0].marks.isEmpty)
+            XCTAssertEqual(plainRuns[1].marks.map(\.key), ["link"])
+            XCTAssertEqual(YBlockProjection.linkHref(from: plainRuns[1].marks[0].valueJSON), "https://example.com")
+            XCTAssertTrue(plainRuns[2].marks.isEmpty)
+        }
+    }
+
+    func testPathologicalAngleImagesAndEmptyLinkLabelsStayBounded() throws {
+        // Repeated unclosed `<` image destinations on a single 180 KB line and across 24 capped lines.
+        let hugeAngleImages = String(repeating: "![a](<", count: 30_000) + ">"
+        let startHugeAngle = ThreadCPUClock.now
+        let hugeAngleCopies = try BlockNoteMarkdownPaste.parse(hugeAngleImages)
+        let elapsedHugeAngle = ThreadCPUClock.now - startHugeAngle
+        XCTAssertEqual(hugeAngleCopies.count, 1)
+        XCTAssertLessThan(
+            elapsedHugeAngle, .milliseconds(500),
+            "180 KB angle-image line should stay bounded, took \(elapsedHugeAngle)")
+
+        let cappedAngleLine = String(repeating: "![a](<", count: 1_365) + ">"
+        let multiLineAngleImages = Array(repeating: cappedAngleLine, count: 24).joined(separator: "\n")
+        let startMultiAngle = ThreadCPUClock.now
+        let multiAngleCopies = try BlockNoteMarkdownPaste.parse(multiLineAngleImages)
+        let elapsedMultiAngle = ThreadCPUClock.now - startMultiAngle
+        XCTAssertEqual(multiAngleCopies.count, 24)
+        XCTAssertLessThan(
+            elapsedMultiAngle, .milliseconds(500),
+            "24 capped angle-image lines should stay linear, took \(elapsedMultiAngle)")
+
+        // Valid angle-bracketed image after a malformed `<` opener still parses.
+        let validAfterMalformed = try BlockNoteMarkdownPaste.parse(
+            "![bad](<x ![ok](<https://images.example/ok.png>)")
+        let (imgDoc, imgBlocks) = try project(validAfterMalformed)
+        defer { imgDoc.destroy() }
+        XCTAssertEqual(imgBlocks.map(\.block.node), ["paragraph", "image"])
+        XCTAssertEqual(
+            imgBlocks[1].block.props.first { $0.key == "url" }?.value, .string("https://images.example/ok.png"))
+
+        // 24 capped lines of empty-label `[](` openers before a trailing `)`, plus unclosed `[` and `[a](`.
+        let emptyLinkLine = "*" + String(repeating: "[](", count: 1_365) + String(repeating: "x", count: 4_095) + ")"
+        let emptyLinkInputs = [
+            Array(repeating: emptyLinkLine, count: 24).joined(separator: "\n"),
+            Array(repeating: "*" + String(repeating: "[", count: 8_191), count: 24).joined(separator: "\n"),
+            Array(repeating: "*" + String(repeating: "[a](", count: 2_047), count: 24).joined(separator: "\n"),
+        ]
+        for input in emptyLinkInputs {
+            let start = ThreadCPUClock.now
+            let copies = try BlockNoteMarkdownPaste.parse(input)
+            let elapsed = ThreadCPUClock.now - start
+            XCTAssertEqual(copies.count, 24)
+            XCTAssertLessThan(
+                elapsed, .milliseconds(500), "pathological link scan should stay bounded, took \(elapsed)")
+        }
+    }
 }
