@@ -117,9 +117,8 @@ enum BlockNoteMarkdownPaste {
             var index = 0
             while index < lines.count {
                 let line = lines[index]
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-                if trimmed.isEmpty {
+                if isBlankLine(line) {
                     flushList()
                     index += 1
                     continue
@@ -239,6 +238,13 @@ enum BlockNoteMarkdownPaste {
 
         // MARK: - Block matchers
 
+        private func isBlankLine(_ line: String) -> Bool {
+            if let first = line.utf8.first, first > 0x20, first < 0x7F {
+                return false
+            }
+            return line.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+
         private func leadingIndent(_ line: String) -> (columns: Int, rest: Substring) {
             var columns = 0
             var index = line.startIndex
@@ -283,12 +289,21 @@ enum BlockNoteMarkdownPaste {
 
         private func isDivider(_ line: String) -> Bool {
             let (indent, rest) = leadingIndent(line)
-            guard indent <= 3 else { return false }
-            let compact = rest.filter { $0 != " " && $0 != "\t" }
-            guard compact.count >= 3, let marker = compact.first, marker == "-" || marker == "*" || marker == "_" else {
+            guard indent <= 3,
+                let marker = rest.utf8.first,
+                marker == Byte.dash || marker == Byte.star || marker == Byte.underscore
+            else {
                 return false
             }
-            return compact.allSatisfy { $0 == marker }
+            var count = 0
+            for byte in rest.utf8 {
+                if byte == marker {
+                    count += 1
+                } else if byte != Byte.space && byte != Byte.tab {
+                    return false
+                }
+            }
+            return count >= 3
         }
 
         private func parseHeading(_ line: String) -> (level: Int, text: String)? {
@@ -411,8 +426,8 @@ enum BlockNoteMarkdownPaste {
         // MARK: - List tree assembly
 
         private mutating func appendListItem(_ item: ParsedListItem) throws {
-            let (cleanedText, hoistedImages) = extractInlineImages(item.text)
-            let runs = sanitizedInlineRuns(cleanedText)
+            let (cleanedText, hoistedImages, reusedSyntax) = extractInlineImages(item.text)
+            let runs = sanitizedInlineRuns(cleanedText, syntax: reusedSyntax)
             try accountRuns(runs)
             let content: [BlockNoteWriter.Copy] = runs.isEmpty ? [] : [.text(runs.map { .run($0) })]
 
@@ -521,7 +536,12 @@ enum BlockNoteMarkdownPaste {
         }
 
         private mutating func parseTable(startingAt start: Int) throws -> (BlockNoteWriter.Copy, Int)? {
-            guard start + 1 < lines.count, !startsBlockConstruct(lines[start]) else { return nil }
+            guard start + 1 < lines.count,
+                BlockNoteMarkdownPaste.containsASCII(lines[start], Byte.pipe),
+                BlockNoteMarkdownPaste.containsASCII(lines[start + 1], Byte.pipe),
+                BlockNoteMarkdownPaste.containsASCII(lines[start + 1], Byte.dash),
+                !startsBlockConstruct(lines[start])
+            else { return nil }
             let firstTwo = lines[start] + "\n" + lines[start + 1]
             guard parseMarkdownTable(firstTwo) != nil else { return nil }
 
@@ -597,11 +617,12 @@ enum BlockNoteMarkdownPaste {
             guard line.utf16.count <= BlockNoteMarkdownPaste.maxInlineParseUTF16 else { return nil }
             let (indent, rest) = leadingIndent(line)
             guard indent <= 3 else { return nil }
+            if let first = rest.utf8.first, first < 0x80, first != Byte.bang { return nil }
             let trimmed = rest.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("![") else { return nil }
-            let chars = Array(trimmed)
-            let matcher = ImageMatcher(chars: chars)
-            guard let match = matcher.match(from: 0), match.next == chars.count else { return nil }
+            guard trimmed.hasPrefix("![") && trimmed.hasSuffix(")") else { return nil }
+            let syntax = LineSyntax(trimmed)
+            let matcher = ImageMatcher(syntax: syntax)
+            guard let match = matcher.match(from: 0), match.next == syntax.bytes.count else { return nil }
             return (match.alt, match.url)
         }
 
@@ -612,44 +633,46 @@ enum BlockNoteMarkdownPaste {
         }
 
         /// Linear-time image syntax matcher: uses precomputed balanced bracket
-        /// pairs and the shared destination parser so nested brackets, `<...>`
-        /// destinations, balanced parentheses and optional quoted titles stay
-        /// linear.
+        /// pairs and the shared UTF-8 destination parser so nested brackets,
+        /// `<...>` destinations, balanced parentheses and optional quoted titles
+        /// stay linear.
         private struct ImageMatcher {
-            let chars: [Character]
-            private let matchingClose: [Int]
-            private let suffixCloseParens: [Int]
-
-            init(chars: [Character], backticks: BacktickIndex? = nil) {
-                self.chars = chars
-                let index = backticks ?? BacktickIndex(chars)
-                self.matchingClose = BlockNoteMarkdownPaste.matchingCloseBrackets(chars, backticks: index)
-                self.suffixCloseParens = BlockNoteMarkdownPaste.suffixCloseParenCounts(chars)
-            }
+            let syntax: LineSyntax
 
             func match(from open: Int) -> MatchedImage? {
-                guard open + 1 < chars.count, chars[open] == "!", chars[open + 1] == "[" else { return nil }
-                let closeBracket = matchingClose[open + 1]
+                let bytes = syntax.bytes
+                guard open + 1 < bytes.count, bytes[open] == Byte.bang, bytes[open + 1] == Byte.openBracket else {
+                    return nil
+                }
+                guard syntax.hasLinkTokens else { return nil }
+                let closeBracket = syntax.matchingClose[open + 1]
                 guard closeBracket >= 0 else { return nil }
                 guard
                     let dest = BlockNoteMarkdownPaste.parseDestination(
-                        in: chars,
+                        in: syntax,
                         from: closeBracket + 1,
-                        limit: chars.count,
-                        suffixCloseParens: suffixCloseParens)
+                        limit: bytes.count)
                 else { return nil }
-                var alt = ""
-                var i = open + 2
-                while i < closeBracket {
-                    if chars[i] == "\\", i + 1 < closeBracket,
-                        BlockNoteMarkdownPaste.isASCIIPunctuation(chars[i + 1])
-                    {
-                        alt.append(chars[i + 1])
-                        i += 2
-                        continue
+                let altStart = open + 2
+                let alt: String
+                if BlockNoteMarkdownPaste.containsASCII(bytes, Byte.backslash, in: altStart..<closeBracket) {
+                    var unescaped: [UInt8] = []
+                    unescaped.reserveCapacity(closeBracket - altStart)
+                    var i = altStart
+                    while i < closeBracket {
+                        if bytes[i] == Byte.backslash, i + 1 < closeBracket,
+                            BlockNoteMarkdownPaste.isASCIIPunctuation(bytes[i + 1])
+                        {
+                            unescaped.append(bytes[i + 1])
+                            i += 2
+                            continue
+                        }
+                        unescaped.append(bytes[i])
+                        i += 1
                     }
-                    alt.append(chars[i])
-                    i += 1
+                    alt = String(decoding: unescaped, as: UTF8.self)
+                } else {
+                    alt = String(decoding: bytes[altStart..<closeBracket], as: UTF8.self)
                 }
                 return MatchedImage(alt: alt, url: dest.url, next: dest.next)
             }
@@ -662,38 +685,52 @@ enum BlockNoteMarkdownPaste {
 
         /// Linearly splits `text` around Markdown images while respecting
         /// backslash escapes (`\![...]`) and arbitrary-length backtick code spans
-        /// (`` ``![...]`` ``).
-        private func scanInlineImages(_ text: String) -> (pieces: [ImageScanPiece], matchedAny: Bool) {
-            guard text.utf16.count <= BlockNoteMarkdownPaste.maxInlineParseUTF16, text.contains("![") else {
-                return ([.text(text)], false)
+        /// (`` ``![...]`` ``). When no image matches, returns the precomputed
+        /// `LineSyntax` so `PasteInlineParser` can reuse it without rescanning.
+        private func scanInlineImages(
+            _ text: String
+        ) -> (pieces: [ImageScanPiece], matchedAny: Bool, syntax: LineSyntax?) {
+            // Every valid `![alt](dest)` contains all five ASCII delimiters; skipping
+            // early avoids indexing lines that cannot contain an image.
+            guard text.utf16.count <= BlockNoteMarkdownPaste.maxInlineParseUTF16,
+                BlockNoteMarkdownPaste.containsASCII(text, Byte.bang),
+                BlockNoteMarkdownPaste.containsASCII(text, Byte.closeParen),
+                BlockNoteMarkdownPaste.containsASCII(text, Byte.openBracket),
+                BlockNoteMarkdownPaste.containsASCII(text, Byte.closeBracket),
+                BlockNoteMarkdownPaste.containsASCII(text, Byte.openParen)
+            else {
+                return ([.text(text)], false, nil)
             }
-            let chars = Array(text)
-            let backticks = BacktickIndex(chars)
-            let matcher = ImageMatcher(chars: chars, backticks: backticks)
+            let syntax = LineSyntax(text)
+            let bytes = syntax.bytes
+            let matcher = ImageMatcher(syntax: syntax)
             var pieces: [ImageScanPiece] = []
             var current = ""
+            var literalStart = 0
             var matchedAny = false
             var i = 0
-            while i < chars.count {
-                if chars[i] == "\\", i + 1 < chars.count {
-                    current.append(chars[i])
-                    current.append(chars[i + 1])
-                    i += 2
+            let count = bytes.count
+            while i < count {
+                let b = bytes[i]
+                if b == Byte.backslash, i + 1 < count {
+                    let step = 1 + BlockNoteMarkdownPaste.utf8ScalarLength(bytes[i + 1])
+                    i = min(i + step, count)
                     continue
                 }
-                if chars[i] == "`" {
-                    var count = 0
-                    while i + count < chars.count, chars[i + count] == "`" { count += 1 }
-                    if let close = backticks.closingRun(length: count, from: i + count, limit: chars.count) {
-                        current.append(contentsOf: chars[i..<(close + count)])
-                        i = close + count
+                if b == Byte.backtick, let backticks = syntax.backticks {
+                    var runLen = 0
+                    while i + runLen < count, bytes[i + runLen] == Byte.backtick { runLen += 1 }
+                    if let close = backticks.closingRun(length: runLen, from: i + runLen, limit: count) {
+                        i = close + runLen
                     } else {
-                        current.append(contentsOf: chars[i..<(i + count)])
-                        i += count
+                        i += runLen
                     }
                     continue
                 }
-                if chars[i] == "!", let match = matcher.match(from: i) {
+                if b == Byte.bang, let match = matcher.match(from: i) {
+                    if i > literalStart {
+                        current += String(decoding: bytes[literalStart..<i], as: UTF8.self)
+                    }
                     matchedAny = true
                     if let url = BlockNoteHTMLParser.pastedHTTPSImageURL(match.url) {
                         if !current.isEmpty {
@@ -703,18 +740,24 @@ enum BlockNoteMarkdownPaste {
                         pieces.append(.image(url: url, alt: match.alt))
                     }
                     i = match.next
+                    literalStart = i
                     continue
                 }
-                current.append(chars[i])
                 i += 1
             }
+            guard matchedAny else { return ([.text(text)], false, syntax) }
+            if literalStart < count {
+                current += String(decoding: bytes[literalStart..<count], as: UTF8.self)
+            }
             if !current.isEmpty { pieces.append(.text(current)) }
-            return (pieces, matchedAny)
+            return (pieces, true, nil)
         }
 
-        private func extractInlineImages(_ text: String) -> (cleaned: String, images: [(url: String, alt: String)]) {
+        private func extractInlineImages(
+            _ text: String
+        ) -> (cleaned: String, images: [(url: String, alt: String)], syntax: LineSyntax?) {
             let scan = scanInlineImages(text)
-            guard scan.matchedAny else { return (text, []) }
+            guard scan.matchedAny else { return (text, [], scan.syntax) }
             var cleaned = ""
             var images: [(url: String, alt: String)] = []
             for piece in scan.pieces {
@@ -723,7 +766,7 @@ enum BlockNoteMarkdownPaste {
                 case .image(let url, let alt): images.append((url, alt))
                 }
             }
-            return (cleaned, images)
+            return (cleaned, images, nil)
         }
 
         // MARK: - Inline parsing & emission
@@ -756,7 +799,7 @@ enum BlockNoteMarkdownPaste {
                 return
             }
 
-            let runs = sanitizedInlineRuns(text)
+            let runs = sanitizedInlineRuns(text, syntax: scan.syntax)
             try accountRuns(runs)
             if trackMarkdown {
                 let isPlain =
@@ -774,12 +817,15 @@ enum BlockNoteMarkdownPaste {
         /// arithmetic like `2*3*4` stays literal, multi-backtick code spans,
         /// linear scans, and sanitized links). Lines longer than
         /// `maxInlineParseUTF16` stay plain text.
-        private func sanitizedInlineRuns(_ text: String) -> [InlineRun] {
+        private func sanitizedInlineRuns(_ text: String, syntax: LineSyntax? = nil) -> [InlineRun] {
             guard !text.isEmpty else { return [] }
             guard text.utf16.count <= BlockNoteMarkdownPaste.maxInlineParseUTF16 else {
                 return [InlineRun(text)]
             }
-            var inline = PasteInlineParser(text)
+            if syntax == nil, !BlockNoteMarkdownPaste.hasPotentialInlineSyntax(text) {
+                return [InlineRun(text)]
+            }
+            var inline = PasteInlineParser(syntax: syntax ?? LineSyntax(text))
             return coalesceRuns(inline.parse())
         }
 
@@ -804,21 +850,216 @@ enum BlockNoteMarkdownPaste {
         }
     }
 
+    // MARK: - ASCII & UTF-8 byte helpers
+
+    private enum Byte {
+        static let tab: UInt8 = 0x09
+        static let lineFeed: UInt8 = 0x0A
+        static let verticalTab: UInt8 = 0x0B
+        static let formFeed: UInt8 = 0x0C
+        static let carriageReturn: UInt8 = 0x0D
+        static let space: UInt8 = 0x20
+        static let bang: UInt8 = 0x21
+        static let quote: UInt8 = 0x22
+        static let apostrophe: UInt8 = 0x27
+        static let openParen: UInt8 = 0x28
+        static let closeParen: UInt8 = 0x29
+        static let star: UInt8 = 0x2A
+        static let dash: UInt8 = 0x2D
+        static let lt: UInt8 = 0x3C
+        static let gt: UInt8 = 0x3E
+        static let openBracket: UInt8 = 0x5B
+        static let backslash: UInt8 = 0x5C
+        static let closeBracket: UInt8 = 0x5D
+        static let underscore: UInt8 = 0x5F
+        static let backtick: UInt8 = 0x60
+        static let pipe: UInt8 = 0x7C
+        static let tilde: UInt8 = 0x7E
+        static let del: UInt8 = 0x7F
+    }
+
+    private static func containsASCII(_ string: String, _ byte: UInt8) -> Bool {
+        if let found = string.utf8.withContiguousStorageIfAvailable({ buf -> Bool in
+            guard let base = buf.baseAddress, !buf.isEmpty else { return false }
+            return memchr(base, Int32(byte), buf.count) != nil
+        }) {
+            return found
+        }
+        return string.utf8.contains(byte)
+    }
+
+    private static func containsAtLeastTwoASCII(_ string: String, _ byte: UInt8) -> Bool {
+        if let found = string.utf8.withContiguousStorageIfAvailable({ buf -> Bool in
+            guard let base = buf.baseAddress, buf.count >= 2 else { return false }
+            guard let first = memchr(base, Int32(byte), buf.count) else { return false }
+            let offset = base.distance(to: first.assumingMemoryBound(to: UInt8.self)) + 1
+            guard offset < buf.count else { return false }
+            return memchr(base + offset, Int32(byte), buf.count - offset) != nil
+        }) {
+            return found
+        }
+        var seen = false
+        for b in string.utf8 where b == byte {
+            if seen { return true }
+            seen = true
+        }
+        return false
+    }
+
+    private static func containsASCII(_ bytes: [UInt8], _ byte: UInt8, in range: Range<Int>? = nil) -> Bool {
+        let bounds = range ?? 0..<bytes.count
+        guard !bounds.isEmpty else { return false }
+        return bytes.withUnsafeBufferPointer { buf -> Bool in
+            guard let base = buf.baseAddress else { return false }
+            return memchr(base + bounds.lowerBound, Int32(byte), bounds.count) != nil
+        }
+    }
+
+    private static func containsAtLeastTwoASCII(_ bytes: [UInt8], _ byte: UInt8) -> Bool {
+        guard bytes.count >= 2 else { return false }
+        return bytes.withUnsafeBufferPointer { buf -> Bool in
+            guard let base = buf.baseAddress else { return false }
+            guard let first = memchr(base, Int32(byte), buf.count) else { return false }
+            let offset = base.distance(to: first.assumingMemoryBound(to: UInt8.self)) + 1
+            guard offset < buf.count else { return false }
+            return memchr(base + offset, Int32(byte), buf.count - offset) != nil
+        }
+    }
+
+    private static func lastIndexOfASCII(_ bytes: [UInt8], _ byte: UInt8) -> Int? {
+        var i = bytes.count - 1
+        while i >= 0 {
+            if bytes[i] == byte { return i }
+            i -= 1
+        }
+        return nil
+    }
+
+    private static func hasPotentialInlineSyntax(_ text: String) -> Bool {
+        if containsASCII(text, Byte.backslash) { return true }
+        if containsAtLeastTwoASCII(text, Byte.star) { return true }
+        if containsAtLeastTwoASCII(text, Byte.underscore) { return true }
+        if containsAtLeastTwoASCII(text, Byte.backtick) { return true }
+        if containsAtLeastTwoASCII(text, Byte.tilde) { return true }
+        return containsASCII(text, Byte.closeParen)
+            && containsASCII(text, Byte.openParen)
+            && containsASCII(text, Byte.openBracket)
+            && containsASCII(text, Byte.closeBracket)
+    }
+
+    private static func utf8ScalarLength(_ leading: UInt8) -> Int {
+        if leading < 0x80 { return 1 }
+        if leading & 0xE0 == 0xC0 { return 2 }
+        if leading & 0xF0 == 0xE0 { return 3 }
+        if leading & 0xF8 == 0xF0 { return 4 }
+        return 1
+    }
+
+    private static func decodeUTF8Scalar(
+        in bytes: [UInt8], at i: Int, limit: Int
+    ) -> (scalar: Unicode.Scalar?, length: Int) {
+        let b0 = bytes[i]
+        if b0 < 0x80 {
+            return (Unicode.Scalar(b0), 1)
+        }
+        if b0 & 0xE0 == 0xC0, i + 1 < limit {
+            let value = (UInt32(b0 & 0x1F) << 6) | UInt32(bytes[i + 1] & 0x3F)
+            return (Unicode.Scalar(value), 2)
+        }
+        if b0 & 0xF0 == 0xE0, i + 2 < limit {
+            let value =
+                (UInt32(b0 & 0x0F) << 12)
+                | (UInt32(bytes[i + 1] & 0x3F) << 6)
+                | UInt32(bytes[i + 2] & 0x3F)
+            return (Unicode.Scalar(value), 3)
+        }
+        if b0 & 0xF8 == 0xF0, i + 3 < limit {
+            let value =
+                (UInt32(b0 & 0x07) << 18)
+                | (UInt32(bytes[i + 1] & 0x3F) << 12)
+                | (UInt32(bytes[i + 2] & 0x3F) << 6)
+                | UInt32(bytes[i + 3] & 0x3F)
+            return (Unicode.Scalar(value), 4)
+        }
+        return (nil, 1)
+    }
+
+    // MARK: - Line syntax index
+
+    /// Precomputed UTF-8 byte view and lazy syntax tables shared between the
+    /// inline image scan and `PasteInlineParser` for a single line.
+    private struct LineSyntax {
+        let text: String
+        let bytes: [UInt8]
+        let hasLinkTokens: Bool
+        let hasStarPair: Bool
+        let hasTildePair: Bool
+        let hasUnderscorePair: Bool
+        let backticks: BacktickIndex?
+        let matchingClose: [Int]
+        let lastCloseParen: Int
+        private let suffixCloseParens: [Int]
+
+        init(_ text: String) {
+            let bytes = Array(text.utf8)
+            self.text = text
+            self.bytes = bytes
+
+            let hasBacktickPair = BlockNoteMarkdownPaste.containsAtLeastTwoASCII(bytes, Byte.backtick)
+            let backticks = hasBacktickPair ? BacktickIndex(bytes) : nil
+            self.backticks = backticks
+
+            self.hasStarPair = BlockNoteMarkdownPaste.containsAtLeastTwoASCII(bytes, Byte.star)
+            self.hasTildePair = BlockNoteMarkdownPaste.containsAtLeastTwoASCII(bytes, Byte.tilde)
+            self.hasUnderscorePair = BlockNoteMarkdownPaste.containsAtLeastTwoASCII(bytes, Byte.underscore)
+
+            let hasCloseParen = BlockNoteMarkdownPaste.containsASCII(bytes, Byte.closeParen)
+            let hasLinkTokens =
+                hasCloseParen
+                && BlockNoteMarkdownPaste.containsASCII(bytes, Byte.openParen)
+                && BlockNoteMarkdownPaste.containsASCII(bytes, Byte.openBracket)
+                && BlockNoteMarkdownPaste.containsASCII(bytes, Byte.closeBracket)
+            self.hasLinkTokens = hasLinkTokens
+
+            if hasLinkTokens {
+                self.matchingClose = BlockNoteMarkdownPaste.matchingCloseBrackets(bytes, backticks: backticks)
+                self.lastCloseParen = BlockNoteMarkdownPaste.lastIndexOfASCII(bytes, Byte.closeParen) ?? -1
+                if BlockNoteMarkdownPaste.containsAtLeastTwoASCII(bytes, Byte.closeParen) {
+                    self.suffixCloseParens = BlockNoteMarkdownPaste.suffixCloseParenCounts(bytes)
+                } else {
+                    self.suffixCloseParens = []
+                }
+            } else {
+                self.matchingClose = []
+                self.lastCloseParen = -1
+                self.suffixCloseParens = []
+            }
+        }
+
+        func suffixCloseParenCount(from index: Int) -> Int {
+            if !suffixCloseParens.isEmpty {
+                return suffixCloseParens[index]
+            }
+            return index <= lastCloseParen ? 1 : 0
+        }
+    }
+
     // MARK: - Backtick span index
 
     private struct BacktickIndex {
         private let runsByLength: [Int: [Int]]
 
-        init(_ chars: [Character]) {
+        init(_ bytes: [UInt8]) {
             var runs: [Int: [Int]] = [:]
             var i = 0
-            while i < chars.count {
-                guard chars[i] == "`" else {
+            let count = bytes.count
+            while i < count {
+                guard bytes[i] == Byte.backtick else {
                     i += 1
                     continue
                 }
                 let start = i
-                while i < chars.count, chars[i] == "`" { i += 1 }
+                while i < count, bytes[i] == Byte.backtick { i += 1 }
                 runs[i - start, default: []].append(start)
             }
             self.runsByLength = runs
@@ -848,49 +1089,50 @@ enum BlockNoteMarkdownPaste {
 
     private static let maxDestinationParenDepth = 32
 
-    private static func isASCIIPunctuation(_ character: Character) -> Bool {
-        guard let value = character.asciiValue else { return false }
-        return (0x21...0x2F).contains(value) || (0x3A...0x40).contains(value)
-            || (0x5B...0x60).contains(value) || (0x7B...0x7E).contains(value)
+    private static func isASCIIPunctuation(_ byte: UInt8) -> Bool {
+        (0x21...0x2F).contains(byte) || (0x3A...0x40).contains(byte)
+            || (0x5B...0x60).contains(byte) || (0x7B...0x7E).contains(byte)
     }
 
-    private static func suffixCloseParenCounts(_ chars: [Character]) -> [Int] {
-        var counts = [Int](repeating: 0, count: chars.count + 1)
-        var i = chars.count - 1
+    private static func suffixCloseParenCounts(_ bytes: [UInt8]) -> [Int] {
+        var counts = [Int](repeating: 0, count: bytes.count + 1)
+        var i = bytes.count - 1
         while i >= 0 {
-            counts[i] = counts[i + 1] + (chars[i] == ")" ? 1 : 0)
+            counts[i] = counts[i + 1] + (bytes[i] == Byte.closeParen ? 1 : 0)
             i -= 1
         }
         return counts
     }
 
-    /// Maps every balanced `[` index in `chars` to its matching `]` index (or
-    /// `-1` when unmatched), honoring backslash escapes and N-backtick code
-    /// spans in a single O(n) / O(n log n) pass.
-    private static func matchingCloseBrackets(_ chars: [Character], backticks: BacktickIndex) -> [Int] {
-        var matching = [Int](repeating: -1, count: chars.count)
+    /// Maps every balanced `[` byte index in `bytes` to its matching `]` byte
+    /// index (or `-1` when unmatched), honoring backslash escapes and
+    /// N-backtick code spans in a single O(n) / O(n log n) pass.
+    private static func matchingCloseBrackets(_ bytes: [UInt8], backticks: BacktickIndex?) -> [Int] {
+        var matching = [Int](repeating: -1, count: bytes.count)
         var stack: [Int] = []
         var i = 0
-        while i < chars.count {
-            if chars[i] == "\\", i + 1 < chars.count {
+        let count = bytes.count
+        while i < count {
+            let b = bytes[i]
+            if b == Byte.backslash, i + 1 < count {
                 i += 2
                 continue
             }
-            if chars[i] == "`" {
-                var count = 0
-                while i + count < chars.count, chars[i + count] == "`" { count += 1 }
-                if let close = backticks.closingRun(length: count, from: i + count, limit: chars.count),
-                    close > i + count
+            if b == Byte.backtick, let backticks {
+                var runLen = 0
+                while i + runLen < count, bytes[i + runLen] == Byte.backtick { runLen += 1 }
+                if let close = backticks.closingRun(length: runLen, from: i + runLen, limit: count),
+                    close > i + runLen
                 {
-                    i = close + count
+                    i = close + runLen
                 } else {
-                    i += count
+                    i += runLen
                 }
                 continue
             }
-            if chars[i] == "[" {
+            if b == Byte.openBracket {
                 stack.append(i)
-            } else if chars[i] == "]" {
+            } else if b == Byte.closeBracket {
                 if let open = stack.popLast() {
                     matching[open] = i
                 }
@@ -906,59 +1148,77 @@ enum BlockNoteMarkdownPaste {
     /// `<`), bare destinations with balanced parentheses up to
     /// `maxDestinationParenDepth` (rejecting unescaped whitespace and control
     /// characters), and an optional whitespace-separated `"..."` or `'...'`
-    /// title (dropped). Stateless, allocation-free on failure, and amortized
-    /// linear across a line.
+    /// title (dropped).
+    ///
+    /// Amortized linear across a line: angle destinations stop at the next
+    /// unescaped `<` or `>` (and every opener's `<` follows `(` or space/tab,
+    /// so angle scans across openers are pairwise disjoint); quoted titles
+    /// similarly stop at the next unescaped matching quote; bare destinations
+    /// bound nested `(` depth to `maxDestinationParenDepth` and require enough
+    /// remaining `)` to close them.
     private static func parseDestination(
-        in chars: [Character], from parenOpen: Int, limit: Int, suffixCloseParens: [Int]
+        in syntax: LineSyntax, from parenOpen: Int, limit: Int
     ) -> (url: String, next: Int)? {
-        guard parenOpen + 1 < limit, chars[parenOpen] == "(", suffixCloseParens[parenOpen + 1] > 0 else {
+        let bytes = syntax.bytes
+        guard parenOpen + 1 < limit,
+            bytes[parenOpen] == Byte.openParen,
+            syntax.suffixCloseParenCount(from: parenOpen + 1) > 0
+        else {
             return nil
         }
         var i = parenOpen + 1
-        while i < limit, chars[i] == " " || chars[i] == "\t" { i += 1 }
+        while i < limit, bytes[i] == Byte.space || bytes[i] == Byte.tab { i += 1 }
         let destStart: Int
         let destEnd: Int
         var hasEscape = false
-        if i < limit, chars[i] == "<" {
+        if i < limit, bytes[i] == Byte.lt {
             i += 1
             destStart = i
-            while i < limit, chars[i] != ">", chars[i] != "<" {
-                if chars[i] == "\\", i + 1 < limit, isASCIIPunctuation(chars[i + 1]) {
+            while i < limit, bytes[i] != Byte.gt, bytes[i] != Byte.lt {
+                if bytes[i] == Byte.backslash, i + 1 < limit, isASCIIPunctuation(bytes[i + 1]) {
                     hasEscape = true
                     i += 2
                     continue
                 }
                 i += 1
             }
-            guard i < limit, chars[i] == ">" else { return nil }
+            guard i < limit, bytes[i] == Byte.gt else { return nil }
             destEnd = i
             i += 1
         } else {
             destStart = i
             var depth = 0
             while i < limit {
-                let c = chars[i]
-                if c == "\\", i + 1 < limit, isASCIIPunctuation(chars[i + 1]) {
+                let b = bytes[i]
+                if b == Byte.backslash, i + 1 < limit, isASCIIPunctuation(bytes[i + 1]) {
                     hasEscape = true
                     i += 2
                     continue
                 }
-                if c == "(" {
+                if b == Byte.openParen {
                     depth += 1
-                    guard depth <= maxDestinationParenDepth, i + 1 < limit, depth < suffixCloseParens[i + 1] else {
+                    guard depth <= maxDestinationParenDepth,
+                        i + 1 < limit,
+                        depth < syntax.suffixCloseParenCount(from: i + 1)
+                    else {
                         return nil
                     }
-                } else if c == ")" {
+                } else if b == Byte.closeParen {
                     if depth == 0 { break }
                     depth -= 1
-                } else if let ascii = c.asciiValue {
-                    if ascii == 0x20 || ascii == 0x09 {
+                } else if b < 0x80 {
+                    if b == Byte.space || b == Byte.tab {
                         break
-                    } else if ascii < 0x20 || ascii == 0x7F {
+                    } else if b < 0x20 || b == Byte.del {
                         return nil
                     }
-                } else if c.isWhitespace {
-                    break
+                } else {
+                    let (scalar, len) = decodeUTF8Scalar(in: bytes, at: i, limit: limit)
+                    if let scalar, scalar.properties.isWhitespace {
+                        break
+                    }
+                    i += len
+                    continue
                 }
                 i += 1
             }
@@ -967,35 +1227,35 @@ enum BlockNoteMarkdownPaste {
         }
         guard destEnd > destStart else { return nil }
         let afterDestination = i
-        while i < limit, chars[i] == " " || chars[i] == "\t" { i += 1 }
-        if i > afterDestination, i < limit, chars[i] == "\"" || chars[i] == "'" {
-            let quote = chars[i]
+        while i < limit, bytes[i] == Byte.space || bytes[i] == Byte.tab { i += 1 }
+        if i > afterDestination, i < limit, bytes[i] == Byte.quote || bytes[i] == Byte.apostrophe {
+            let quote = bytes[i]
             i += 1
-            while i < limit, chars[i] != quote {
-                if chars[i] == "\\", i + 1 < limit { i += 2 } else { i += 1 }
+            while i < limit, bytes[i] != quote {
+                if bytes[i] == Byte.backslash, i + 1 < limit { i += 2 } else { i += 1 }
             }
             guard i < limit else { return nil }
             i += 1
-            while i < limit, chars[i] == " " || chars[i] == "\t" { i += 1 }
+            while i < limit, bytes[i] == Byte.space || bytes[i] == Byte.tab { i += 1 }
         }
-        guard i < limit, chars[i] == ")" else { return nil }
+        guard i < limit, bytes[i] == Byte.closeParen else { return nil }
         let url: String
         if hasEscape {
-            var unescaped = ""
+            var unescaped: [UInt8] = []
             unescaped.reserveCapacity(destEnd - destStart)
             var k = destStart
             while k < destEnd {
-                if chars[k] == "\\", k + 1 < destEnd, isASCIIPunctuation(chars[k + 1]) {
-                    unescaped.append(chars[k + 1])
+                if bytes[k] == Byte.backslash, k + 1 < destEnd, isASCIIPunctuation(bytes[k + 1]) {
+                    unescaped.append(bytes[k + 1])
                     k += 2
                 } else {
-                    unescaped.append(chars[k])
+                    unescaped.append(bytes[k])
                     k += 1
                 }
             }
-            url = unescaped
+            url = String(decoding: unescaped, as: UTF8.self)
         } else {
-            url = String(chars[destStart..<destEnd])
+            url = String(decoding: bytes[destStart..<destEnd], as: UTF8.self)
         }
         return (url, i + 1)
     }
@@ -1008,50 +1268,53 @@ enum BlockNoteMarkdownPaste {
     /// Kept separate from `InlineMarkdown` so classic editor & save round-trips
     /// stay byte-identical.
     private struct PasteInlineParser {
-        private static let escapable: Set<Character> = Set("\\`*_{}[]()#+-.!~>|")
+        private enum NeighborClass {
+            case none
+            case whitespace
+            case punctuation
+            case other
+        }
 
-        private let chars: [Character]
-        private let backticks: BacktickIndex
-        private let matchingClose: [Int]
-        private let suffixCloseParens: [Int]
+        private let syntax: LineSyntax
+        private let bytes: [UInt8]
         private var runs: [InlineRun] = []
         private var pendingText = ""
         private var pendingMarks: [(key: String, valueJSON: String)] = []
-        private var noTopLevelCloser: Set<String> = []
+        private var noCloserByLimit: [Int: UInt8] = [:]
 
-        init(_ text: String) {
-            let chars = Array(text)
-            let backticks = BacktickIndex(chars)
-            self.chars = chars
-            self.backticks = backticks
-            self.matchingClose = BlockNoteMarkdownPaste.matchingCloseBrackets(chars, backticks: backticks)
-            self.suffixCloseParens = BlockNoteMarkdownPaste.suffixCloseParenCounts(chars)
+        init(syntax: LineSyntax) {
+            self.syntax = syntax
+            self.bytes = syntax.bytes
         }
 
         mutating func parse() -> [InlineRun] {
-            scan(0..<chars.count, marks: [])
+            scan(0..<bytes.count, marks: [])
             flushPending()
             return runs
         }
 
-        private mutating func emit(_ text: String, marks: [(key: String, valueJSON: String)]) {
-            guard !text.isEmpty else { return }
+        private static func isEscapable(_ byte: UInt8) -> Bool {
+            switch byte {
+            case UInt8(ascii: "\\"), UInt8(ascii: "`"), UInt8(ascii: "*"), UInt8(ascii: "_"),
+                UInt8(ascii: "{"), UInt8(ascii: "}"), UInt8(ascii: "["), UInt8(ascii: "]"),
+                UInt8(ascii: "("), UInt8(ascii: ")"), UInt8(ascii: "#"), UInt8(ascii: "+"),
+                UInt8(ascii: "-"), UInt8(ascii: "."), UInt8(ascii: "!"), UInt8(ascii: "~"),
+                UInt8(ascii: ">"), UInt8(ascii: "|"):
+                return true
+            default:
+                return false
+            }
+        }
+
+        private mutating func emitSlice(_ range: Range<Int>, marks: [(key: String, valueJSON: String)]) {
+            guard !range.isEmpty else { return }
+            let text = String(decoding: bytes[range], as: UTF8.self)
             if !pendingText.isEmpty && Self.marksEqual(pendingMarks, marks) {
                 pendingText += text
                 return
             }
             flushPending()
             pendingText = text
-            pendingMarks = marks
-        }
-
-        private mutating func emit(_ char: Character, marks: [(key: String, valueJSON: String)]) {
-            if !pendingText.isEmpty && Self.marksEqual(pendingMarks, marks) {
-                pendingText.append(char)
-                return
-            }
-            flushPending()
-            pendingText = String(char)
             pendingMarks = marks
         }
 
@@ -1077,139 +1340,188 @@ enum BlockNoteMarkdownPaste {
         private mutating func scan(_ bounds: Range<Int>, marks: [(key: String, valueJSON: String)]) {
             var i = bounds.lowerBound
             let n = bounds.upperBound
+            var literalStart = i
 
             while i < n {
-                let c = chars[i]
+                let b = bytes[i]
 
                 // Backslash escape of Markdown punctuation.
-                if c == "\\", i + 1 < n, Self.escapable.contains(chars[i + 1]) {
-                    emit(chars[i + 1], marks: marks)
+                if b == Byte.backslash, i + 1 < n, Self.isEscapable(bytes[i + 1]) {
+                    if i > literalStart { emitSlice(literalStart..<i, marks: marks) }
+                    emitSlice((i + 1)..<(i + 2), marks: marks)
                     i += 2
+                    literalStart = i
                     continue
                 }
 
                 // Inline code span (CommonMark N-backtick runs).
-                if c == "`" {
+                if b == Byte.backtick, let backticks = syntax.backticks {
                     var count = 0
-                    while i + count < n, chars[i + count] == "`" { count += 1 }
+                    while i + count < n, bytes[i + count] == Byte.backtick { count += 1 }
                     if let close = backticks.closingRun(length: count, from: i + count, limit: n), close > i + count {
+                        if i > literalStart { emitSlice(literalStart..<i, marks: marks) }
                         var innerStart = i + count
                         var innerEnd = close
-                        if innerEnd - innerStart >= 2, chars[innerStart] == " ", chars[innerEnd - 1] == " ",
-                            chars[innerStart..<innerEnd].contains(where: { $0 != " " })
+                        if innerEnd - innerStart >= 2,
+                            bytes[innerStart] == Byte.space,
+                            bytes[innerEnd - 1] == Byte.space,
+                            bytes[innerStart..<innerEnd].contains(where: { $0 != Byte.space })
                         {
                             innerStart += 1
                             innerEnd -= 1
                         }
-                        emit(
-                            String(chars[innerStart..<innerEnd]),
+                        emitSlice(
+                            innerStart..<innerEnd,
                             marks: adding("code", InlineMarkdown.codeValue, to: marks))
                         i = close + count
+                        literalStart = i
                         continue
                     }
-                    emit(String(chars[i..<(i + count)]), marks: marks)
                     i += count
                     continue
                 }
 
                 // Link: [label](url), keeping only sanitized hrefs; rejected links stay literal source text.
-                if c == "[", !marks.contains(where: { $0.key == "link" }), let link = matchLink(from: i, limit: n) {
+                if b == Byte.openBracket, syntax.hasLinkTokens,
+                    !marks.contains(where: { $0.key == "link" }),
+                    let link = matchLink(from: i, limit: n)
+                {
                     if link.url.utf16.count <= MediaBlock.maxURL, sanitizedLinkURL(link.url) == link.url {
+                        if i > literalStart { emitSlice(literalStart..<i, marks: marks) }
                         scan(link.labelRange, marks: adding("link", NativeMark.linkValue(link.url), to: marks))
+                        i = link.next
+                        literalStart = i
                     } else {
-                        emit(String(chars[i..<link.next]), marks: marks)
+                        i = link.next
                     }
-                    i = link.next
                     continue
                 }
 
                 // Strong emphasis (`**...**`) and emphasis (`*...*`). A run with
-                // no closer is emitted as literal text in one step so long runs
-                // stay linear.
-                if c == "*" {
+                // no closer stays in the literal slice and advances in one step
+                // so long runs stay linear.
+                if b == Byte.star, syntax.hasStarPair {
                     var runEnd = i
-                    while runEnd < n, chars[runEnd] == "*" { runEnd += 1 }
+                    while runEnd < n, bytes[runEnd] == Byte.star { runEnd += 1 }
                     let runLen = runEnd - i
                     if runLen >= 2, canOpen(i..<(i + 2)),
-                        let close = matchDelimiter(open: i, length: 2, char: "*", limit: n)
+                        let close = matchDelimiter(open: i, length: 2, byte: Byte.star, limit: n)
                     {
+                        if i > literalStart { emitSlice(literalStart..<i, marks: marks) }
                         scan((i + 2)..<close, marks: adding("bold", InlineMarkdown.boldValue, to: marks))
                         i = close + 2
+                        literalStart = i
                         continue
                     }
-                    if runLen == 1, isLone(char: "*", at: i, bounds: bounds), canOpen(i..<(i + 1)),
-                        let close = matchDelimiter(open: i, length: 1, char: "*", limit: n)
+                    if runLen == 1, isLone(byte: Byte.star, at: i, bounds: bounds), canOpen(i..<(i + 1)),
+                        let close = matchDelimiter(open: i, length: 1, byte: Byte.star, limit: n)
                     {
+                        if i > literalStart { emitSlice(literalStart..<i, marks: marks) }
                         scan((i + 1)..<close, marks: adding("italic", InlineMarkdown.italicValue, to: marks))
                         i = close + 1
+                        literalStart = i
                         continue
                     }
-                    emit(String(chars[i..<runEnd]), marks: marks)
                     i = runEnd
                     continue
                 }
 
-                // Strikethrough: ~~...~~. Emit an unclosed run in one step.
-                if c == "~" {
+                // Strikethrough: ~~...~~. Unclosed runs advance in one step.
+                if b == Byte.tilde, syntax.hasTildePair {
                     var runEnd = i
-                    while runEnd < n, chars[runEnd] == "~" { runEnd += 1 }
+                    while runEnd < n, bytes[runEnd] == Byte.tilde { runEnd += 1 }
                     let runLen = runEnd - i
                     if runLen >= 2, canOpen(i..<(i + 2)),
-                        let close = matchDelimiter(open: i, length: 2, char: "~", limit: n)
+                        let close = matchDelimiter(open: i, length: 2, byte: Byte.tilde, limit: n)
                     {
+                        if i > literalStart { emitSlice(literalStart..<i, marks: marks) }
                         scan((i + 2)..<close, marks: adding("strike", InlineMarkdown.strikeValue, to: marks))
                         i = close + 2
+                        literalStart = i
                         continue
                     }
-                    emit(String(chars[i..<runEnd]), marks: marks)
                     i = runEnd
                     continue
                 }
 
-                // Emphasis: _..._ (lone underscore with flanking). Emit longer runs in one step.
-                if c == "_" {
+                // Emphasis: _..._ (lone underscore with flanking). Longer runs advance in one step.
+                if b == Byte.underscore, syntax.hasUnderscorePair {
                     var runEnd = i
-                    while runEnd < n, chars[runEnd] == "_" { runEnd += 1 }
+                    while runEnd < n, bytes[runEnd] == Byte.underscore { runEnd += 1 }
                     let runLen = runEnd - i
-                    if runLen == 1, isLone(char: "_", at: i, bounds: 0..<chars.count), canOpen(i..<(i + 1)),
-                        let close = matchDelimiter(open: i, length: 1, char: "_", limit: n)
+                    if runLen == 1, isLone(byte: Byte.underscore, at: i, bounds: 0..<bytes.count),
+                        canOpen(i..<(i + 1)),
+                        let close = matchDelimiter(open: i, length: 1, byte: Byte.underscore, limit: n)
                     {
+                        if i > literalStart { emitSlice(literalStart..<i, marks: marks) }
                         scan((i + 1)..<close, marks: adding("italic", InlineMarkdown.italicValue, to: marks))
                         i = close + 1
+                        literalStart = i
                         continue
                     }
-                    emit(String(chars[i..<runEnd]), marks: marks)
                     i = runEnd
                     continue
                 }
 
-                emit(c, marks: marks)
                 i += 1
+            }
+
+            if literalStart < n {
+                if literalStart == 0, n == bytes.count, marks.isEmpty, runs.isEmpty, pendingText.isEmpty {
+                    runs.append(InlineRun(syntax.text))
+                } else {
+                    emitSlice(literalStart..<n, marks: marks)
+                }
             }
         }
 
         // MARK: - Flanking & delimiter matching
 
-        private func isMarkdownPunctuation(_ character: Character) -> Bool {
-            character.isASCII ? BlockNoteMarkdownPaste.isASCIIPunctuation(character) : character.isPunctuation
+        private static func classifyASCII(_ byte: UInt8) -> NeighborClass {
+            switch byte {
+            case Byte.space, Byte.tab, Byte.lineFeed, Byte.verticalTab, Byte.formFeed, Byte.carriageReturn:
+                return .whitespace
+            default:
+                return BlockNoteMarkdownPaste.isASCIIPunctuation(byte) ? .punctuation : .other
+            }
         }
 
-        private func neighbor(_ index: Int) -> Character? {
-            chars.indices.contains(index) ? chars[index] : nil
+        private func classifyByteBefore(_ index: Int) -> NeighborClass {
+            guard index > 0 else { return .none }
+            let last = bytes[index - 1]
+            if last < 0x80 { return Self.classifyASCII(last) }
+            var start = index - 1
+            while start > 0, (bytes[start] & 0xC0) == 0x80 { start -= 1 }
+            let (scalar, _) = BlockNoteMarkdownPaste.decodeUTF8Scalar(in: bytes, at: start, limit: index)
+            guard let scalar else { return .other }
+            if scalar.properties.isWhitespace { return .whitespace }
+            return Character(scalar).isPunctuation ? .punctuation : .other
+        }
+
+        private func classifyByteAt(_ index: Int) -> NeighborClass {
+            guard index < bytes.count else { return .none }
+            let first = bytes[index]
+            if first < 0x80 { return Self.classifyASCII(first) }
+            let (scalar, _) = BlockNoteMarkdownPaste.decodeUTF8Scalar(in: bytes, at: index, limit: bytes.count)
+            guard let scalar else { return .other }
+            if scalar.properties.isWhitespace { return .whitespace }
+            return Character(scalar).isPunctuation ? .punctuation : .other
         }
 
         private func isLeftFlanking(_ run: Range<Int>) -> Bool {
-            guard let next = neighbor(run.upperBound), !next.isWhitespace else { return false }
-            guard isMarkdownPunctuation(next) else { return true }
-            guard let previous = neighbor(run.lowerBound - 1) else { return true }
-            return previous.isWhitespace || isMarkdownPunctuation(previous)
+            let next = classifyByteAt(run.upperBound)
+            guard next != .none, next != .whitespace else { return false }
+            guard next == .punctuation else { return true }
+            let previous = classifyByteBefore(run.lowerBound)
+            return previous == .none || previous == .whitespace || previous == .punctuation
         }
 
         private func isRightFlanking(_ run: Range<Int>) -> Bool {
-            guard let previous = neighbor(run.lowerBound - 1), !previous.isWhitespace else { return false }
-            guard isMarkdownPunctuation(previous) else { return true }
-            guard let next = neighbor(run.upperBound) else { return true }
-            return next.isWhitespace || isMarkdownPunctuation(next)
+            let previous = classifyByteBefore(run.lowerBound)
+            guard previous != .none, previous != .whitespace else { return false }
+            guard previous == .punctuation else { return true }
+            let next = classifyByteAt(run.upperBound)
+            return next == .none || next == .whitespace || next == .punctuation
         }
 
         /// Intraword-forbidding flanking rule so `2*3*4`, `2 * 3 * 4`, `2**3**4`,
@@ -1218,35 +1530,50 @@ enum BlockNoteMarkdownPaste {
         private func canOpen(_ run: Range<Int>) -> Bool {
             guard isLeftFlanking(run) else { return false }
             guard isRightFlanking(run) else { return true }
-            return neighbor(run.lowerBound - 1).map(isMarkdownPunctuation) ?? false
+            return classifyByteBefore(run.lowerBound) == .punctuation
         }
 
         private func canClose(_ run: Range<Int>) -> Bool {
             guard isRightFlanking(run) else { return false }
             guard isLeftFlanking(run) else { return true }
-            return neighbor(run.upperBound).map(isMarkdownPunctuation) ?? false
+            return classifyByteAt(run.upperBound) == .punctuation
         }
 
-        private func isLone(char: Character, at index: Int, bounds: Range<Int>) -> Bool {
-            let prevSame = index > bounds.lowerBound && chars[index - 1] == char
-            let nextSame = index + 1 < bounds.upperBound && chars[index + 1] == char
+        private func isLone(byte: UInt8, at index: Int, bounds: Range<Int>) -> Bool {
+            let prevSame = index > bounds.lowerBound && bytes[index - 1] == byte
+            let nextSame = index + 1 < bounds.upperBound && bytes[index + 1] == byte
             return !prevSame && !nextSame
         }
 
-        private mutating func matchDelimiter(open: Int, length: Int, char: Character, limit: Int) -> Int? {
-            let key = String(repeating: char, count: length)
-            let isTopLevel = limit == chars.count
-            if isTopLevel, noTopLevelCloser.contains(key) { return nil }
-            let startsTripleStar = char == "*" && length == 2 && open + 2 < limit && chars[open + 2] == "*"
+        private static func delimiterBit(byte: UInt8, length: Int, startsTripleStar: Bool) -> UInt8 {
+            switch (byte, length, startsTripleStar) {
+            case (Byte.star, 1, _): return 1 << 0
+            case (Byte.star, 2, false): return 1 << 1
+            case (Byte.star, 2, true): return 1 << 4
+            case (Byte.tilde, 2, _): return 1 << 2
+            case (Byte.underscore, 1, _): return 1 << 3
+            default: return 0
+            }
+        }
+
+        private mutating func matchDelimiter(open: Int, length: Int, byte: UInt8, limit: Int) -> Int? {
+            let startsTripleStar = byte == Byte.star && length == 2 && open + 2 < limit && bytes[open + 2] == Byte.star
+            let bit = Self.delimiterBit(byte: byte, length: length, startsTripleStar: startsTripleStar)
+            if (noCloserByLimit[limit, default: 0] & bit) != 0 { return nil }
             var i = open + length
             while i < limit {
-                if chars[i] == "\\" {
-                    i += 2
+                let b = bytes[i]
+                if b == Byte.backslash {
+                    if i + 1 < limit {
+                        i += 1 + BlockNoteMarkdownPaste.utf8ScalarLength(bytes[i + 1])
+                    } else {
+                        i += 2
+                    }
                     continue
                 }
-                if chars[i] == "`" {
+                if b == Byte.backtick, let backticks = syntax.backticks {
                     var count = 0
-                    while i + count < limit, chars[i + count] == "`" { count += 1 }
+                    while i + count < limit, bytes[i + count] == Byte.backtick { count += 1 }
                     if let close = backticks.closingRun(length: count, from: i + count, limit: limit), close > i + count
                     {
                         i = close + count
@@ -1255,19 +1582,19 @@ enum BlockNoteMarkdownPaste {
                     }
                     continue
                 }
-                if chars[i] == "[", let link = matchLink(from: i, limit: limit) {
+                if b == Byte.openBracket, syntax.hasLinkTokens, let link = matchLink(from: i, limit: limit) {
                     i = link.next
                     continue
                 }
-                if chars[i] == char {
+                if b == byte {
                     var runEnd = i
-                    while runEnd < limit, chars[runEnd] == char { runEnd += 1 }
+                    while runEnd < limit, bytes[runEnd] == byte { runEnd += 1 }
                     let runLen = runEnd - i
                     if length == 1 {
                         if runLen == 1 {
                             if canClose(i..<(i + 1)) {
-                                let inner = chars[(open + 1)..<i]
-                                if inner.isEmpty || inner.allSatisfy({ $0 == " " }) { return nil }
+                                let inner = bytes[(open + 1)..<i]
+                                if inner.isEmpty || inner.allSatisfy({ $0 == Byte.space }) { return nil }
                                 return i
                             }
                             if canOpen(i..<(i + 1)) { return nil }
@@ -1279,8 +1606,8 @@ enum BlockNoteMarkdownPaste {
                         // a 3-star run so the inner `*` keeps its closing `*`.
                         let closeStart = (startsTripleStar && runLen == 3) ? (runEnd - 2) : i
                         if canClose(closeStart..<(closeStart + length)) {
-                            let inner = chars[(open + length)..<closeStart]
-                            if inner.isEmpty || inner.allSatisfy({ $0 == " " }) { return nil }
+                            let inner = bytes[(open + length)..<closeStart]
+                            if inner.isEmpty || inner.allSatisfy({ $0 == Byte.space }) { return nil }
                             return closeStart
                         }
                         if canOpen(i..<(i + length)) { return nil }
@@ -1290,21 +1617,20 @@ enum BlockNoteMarkdownPaste {
                 }
                 i += 1
             }
-            if isTopLevel { noTopLevelCloser.insert(key) }
+            noCloserByLimit[limit, default: 0] |= bit
             return nil
         }
 
         private func matchLink(from open: Int, limit: Int)
             -> (labelRange: Range<Int>, url: String, next: Int)?
         {
-            let closeBracket = matchingClose[open]
+            let closeBracket = syntax.matchingClose[open]
             guard closeBracket > open + 1, closeBracket < limit else { return nil }
             guard
                 let dest = BlockNoteMarkdownPaste.parseDestination(
-                    in: chars,
+                    in: syntax,
                     from: closeBracket + 1,
-                    limit: limit,
-                    suffixCloseParens: suffixCloseParens)
+                    limit: limit)
             else { return nil }
             return ((open + 1)..<closeBracket, dest.url, dest.next)
         }

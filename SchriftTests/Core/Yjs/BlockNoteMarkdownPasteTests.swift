@@ -638,4 +638,57 @@ final class BlockNoteMarkdownPasteTests: XCTestCase {
             elapsed, .milliseconds(500),
             "Markdown mark-byte amplification must fail fast during parse, took \(elapsed)")
     }
+
+    func testUTF8ScanPreservesUnicodeSemanticsAndBoundsClosedAngleAndNestedDelimiters() throws {
+        // Non-ASCII letters, Unicode punctuation flanking (`—`), non-ASCII image alt text,
+        // and non-ASCII whitespace (U+00A0) terminating a bare destination stay exact under
+        // the UTF-8 byte scanner.
+        let unicode = """
+            **café** *naïve*—_über_ ~~résumé~~ [日本語](https://example.com)
+            ![héllo \\] world](https://images.example/a.png)
+            [nbsp](https://example.com\u{00A0}tail)
+            """
+        let unicodeCopies = try BlockNoteMarkdownPaste.parse(unicode)
+        let (doc, blocks) = try project(unicodeCopies)
+        defer { doc.destroy() }
+
+        XCTAssertEqual(blocks.map(\.block.node), ["paragraph", "image", "paragraph"])
+        if blocks.count == 3 {
+            let runs = blocks[0].block.runs
+            XCTAssertEqual(runs.first { $0.text == "café" }?.marks.map(\.key), ["bold"])
+            XCTAssertEqual(runs.first { $0.text == "naïve" }?.marks.map(\.key), ["italic"])
+            XCTAssertEqual(runs.first { $0.text == "über" }?.marks.map(\.key), ["italic"])
+            XCTAssertEqual(runs.first { $0.text == "résumé" }?.marks.map(\.key), ["strike"])
+            XCTAssertEqual(runs.first { $0.text == "日本語" }?.marks.map(\.key), ["link"])
+
+            XCTAssertEqual(
+                blocks[1].block.props.first { $0.key == "url" }?.value, .string("https://images.example/a.png"))
+            XCTAssertEqual(blocks[1].block.props.first { $0.key == "name" }?.value, .string("héllo ] world"))
+
+            XCTAssertEqual(blocks[2].block.runs.map(\.text), ["[nbsp](https://example.com\u{00A0}tail)"])
+            XCTAssertTrue(blocks[2].block.runs.allSatisfy(\.marks.isEmpty))
+        }
+
+        // 24 capped angle-image lines with a trailing `)` (forcing the image & link scanners to run)
+        // and 24 capped lines of unclosed `*` inside `**...**` both stay strictly linear.
+        let closedAngleLine = String(repeating: "![a](<", count: 1_365) + ">)"
+        let closedAngleInput = Array(repeating: closedAngleLine, count: 24).joined(separator: "\n")
+        let startClosedAngle = ThreadCPUClock.now
+        let closedAngleCopies = try BlockNoteMarkdownPaste.parse(closedAngleInput)
+        let elapsedClosedAngle = ThreadCPUClock.now - startClosedAngle
+        XCTAssertEqual(closedAngleCopies.count, 24)
+        XCTAssertLessThan(
+            elapsedClosedAngle, .milliseconds(500),
+            "24 capped angle-image lines with trailing ')' should stay linear, took \(elapsedClosedAngle)")
+
+        let nestedStarLine = "**" + String(repeating: "*a ", count: 1_360) + "**"
+        let nestedStarInput = Array(repeating: nestedStarLine, count: 24).joined(separator: "\n")
+        let startNestedStar = ThreadCPUClock.now
+        let nestedStarCopies = try BlockNoteMarkdownPaste.parse(nestedStarInput)
+        let elapsedNestedStar = ThreadCPUClock.now - startNestedStar
+        XCTAssertEqual(nestedStarCopies.count, 24)
+        XCTAssertLessThan(
+            elapsedNestedStar, .milliseconds(500),
+            "24 capped lines of unclosed '*' inside '**' should stay linear, took \(elapsedNestedStar)")
+    }
 }
