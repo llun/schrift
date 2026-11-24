@@ -1503,6 +1503,10 @@ final class NativeEditorUITests: XCTestCase {
 
         XCTAssertTrue(result.hasPrefix("pass|"), "S2 scroll sampler failed: \(result)")
         XCTAssertEqual(metrics["reachedBottom"], "1", "S2 scroll sampler did not reach bottom: \(result)")
+        // The editor's accessibility tree is hidden in sampler mode; a sweep that
+        // scrolled at all proves the fixture rendered (an empty one ends on frame 1).
+        let frames = Int(metrics["frames"] ?? "") ?? 0
+        XCTAssertGreaterThan(frames, 1, "S2 scroll sampler never scrolled: \(result)")
         let reversals = Int(metrics["reversals"] ?? "") ?? .max
         XCTAssertLessThanOrEqual(reversals, 2, "S2 scroll sampler recorded too many reversals: \(result)")
         let maxReversalPt = Double(metrics["maxReversalPt"] ?? "") ?? .infinity
