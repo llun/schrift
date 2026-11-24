@@ -475,6 +475,8 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         // 1. Cancel writes nothing and clears provisional.json.
         tv.selectedRange = NSRange(location: 1, length: 0)
         tv.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        // The recovery file is written on the replica's mailbox, off the main actor.
+        await harness.settle()
         XCTAssertEqual(try harness.store.provisionalRecoveries(for: harness.scope).map(\.text), ["か"])
         tv.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
         await sourceSession.settle()
@@ -492,6 +494,7 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         // 3. Interrupt on close (resignFirstResponder before close) persists recovery in provisional.json.
         tv.selectedRange = NSRange(location: 2, length: 0)
         tv.setMarkedText("ほ", selectedRange: NSRange(location: 1, length: 0))
+        await harness.settle()
         XCTAssertEqual(try harness.store.provisionalRecoveries(for: harness.scope).map(\.text), ["ほ"])
         editor.close()
         window.isHidden = true
@@ -980,6 +983,8 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         let inlineTV = try XCTUnwrap(inlineEditor.sourceSession?.textView)
         inlineTV.selectedRange = NSRange(location: 1, length: 0)
         inlineTV.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        // The recovery file is written on the replica's mailbox, off the main actor.
+        await harness.settle()
         XCTAssertEqual(try harness.store.provisionalRecoveries(for: harness.scope).map(\.text), ["か"])
         inlineEditor.close()
         inlineWindow.isHidden = true
