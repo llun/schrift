@@ -100,7 +100,11 @@ struct NativeEditorTestHostApp: App {
                         await PeerFixture.install(on: session)
                     }
                 } else {
-                    session = try await NativeEditorSession.inspect(state: fixture)
+                    let loaded = try await NativeEditorSession.inspect(state: fixture)
+                    if ProcessInfo.processInfo.arguments.contains("--native-scroll-sampler") {
+                        loaded.textView.accessibilityElementsHidden = true
+                    }
+                    session = loaded
                 }
             } catch {
                 failedToLoad = true
@@ -112,8 +116,8 @@ struct NativeEditorTestHostApp: App {
             if ProcessInfo.processInfo.arguments.contains("--native-readout"), let session {
                 TopBlockReadout(session: session)
             }
-            if ProcessInfo.processInfo.arguments.contains("--native-scroll-sampler"), session != nil {
-                ScrollSamplerOverlay()
+            if ProcessInfo.processInfo.arguments.contains("--native-scroll-sampler"), let session {
+                ScrollSamplerOverlay(textView: session.textView)
             }
             if ProcessInfo.processInfo.arguments.contains("--native-diagnostics") {
                 DiagnosticsReadoutOverlay()
@@ -1102,6 +1106,7 @@ private enum ScrollSamplerFixture {
 @MainActor
 private final class NativeScrollSampler: NSObject, ObservableObject {
     @Published var status = "idle"
+    private weak var textView: NativeTextView?
     private var displayLink: CADisplayLink?
     private var previousFrames: [String: CGFloat] = [:]
     private var frameCount = 0
@@ -1116,8 +1121,14 @@ private final class NativeScrollSampler: NSObject, ObservableObject {
     private var pendingRequestedDeltaY: CGFloat = 0
     private var previousContentOffsetY: CGFloat = 0
 
+    init(textView: NativeTextView) {
+        self.textView = textView
+        super.init()
+    }
+
     func startObserving() {
         guard displayLink == nil else { return }
+        previousContentOffsetY = textView?.contentOffset.y ?? 0
         let link = CADisplayLink(target: self, selector: #selector(tick))
         link.add(to: .main, forMode: .common)
         displayLink = link
@@ -1130,7 +1141,7 @@ private final class NativeScrollSampler: NSObject, ObservableObject {
     }
 
     func runProgrammaticSweep() {
-        guard let textView = mountedTextView() else {
+        guard let textView else {
             status = "fail|noTextView"
             return
         }
@@ -1153,9 +1164,14 @@ private final class NativeScrollSampler: NSObject, ObservableObject {
     }
 
     @objc private func tick() {
-        guard let textView = mountedTextView(), let window = textView.window,
+        guard let textView, let window = textView.window,
             let controls = textView.blockControls
         else { return }
+        if !isProgrammaticRun, !textView.isDragging, !textView.isDecelerating,
+            abs(textView.contentOffset.y - previousContentOffsetY) < 0.01
+        {
+            return
+        }
         // Measure visible attachment bounds vs provider/content bounds on every frame.
         let visibleAttachments = controls.visibleAttachmentViews
         maxRealisedAttachments = max(maxRealisedAttachments, visibleAttachments.count)
@@ -1250,6 +1266,7 @@ private final class NativeScrollSampler: NSObject, ObservableObject {
                         "%@|jumps=%d|reversals=%d|maxReversalPt=%.2f|reachedBottom=%d|maxBoundsErr=%.2f|maxRealised=%d|maxControls=%d|frames=%d",
                     prefix, jumpCount, reversalCount, maxReversalPt, reachedBottom ? 1 : 0, maxBoundsError,
                     maxRealisedAttachments, maxRealisedControls, frameCount)
+                stop()
             } else {
                 // Step at ~45% viewport height so consecutive frames keep overlapping blocks in common.
                 let step = min(max(textView.bounds.height * 0.45, 320.0), maxOffsetY - currentOffsetY)
@@ -1262,7 +1279,11 @@ private final class NativeScrollSampler: NSObject, ObservableObject {
 }
 
 private struct ScrollSamplerOverlay: View {
-    @StateObject private var sampler = NativeScrollSampler()
+    @StateObject private var sampler: NativeScrollSampler
+
+    init(textView: NativeTextView) {
+        _sampler = StateObject(wrappedValue: NativeScrollSampler(textView: textView))
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -1277,6 +1298,8 @@ private struct ScrollSamplerOverlay: View {
         }
         .padding(6)
         .background(.ultraThinMaterial)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("scrollSampler.controls")
         .onAppear { sampler.startObserving() }
         .onDisappear { sampler.stop() }
     }
