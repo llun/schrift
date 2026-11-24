@@ -29,7 +29,28 @@ final class NativeTextView: UITextView {
         super.didMoveToWindow()
         if window != nil {
             blockDragController?.didMoveToWindow()
+            onDidMoveToWindow?()
         }
+    }
+
+    /// Clamp hit-tests past the last visible block's text to the end of that
+    /// block's text range (skipping trailing synthetic `"\n"` and hidden blocks).
+    override func closestPosition(to point: CGPoint) -> UITextPosition? {
+        guard let position = super.closestPosition(to: point) else { return nil }
+        return clampedClosestPosition(for: position)
+    }
+
+    func clampedClosestPosition(for position: UITextPosition) -> UITextPosition {
+        guard textStorage.length > 0, markedTextRange == nil,
+            let surface = blockControls?.surface,
+            surface.rangeIndex.length == textStorage.length,
+            let lastVisible = surface.rangeIndex.entries.indices.reversed().first(where: {
+                !surface.isHidden(position: $0)
+            })
+        else { return position }
+        let visibleEnd = NSMaxRange(surface.rangeIndex.entries[lastVisible].textRange)
+        guard offset(from: beginningOfDocument, to: position) > visibleEnd else { return position }
+        return self.position(from: beginningOfDocument, offset: visibleEnd) ?? position
     }
 
     /// The collaborative history's UIKit face (PR07b): Edit ▸ Undo/Redo, the
@@ -546,6 +567,7 @@ final class NativeTextView: UITextView {
     let editTapRecognizer = UITapGestureRecognizer()
     let editDoubleTapRecognizer = UITapGestureRecognizer()
     var onRequestEdit: (() -> Void)?
+    var onDidMoveToWindow: (() -> Void)?
     weak var headerAccessoryView: UIView?
     weak var footerAccessoryView: UIView?
     private var lastEditTapDate: TimeInterval = 0
@@ -793,18 +815,31 @@ final class NativeTextView: UITextView {
         if !isFirstResponder {
             _ = becomeFirstResponder()
         }
-        if selectedRange.length == 0, let pos = closestPosition(to: point) {
-            let wordRange =
-                tokenizer.rangeEnclosingPosition(
-                    pos, with: .word, inDirection: UITextDirection.storage(.backward))
-                ?? tokenizer.rangeEnclosingPosition(
-                    pos, with: .word, inDirection: UITextDirection.storage(.forward))
-            if let wordRange {
-                selectedTextRange = wordRange
-            } else {
-                selectedTextRange = textRange(from: pos, to: pos)
-            }
+        if selectedRange.length == 0 {
+            selectWordForDoubleTap(at: point)
         }
+    }
+
+    func selectWordForDoubleTap(at point: CGPoint) {
+        guard let pos = closestPosition(to: point) else { return }
+        let wordRange =
+            tokenizer.rangeEnclosingPosition(
+                pos, with: .word, inDirection: UITextDirection.storage(.backward))
+            ?? tokenizer.rangeEnclosingPosition(
+                pos, with: .word, inDirection: UITextDirection.storage(.forward))
+        if let wordRange, !touchesHiddenContent(wordRange) {
+            selectedTextRange = wordRange
+        } else {
+            selectedTextRange = textRange(from: pos, to: pos)
+        }
+    }
+
+    private func touchesHiddenContent(_ range: UITextRange) -> Bool {
+        guard let surface = blockControls?.surface else { return false }
+        let start = offset(from: beginningOfDocument, to: range.start)
+        let end = offset(from: beginningOfDocument, to: range.end)
+        guard start >= 0, end > start else { return false }
+        return surface.isHidden(atUTF16: start) || surface.isHidden(atUTF16: end - 1)
     }
 
     /// Handles a tap at `point` (in this text view's coordinates), invoking

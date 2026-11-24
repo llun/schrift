@@ -113,6 +113,11 @@ struct NativeEditCommand: Equatable, Sendable {
         /// Pastes a decoded inline-slice payload (`BlockNoteInlinePayload`)
         /// over `range` (`replacement` / `newBlockIDs` in `range`).
         case pasteInline(payload: Data, range: NativeRangeCommand)
+        /// Seeds a writable empty document with its first empty paragraph
+        /// `newID` (`document-store` → `blockGroup` → `blockContainer` →
+        /// `paragraph`). Re-checks emptiness on the replica so concurrent
+        /// remote content settles as a no-op; untracked by undo (`origin: nil`).
+        case seedEmptyParagraph(newID: String)
         case undo
         case redo
     }
@@ -149,7 +154,7 @@ struct NativeEditCommand: Equatable, Sendable {
             .moveBlock, .duplicate,
             .deleteBlock, .insertBlock, .insertSubtrees, .lineBreak, .table, .columns, .insertColumns, .insertMedia,
             .insertMediaBatch, .insertSourceBlock, .insertDivider, .mediaProps, .insertInlineObject,
-            .insertInlineMath, .pasteInline, .undo, .redo:
+            .insertInlineMath, .pasteInline, .seedEmptyParagraph, .undo, .redo:
             return ""
         }
     }

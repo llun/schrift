@@ -275,6 +275,9 @@ private struct NativeOpenFixture: View {
             checkpoint = try ColumnFixture.inserting(into: checkpoint, after: "owned-0")
             return checkpoint
         }
+        if ProcessInfo.processInfo.arguments.contains("--native-empty") {
+            return Data([0, 0])
+        }
         if ProcessInfo.processInfo.arguments.contains("--native-checklist-only") {
             let checklistBlocks = [
                 BlockNoteBlock(

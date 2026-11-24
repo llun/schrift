@@ -135,8 +135,10 @@ struct NativeEditorView: View {
     var body: some View {
         let _ = session.presentationRevision
         let checklistSummary = session.surface.checklistSummary
+        let showsEmptyState =
+            session.hasUnsupportedRoot || (session.surface.blocks.isEmpty && !(isEditing && canEditDocument))
         return Group {
-            if session.hasUnsupportedRoot || session.surface.blocks.isEmpty {
+            if showsEmptyState {
                 if headerContent != nil || footerContent != nil {
                     ScrollView {
                         VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
@@ -148,9 +150,7 @@ struct NativeEditorView: View {
                                     loc[.native_editor_preserved_title], systemImage: "doc.richtext",
                                     description: Text(loc[.native_editor_preserved_body]))
                             } else {
-                                ContentUnavailableView(
-                                    loc[.editor_empty_title], systemImage: "doc.text",
-                                    description: Text(loc[.editor_empty_body]))
+                                emptyDocumentView
                             }
                             if let footerContent {
                                 footerContent()
@@ -164,9 +164,7 @@ struct NativeEditorView: View {
                         loc[.native_editor_preserved_title], systemImage: "doc.richtext",
                         description: Text(loc[.native_editor_preserved_body]))
                 } else {
-                    ContentUnavailableView(
-                        loc[.editor_empty_title], systemImage: "doc.text",
-                        description: Text(loc[.editor_empty_body]))
+                    emptyDocumentView
                 }
             } else if !isEditing && checklistSummary.allBlocksHidden {
                 ScrollView {
@@ -475,6 +473,37 @@ extension NativeEditorView {
             hasPresentedCover: hasPresentedNavigationCover,
             push: { document in onOpenDocument?(document) }
         )
+    }
+
+    @ViewBuilder
+    private var emptyDocumentView: some View {
+        let view = ContentUnavailableView(
+            loc[.editor_empty_title], systemImage: "doc.text",
+            description: Text(loc[.editor_empty_body]))
+        if canEditDocument && !isEditing {
+            view
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    handleEmptyBodyTap()
+                }
+                .accessibilityAction(named: loc[.editor_start_writing]) {
+                    handleEmptyBodyTap()
+                }
+        } else {
+            view
+        }
+    }
+
+    func handleEmptyBodyTap() {
+        guard !isEditing, canEditDocument else { return }
+        if let onRequestEdit {
+            onRequestEdit()
+        } else {
+            session.setEditing(true)
+        }
+        if session.textView.isEditable {
+            session.requestBodyFocusWhenReady()
+        }
     }
 
     private func requestEditIfWritable() {

@@ -274,6 +274,11 @@ final class NativeEditorSession {
     /// Server origin for interlink clipboard plain-text serialization and
     /// same-origin URL paste-interlink.
     @ObservationIgnored private var interlinkingOrigin: String = ""
+    /// Armed when the user taps the empty-document body to start writing: once
+    /// the seeded paragraph is on screen and `textView` is in a window, focus
+    /// `textView` at the start of the first block without stealing focus from a
+    /// newly created document's title field.
+    @ObservationIgnored private var pendingBodyFocus = false
 
     private init(
         replica: DocumentReplicaSession?, surfaceID: UUID = UUID(), blocks: [BlockSnapshot], revision: UInt64,
@@ -317,6 +322,9 @@ final class NativeEditorSession {
         }
         view.onBecameFirstResponder = { [weak self] in
             self?.completeTimeToEdit()
+        }
+        view.onDidMoveToWindow = { [weak self] in
+            self?.fulfillPendingBodyFocusIfReady()
         }
         surface.onFoldChange = { [weak view, weak self] in
             view?.blockControls.foldDidChange()
@@ -772,6 +780,7 @@ final class NativeEditorSession {
             // The replica turned read-only (a reader answer): the view stops
             // taking input, so nothing typed looks accepted.
             if wasWritable, !state.writable { textView.isEditable = false }
+            if !state.writable || state.frozen || state.detached || !canType { pendingBodyFocus = false }
         } else {
             if case .reset(let epoch) = delivery.resync { headlessEpoch = epoch }
             if case .invalidated(let epoch, _)? = delivery.result { headlessEpoch = epoch }
@@ -792,6 +801,7 @@ final class NativeEditorSession {
         if let result = delivery.result, let id = result.commandID {
             results.removeValue(forKey: id)?.resume(returning: result)
         }
+        fulfillPendingBodyFocusIfReady()
         onApplied?(delivery)
     }
 
@@ -857,9 +867,33 @@ final class NativeEditorSession {
     func setExpectedWritable(_ writable: Bool) {
         isWritable = writable
         if !writable {
+            pendingBodyFocus = false
             textView.isEditable = false
         }
         textView.setNeedsLayout()
+    }
+
+    var hasPendingBodyFocus: Bool { pendingBodyFocus }
+
+    /// Arms a one-shot focus request for `textView` once it is editable and in
+    /// a window (used when tapping an empty body). Does nothing if editing has
+    /// not actually begun.
+    func requestBodyFocusWhenReady() {
+        guard textView.isEditable else {
+            pendingBodyFocus = false
+            return
+        }
+        pendingBodyFocus = true
+        fulfillPendingBodyFocusIfReady()
+    }
+
+    private func fulfillPendingBodyFocusIfReady() {
+        guard pendingBodyFocus, textView.isEditable, textView.window != nil else { return }
+        pendingBodyFocus = false
+        if !textView.isFirstResponder {
+            _ = textView.becomeFirstResponder()
+        }
+        input?.placeCaretInFirstVisibleBlock()
     }
 
     /// Switches this surface between Reading and Editing mode without tearing
@@ -867,6 +901,7 @@ final class NativeEditorSession {
     func setEditing(_ editing: Bool) {
         if editing {
             guard let input, !input.isFrozen, !input.isDetached, isWritable else {
+                pendingBodyFocus = false
                 textView.isEditable = false
                 return
             }
@@ -876,11 +911,13 @@ final class NativeEditorSession {
             }
             textView.isEditable = true
             input.refreshSelectionMarks()
+            fulfillPendingBodyFocusIfReady()
             if collecting, textView.isFirstResponder {
                 completeTimeToEdit()
             }
         } else {
             pendingEditStartNs = nil
+            pendingBodyFocus = false
             if textView.markedTextRange != nil {
                 textView.unmarkText()
             }
@@ -959,6 +996,7 @@ final class NativeEditorSession {
     func close() -> Task<Void, Never> {
         if let closing { return closing }
         isClosed = true
+        pendingBodyFocus = false
         sampleDiagnosticsSnapshot(steady: true)
         if ownsDiagnosticsSession {
             NativeEditorDiagnosticsStore.shared.endSession(sessionSeq)

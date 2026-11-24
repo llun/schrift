@@ -69,6 +69,38 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(text(of: editor).components(separatedBy: "\n"), after, "the journal restores the structure")
     }
 
+    /// A writable native document over an empty 2-byte Yjs state starts in
+    /// reading mode showing "Empty document", seeds one empty paragraph when
+    /// the body is tapped to edit, accepts typed text, and restores it after a
+    /// relaunch.
+    func testTypingInAnEmptyDocumentSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-empty"]
+        app.launch()
+        let emptyTitle = app.staticTexts["Empty document"]
+        XCTAssertTrue(emptyTitle.waitForExistence(timeout: 10), "reading mode keeps the empty view without seeding")
+        XCTAssertFalse(app.staticTexts["nativeEditor.editUnavailableNotice"].exists, "the empty document is writable")
+        XCTAssertTrue(emptyTitle.waitForStableFrame())
+        emptyTitle.tap()
+
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10), "tapping the empty body enters editing and mounts canvas")
+        XCTAssertTrue(emptyTitle.waitForNonExistence(timeout: 5), "the empty view must not block typing")
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 10) && keyboard.waitForStableFrame())
+        editor.typeText("Hello")
+        XCTAssertTrue(waitForText(of: editor, containing: "Hello"), text(of: editor))
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists)
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-empty"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitForText(of: editor, containing: "Hello"), "the journal restores the seeded paragraph")
+        XCTAssertFalse(app.staticTexts["Empty document"].exists)
+    }
+
     /// Shift-Right on the hardware keyboard selects from inside the first
     /// paragraph into the second; typing replaces the selection as one durable
     /// range command (the paragraphs join) that a relaunch restores.

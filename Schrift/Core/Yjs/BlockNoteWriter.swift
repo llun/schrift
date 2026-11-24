@@ -101,13 +101,58 @@ struct BlockNoteWriter {
     var schemas = BlockNoteWriter.propSchemas
 
     @discardableResult
-    func transaction(_ body: (YTransaction) throws -> Void) throws -> Data {
+    func transaction(origin: YTransactionOrigin? = .localUser, _ body: (YTransaction) throws -> Void) throws -> Data {
         let nested = doc.transaction != nil
-        let tx = try doc.transact(local: true, origin: .localUser) { tx in
+        let tx = try doc.transact(local: true, origin: origin) { tx in
             try body(tx)
             return tx
         }
         return nested ? Data([0, 0]) : try YTransactionEncoder.encodeUpdate(tx) ?? Data([0, 0])
+    }
+
+    /// Seeds an empty canonical document with one empty paragraph `id`
+    /// (`document-store` → `blockGroup` → `blockContainer(id)` → `paragraph`),
+    /// reusing an existing empty `blockGroup` when present. Returns `nil` (no
+    /// transaction) when `document-store` already holds a `blockGroup` with at
+    /// least one live child. Throws `malformedBlock` on an empty id or a
+    /// non-canonical root. Uses `origin: nil` so `ReplicaHistory` does not
+    /// record implicit initial structure as an undo step.
+    @discardableResult
+    func seedEmptyParagraph(id: String) throws -> Data? {
+        guard !id.isEmpty else { throw Error.malformedBlock("blockContainer") }
+        let existingGroup: YType?
+        if let root = doc.share[BlockNoteYjs.fragmentField] {
+            let rootChildren = YBlockProjection.children(of: root, includeFormats: false)
+            if rootChildren.isEmpty {
+                existingGroup = nil
+            } else if rootChildren.count == 1,
+                case .type(let group) = rootChildren[0].content,
+                group.typeRef == .xmlElement(nodeName: "blockGroup")
+            {
+                if !YBlockProjection.children(of: group, includeFormats: false).isEmpty {
+                    return nil
+                }
+                existingGroup = group
+            } else {
+                throw Error.malformedBlock(BlockNoteYjs.fragmentField)
+            }
+        } else {
+            existingGroup = nil
+        }
+        let paragraph = emptyParagraph(id)
+        return try transaction(origin: nil) { tx in
+            let group: YType
+            if let existingGroup {
+                group = existingGroup
+            } else {
+                let root = doc.get(BlockNoteYjs.fragmentField)
+                group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+                guard try YWrite.insertAfter(tx, into: root, after: nil, [.type(group)]) != nil else {
+                    throw Error.malformedBlock("blockGroup")
+                }
+            }
+            try insertCopy(tx, paragraph, into: group, after: nil)
+        }
     }
 
     /// Code blocks insert plain text, dropping supplied marks. Other blocks
