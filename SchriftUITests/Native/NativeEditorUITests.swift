@@ -1554,19 +1554,19 @@ final class NativeEditorUITests: XCTestCase {
         app.launchArguments = ["--native-scroll-sampler"]
         app.launch()
 
-        let editor = app.textViews["nativeEditor.text"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 20))
-        XCTAssertTrue(editor.waitForStableFrame())
+        let controls = app.otherElements["scrollSampler.controls"]
+        XCTAssertTrue(controls.waitForExistence(timeout: 20))
+        XCTAssertTrue(controls.waitForStableFrame())
 
-        let runButton = app.buttons["scrollSampler.run"]
-        let status = app.staticTexts["scrollSampler.status"]
+        let runButton = controls.buttons["scrollSampler.run"]
+        let status = controls.staticTexts["scrollSampler.status"]
         XCTAssertTrue(runButton.waitForExistence(timeout: 10))
         XCTAssertTrue(status.waitForExistence(timeout: 10))
 
         // Exercise touch-fling deceleration while CADisplayLink sampler is observing.
         for _ in 0..<2 {
-            let start = editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
-            let end = editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
             start.press(forDuration: 0.02, thenDragTo: end, withVelocity: .fast, thenHoldForDuration: 0.0)
             RunLoop.current.run(until: Date().addingTimeInterval(0.6))
         }
@@ -1597,6 +1597,10 @@ final class NativeEditorUITests: XCTestCase {
 
         XCTAssertTrue(result.hasPrefix("pass|"), "S2 scroll sampler failed: \(result)")
         XCTAssertEqual(metrics["reachedBottom"], "1", "S2 scroll sampler did not reach bottom: \(result)")
+        // The editor's accessibility tree is hidden in sampler mode; a sweep that
+        // scrolled at all proves the fixture rendered (an empty one ends on frame 1).
+        let frames = Int(metrics["frames"] ?? "") ?? 0
+        XCTAssertGreaterThan(frames, 1, "S2 scroll sampler never scrolled: \(result)")
         let reversals = Int(metrics["reversals"] ?? "") ?? .max
         XCTAssertLessThanOrEqual(reversals, 2, "S2 scroll sampler recorded too many reversals: \(result)")
         let maxReversalPt = Double(metrics["maxReversalPt"] ?? "") ?? .infinity
