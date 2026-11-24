@@ -73,6 +73,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         /// A move or a join, which may take the caret's block to another
         /// column (PR12c); a column or table command never does.
         var movesBlock = false
+        /// A drag-drop `.moveBlock` barrier; keeps a new drag from starting until settled.
+        var isDragMove = false
         /// Scoped source surface to open once the command has actually applied (PR14).
         var requestedSource: NativeSourceRequest? = nil
         /// Invoked once when the barrier settles (`true` on `.applied`, `false`
@@ -2025,7 +2027,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             origin: readsSelection ? blockSelection() : nil, requestedSource: requestedSource,
             onSettled: onSettled)
         switch kind {
-        case .moveUp, .moveDown, .moveBlock, .join: barrier?.movesBlock = true
+        case .moveBlock:
+            barrier?.movesBlock = true
+            barrier?.isDragMove = true
+        case .moveUp, .moveDown, .join:
+            barrier?.movesBlock = true
         default: break
         }
         barrierShown = []
@@ -2077,16 +2083,34 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         activeMarks = []
         typingCaret = nil
         isEditingBlurred = false
+        var keptIntents: [Intent] = []
+        var droppedMoves: [Intent] = []
+        for intent in intents {
+            switch intent {
+            case .insert, .deleteBackward: keptIntents.append(intent)
+            case .moveBlock: droppedMoves.append(intent)
+            }
+        }
+        intents = keptIntents
+        view?.blockDragController?.invalidatePendingDropFeedback()
         view?.blockDragController?.cancelDrag()
         view?.blockDragController?.updateHandle()
+        settleDroppedMoveIntents(droppedMoves)
     }
 
     var canEditForTextDrop: Bool {
         canEdit
     }
 
+    private var hasPendingMoveBlock: Bool {
+        barrier?.isDragMove == true
+            || intents.contains {
+                if case .moveBlock = $0 { true } else { false }
+            }
+    }
+
     var canReorderBlocks: Bool {
-        canFormat && tableMove == nil && tableKey == nil
+        canFormat && !hasPendingMoveBlock && tableMove == nil && tableKey == nil
     }
 
     /// The visible single block containing the caret or selection, or `nil`

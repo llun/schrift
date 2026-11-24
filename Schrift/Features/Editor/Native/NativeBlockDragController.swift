@@ -323,14 +323,19 @@ enum NativeBlockDragSlotResolver {
 enum NativeBlockDragAnnouncement {
     static let maxSummaryScalars = 40
 
+    /// Builds the VoiceOver announcement for a committed move. When
+    /// `movedBlockID` is provided, `blocks` is the post-move settled list and
+    /// "Moved to top" reflects whether `movedBlockID` actually landed first.
     static func message(
         for destination: NativeMoveDestination,
+        movedBlockID: String? = nil,
         in blocks: [BlockSnapshot],
         labels: NativeEditorLabels
     ) -> String {
         switch destination {
         case .before(let id):
-            if blocks.first?.id == id {
+            let isAtTop = movedBlockID.map { blocks.first?.id == $0 } ?? (blocks.first?.id == id)
+            if isAtTop {
                 return labels.dragMovedToTop
             }
             return String(format: labels.dragMovedBefore, blockSummary(id, in: blocks, labels: labels))
@@ -761,6 +766,8 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
     private var dragStartHorizontalSizeClass: UIUserInterfaceSizeClass = .unspecified
     private var isResolvingDuringLayout = false
     private var isAutoScrolling = false
+    private var isTornDown = false
+    private var feedbackGeneration: UInt64 = 0
 
     var isDragging: Bool { draggedBlockID != nil }
     var isHandleVisible: Bool { !handleView.isHidden && handleBlockID != nil }
@@ -806,9 +813,20 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
     }
 
     func tearDown() {
+        isTornDown = true
+        feedbackGeneration &+= 1
         clearDragState(animated: false)
         hoveredBlockID = nil
         hideHandle(clearTarget: true)
+    }
+
+    func didMoveToWindow() {
+        isTornDown = false
+        updateHandle()
+    }
+
+    func invalidatePendingDropFeedback() {
+        feedbackGeneration &+= 1
     }
 
     @objc private func applicationWillResignActive() {
@@ -838,6 +856,7 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
 
     func editingModeDidChange() {
         if textView?.isEditable != true {
+            feedbackGeneration &+= 1
             hoveredBlockID = nil
             cancelDrag()
         }
@@ -908,7 +927,7 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
     // MARK: - Contextual Handle Placement
 
     func updateHandle() {
-        guard let textView, let surface = textView.blockControls.surface else {
+        guard !isTornDown, let textView, let surface = textView.blockControls.surface else {
             hideHandle(clearTarget: true)
             return
         }
@@ -931,7 +950,8 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
     }
 
     func layoutHandle() {
-        guard let textView,
+        guard !isTornDown,
+            let textView,
             let surface = textView.blockControls.surface,
             let targetID = handleBlockID,
             !isDragging,
@@ -1045,7 +1065,7 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
     }
 
     func handleHover(at point: CGPoint) {
-        guard let textView, let surface = textView.blockControls.surface,
+        guard !isTornDown, let textView, let surface = textView.blockControls.surface,
             textView.isEditable, textView.inputCoordinator?.canReorderBlocks == true, !isDragging
         else {
             clearHover()
@@ -1115,7 +1135,8 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
 
     @discardableResult
     func beginDrag(blockID: String, atWindowPoint windowPoint: CGPoint) -> Bool {
-        guard let textView,
+        guard !isTornDown,
+            let textView,
             let surface = textView.blockControls.surface,
             textView.isEditable,
             textView.inputCoordinator?.canReorderBlocks == true,
@@ -1172,13 +1193,11 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
 
     @discardableResult
     func endDrag() -> Bool {
-        guard let draggedID = draggedBlockID, let textView, let surface = textView.blockControls.surface else {
+        guard let draggedID = draggedBlockID, let textView, textView.blockControls.surface != nil else {
             cancelDrag()
             return false
         }
         let candidate = currentCandidate
-        let blocksBefore = surface.blocks
-        let labels = textView.blockControls.labels
 
         clearDragState(animated: true)
 
@@ -1186,10 +1205,24 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
             updateHandle()
             return false
         }
-        let announcement = NativeBlockDragAnnouncement.message(
-            for: candidate.dropTarget.destination, in: blocksBefore, labels: labels)
-        let posted = coordinator.moveBlock(draggedID, to: candidate.dropTarget.destination) { [weak self] applied in
-            guard applied, let self else { return }
+        let destination = candidate.dropTarget.destination
+        let generation = feedbackGeneration
+        let posted = coordinator.moveBlock(draggedID, to: destination) { [weak self] applied in
+            guard let self, !self.isTornDown else { return }
+            self.updateHandle()
+            guard applied,
+                self.feedbackGeneration == generation,
+                let textView = self.textView,
+                textView.isEditable,
+                textView.inputCoordinator?.canFormat == true,
+                !self.isDragging,
+                let surface = textView.blockControls.surface
+            else { return }
+            let announcement = NativeBlockDragAnnouncement.message(
+                for: destination,
+                movedBlockID: draggedID,
+                in: surface.blocks,
+                labels: textView.blockControls.labels)
             self.haptics.drop()
             self.postAnnouncement(announcement)
         }
@@ -1470,7 +1503,8 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
     }
 
     func canBeginCardLongPress(at point: CGPoint) -> Bool {
-        guard let textView,
+        guard !isTornDown,
+            let textView,
             let surface = textView.blockControls.surface,
             textView.isEditable,
             textView.inputCoordinator?.canReorderBlocks == true,
@@ -1540,7 +1574,8 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
     // MARK: - UIGestureRecognizerDelegate
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard let textView,
+        guard !isTornDown,
+            let textView,
             let surface = textView.blockControls.surface,
             textView.isEditable,
             textView.inputCoordinator?.canReorderBlocks == true,

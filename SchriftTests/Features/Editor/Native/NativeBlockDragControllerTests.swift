@@ -364,6 +364,20 @@ final class NativeBlockDragControllerTests: NativeEditingTestCase {
         XCTAssertTrue(truncated.hasPrefix("Moved after "))
         XCTAssertTrue(truncated.hasSuffix("…"))
         XCTAssertLessThan(truncated.count, 60)
+
+        // Settled mode (`movedBlockID` provided) checks whether the moved block actually landed first.
+        let movedFirst = [snap("moved", text: "Moved"), snap("first", text: "Intro paragraph")]
+        XCTAssertEqual(
+            NativeBlockDragAnnouncement.message(
+                for: .before("first"), movedBlockID: "moved", in: movedFirst, labels: labels),
+            "Moved to top")
+        let movedSecond = [
+            snap("inserted", text: "New top"), snap("moved", text: "Moved"), snap("first", text: "Intro paragraph"),
+        ]
+        XCTAssertEqual(
+            NativeBlockDragAnnouncement.message(
+                for: .before("first"), movedBlockID: "moved", in: movedSecond, labels: labels),
+            "Moved before Intro paragraph")
     }
 
     // MARK: - Coordinator & Real NativeTextView Integration
@@ -1666,6 +1680,344 @@ final class NativeBlockDragControllerTests: NativeEditingTestCase {
         XCTAssertEqual(spy.drops, 0, "rejected queued drop must not fire drop haptic")
         XCTAssertTrue(announcements.isEmpty, "rejected queued drop must not post VoiceOver announcement")
         XCTAssertFalse(harness.input.hasInFlightWork)
+    }
+
+    /// Finding 1: VoiceOver drop announcement is built inside `onSettled` from the
+    /// settled surface blocks so it matches the final position and reference text
+    /// even when a preceding barrier moves, deletes, or edits nearby blocks.
+    func testQueuedDropAnnouncementReflectsSettledPositionAndReferenceSummary() async throws {
+        let gate = Latch(open: true)
+        let harness = try await makeHarness(
+            [
+                paragraph("p1", "First"),
+                paragraph("p2", "Second"),
+                paragraph("p3", "Third"),
+            ],
+            hooks: .init(beforeMessage: { await gate.passing() }))
+        addTeardownBlock {
+            gate.open()
+            await harness.close()
+        }
+        let view = harness.session.textView
+        _ = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+        let spy = SpyDragHaptics()
+        drag.haptics = spy
+        var announcements: [String] = []
+        drag.postAnnouncement = { announcements.append($0) }
+
+        // Part A: `p3` is dropped `.before("p1")` while `p1` is first, but a
+        // preceding `moveUp` barrier promotes `p2` above `p1` so `p3` lands second.
+        let p1Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p1")
+        let p3Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p3")
+        XCTAssertTrue(drag.beginDrag(blockID: "p3", atWindowPoint: p3Pt))
+        drag.updateDrag(atWindowPoint: CGPoint(x: p3Pt.x, y: p1Pt.y - 8))
+        XCTAssertEqual(drag.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .before("p1"), depth: 0))
+
+        setSelection(harness, NSRange(location: try location(harness.session, "p2", 0), length: 0))
+        gate.close()
+        XCTAssertTrue(harness.input.performBlockAction(.moveUp), "moving p2 up opens a structural barrier")
+        XCTAssertTrue(drag.endDrag(), "drop queues behind the moveUp barrier")
+
+        gate.open()
+        await harness.settle()
+
+        XCTAssertEqual(harness.session.surface.blocks.map(\.id), ["p2", "p3", "p1"])
+        XCTAssertEqual(spy.drops, 1)
+        XCTAssertEqual(
+            announcements, ["Moved before First"],
+            "announcement must describe the settled second position, not stale 'Moved to top'")
+
+        // Part B: `p1` is dropped `.before("p2")` (the current top) while a
+        // preceding delete barrier removes `p3` below; `p1` genuinely lands first.
+        spy.drops = 0
+        announcements = []
+        let p1Now = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p1")
+        let p2Now = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p2")
+        XCTAssertTrue(drag.beginDrag(blockID: "p1", atWindowPoint: p1Now))
+        drag.updateDrag(atWindowPoint: CGPoint(x: p1Now.x, y: p2Now.y - 8))
+        XCTAssertEqual(drag.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .before("p2"), depth: 0))
+
+        setSelection(harness, NSRange(location: try location(harness.session, "p3", 0), length: 0))
+        gate.close()
+        XCTAssertTrue(harness.input.performBlockAction(.delete), "deleting middle block p3 opens a structural barrier")
+        XCTAssertTrue(drag.endDrag(), "drop queues behind the delete barrier")
+
+        gate.open()
+        await harness.settle()
+
+        XCTAssertEqual(harness.session.surface.blocks.map(\.id), ["p1", "p2"])
+        XCTAssertEqual(spy.drops, 1)
+        XCTAssertEqual(
+            announcements, ["Moved to top"],
+            "announcement must report 'Moved to top' when the moved block genuinely lands first")
+
+        // Part C: Preceding barrier edits the reference block's text before the queued drop lands.
+        let editGate = Latch(open: true)
+        let editHarness = try await makeHarness(
+            [
+                paragraph("a1", "Alpha"),
+                paragraph("a2", "Old"),
+                paragraph("a3", "Tail"),
+                paragraph("a4", "Keep"),
+            ],
+            hooks: .init(beforeMessage: { await editGate.passing() }))
+        addTeardownBlock {
+            editGate.open()
+            await editHarness.close()
+        }
+        let editView = editHarness.session.textView
+        _ = mount(editView)
+        let editDrag = try XCTUnwrap(editView.blockDragController)
+        let editSpy = SpyDragHaptics()
+        editDrag.haptics = editSpy
+        var editAnnouncements: [String] = []
+        editDrag.postAnnouncement = { editAnnouncements.append($0) }
+
+        let a1Pt = try blockCenterWindowPoint(in: editView, surface: editHarness.session.surface, blockID: "a1")
+        let a3Pt = try blockCenterWindowPoint(in: editView, surface: editHarness.session.surface, blockID: "a3")
+        XCTAssertTrue(editDrag.beginDrag(blockID: "a1", atWindowPoint: a1Pt))
+        editDrag.updateDrag(atWindowPoint: CGPoint(x: a1Pt.x, y: a3Pt.y - 4))
+        XCTAssertEqual(
+            editDrag.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .after("a2"), depth: 0))
+
+        // Multi-block replace across `a2` and `a3` opens a structural barrier that rewrites `a2` to "Renamed".
+        let a2Start = try location(editHarness.session, "a2", 0)
+        let a3End = try location(editHarness.session, "a3", 4)
+        let crossRange = NSRange(location: a2Start, length: a3End - a2Start)
+        editGate.close()
+        XCTAssertTrue(
+            editHarness.input.replace(range: crossRange, with: "Renamed"),
+            "cross-block replace opens an active structural barrier")
+        XCTAssertTrue(editDrag.endDrag(), "drop queues behind the cross-block replace barrier")
+
+        editGate.open()
+        await editHarness.settle()
+
+        XCTAssertEqual(editHarness.session.surface.blocks.map(\.id), ["a2", "a1", "a4"])
+        XCTAssertEqual(editSpy.drops, 1)
+        XCTAssertEqual(
+            editAnnouncements, ["Moved after Renamed"],
+            "announcement must use the reference block's settled text rather than pre-barrier text")
+    }
+
+    /// Finding 2 (part 1): while a queued or in-flight drag move is pending,
+    /// `canReorderBlocks` is false, the handle stays hidden, new drags (handle,
+    /// card long-press, hover) cannot begin, and the handle returns once the
+    /// move settles (whether applied or rejected).
+    func testPendingQueuedMoveHidesHandleBlocksSecondDragAndRestoresHandleOnSettle() async throws {
+        let gate = Latch(open: true)
+        let harness = try await makeHarness(
+            [
+                check("c1", "Task", checked: false),
+                paragraph("p1", "First"),
+                paragraph("p2", "Second"),
+                BlockNoteBlock(node: "divider", props: [], runs: [], id: "d1"),
+            ],
+            hooks: .init(beforeMessage: { await gate.passing() }))
+        addTeardownBlock {
+            gate.open()
+            await harness.close()
+        }
+        let view = harness.session.textView
+        _ = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+        let spy = SpyDragHaptics()
+        drag.haptics = spy
+        var announcements: [String] = []
+        drag.postAnnouncement = { announcements.append($0) }
+
+        setSelection(harness, NSRange(location: try location(harness.session, "p1", 0), length: 0))
+        view.layoutIfNeeded()
+        XCTAssertTrue(harness.input.canReorderBlocks)
+        XCTAssertTrue(drag.isHandleVisible)
+
+        let p1Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p1")
+        let p2Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p2")
+        let d1Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "d1")
+        let d1Local = view.convert(d1Pt, from: nil)
+        let p2Local = view.convert(p2Pt, from: nil)
+
+        XCTAssertTrue(drag.beginDrag(blockID: "p1", atWindowPoint: p1Pt))
+        drag.updateDrag(atWindowPoint: CGPoint(x: p1Pt.x, y: d1Pt.y - 4))
+        XCTAssertEqual(drag.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .after("p2"), depth: 0))
+
+        gate.close()
+        XCTAssertTrue(harness.input.toggleCheckbox(blockID: "c1"))
+        XCTAssertTrue(drag.endDrag())
+
+        // While the queued move is pending, no handle and no second drag may start.
+        XCTAssertFalse(harness.input.canReorderBlocks, "queued move must disable canReorderBlocks")
+        XCTAssertFalse(drag.isHandleVisible, "handle must remain hidden while a queued move is pending")
+        XCTAssertNil(drag.handleBlockID)
+        XCTAssertFalse(drag.beginDrag(blockID: "p2", atWindowPoint: p2Pt), "second drag must not start while pending")
+        XCTAssertFalse(drag.canBeginCardLongPress(at: d1Local), "card long-press must not start while pending")
+        XCTAssertFalse(drag.gestureRecognizerShouldBegin(drag.handleLongPressRecognizer))
+        drag.handleHover(at: p2Local)
+        XCTAssertFalse(drag.isHandleVisible, "hover must not reveal handle while a queued move is pending")
+
+        gate.open()
+        await harness.settle()
+        view.layoutIfNeeded()
+
+        XCTAssertTrue(harness.input.canReorderBlocks)
+        XCTAssertTrue(drag.isHandleVisible, "handle must reappear once the queued move settles")
+        XCTAssertEqual(harness.session.surface.blocks.map(\.id), ["c1", "p2", "p1", "d1"])
+        XCTAssertEqual(spy.drops, 1)
+        XCTAssertEqual(announcements, ["Moved after Second"])
+
+        // When a queued move settles false (target deleted), the handle still returns.
+        spy.drops = 0
+        announcements = []
+        let p1Again = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p1")
+        let c1Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "c1")
+        XCTAssertTrue(drag.beginDrag(blockID: "p1", atWindowPoint: p1Again))
+        drag.updateDrag(atWindowPoint: CGPoint(x: p1Again.x, y: c1Pt.y - 6))
+        XCTAssertEqual(drag.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .before("c1"), depth: 0))
+
+        setSelection(harness, NSRange(location: try location(harness.session, "c1", 0), length: 0))
+        gate.close()
+        XCTAssertTrue(harness.input.performBlockAction(.delete))
+        XCTAssertTrue(drag.endDrag())
+        XCTAssertFalse(harness.input.canReorderBlocks)
+        XCTAssertFalse(drag.isHandleVisible)
+
+        gate.open()
+        await harness.settle()
+        view.layoutIfNeeded()
+
+        XCTAssertTrue(harness.input.canReorderBlocks)
+        XCTAssertTrue(drag.isHandleVisible, "handle must reappear after a rejected queued move settles")
+        XCTAssertEqual(spy.drops, 0)
+        XCTAssertTrue(announcements.isEmpty)
+    }
+
+    /// Finding 2 (part 2): `endEditingMode()` drops queued `.moveBlock` intents
+    /// while preserving held typing keys, and `onSettled` suppresses haptic and
+    /// VoiceOver feedback if editing ended or the controller was torn down.
+    func testEndEditingModeDropsQueuedMovesPreservesHeldKeysAndSuppressesFeedback() async throws {
+        // Part A: `endEditingMode()` drops queued `.moveBlock` while preserving held keys.
+        let gateA = Latch(open: true)
+        let harnessA = try await makeHarness(
+            [
+                check("c1", "Task", checked: false),
+                paragraph("p1", "First"),
+                paragraph("p2", "Second"),
+                paragraph("p3", "Third"),
+            ],
+            hooks: .init(beforeMessage: { await gateA.passing() }))
+        addTeardownBlock {
+            gateA.open()
+            await harnessA.close()
+        }
+        let viewA = harnessA.session.textView
+        _ = mount(viewA)
+        let dragA = try XCTUnwrap(viewA.blockDragController)
+        let spyA = SpyDragHaptics()
+        dragA.haptics = spyA
+        var announcementsA: [String] = []
+        dragA.postAnnouncement = { announcementsA.append($0) }
+
+        let p1Pt = try blockCenterWindowPoint(in: viewA, surface: harnessA.session.surface, blockID: "p1")
+        let p3Pt = try blockCenterWindowPoint(in: viewA, surface: harnessA.session.surface, blockID: "p3")
+        XCTAssertTrue(dragA.beginDrag(blockID: "p1", atWindowPoint: p1Pt))
+        dragA.updateDrag(atWindowPoint: CGPoint(x: p1Pt.x, y: p3Pt.y - 4))
+        XCTAssertEqual(dragA.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .after("p2"), depth: 0))
+
+        let p3End = try location(harnessA.session, "p3", 5)
+        setSelection(harnessA, NSRange(location: p3End, length: 0))
+        gateA.close()
+        XCTAssertTrue(harnessA.input.toggleCheckbox(blockID: "c1"))
+        XCTAssertTrue(dragA.endDrag(), "drop queues behind checkbox barrier")
+        // Also hold a typing key behind the same barrier.
+        _ = harnessA.input.textView(viewA, shouldChangeTextIn: viewA.selectedRange, replacementText: "!")
+
+        // Exit editing mode, then re-enable `isEditable` before opening the gate so
+        // only dropping the `.moveBlock` intent in `endEditingMode()` stops the move
+        // while allowing the preserved held key to replay.
+        viewA.isEditable = false
+        harnessA.input.endEditingMode()
+        XCTAssertFalse(harnessA.input.canReorderBlocks)
+        viewA.isEditable = true
+        XCTAssertTrue(harnessA.input.canReorderBlocks, "queued move must already be cleared on endEditingMode")
+
+        gateA.open()
+        await harnessA.settle()
+
+        XCTAssertEqual(
+            harnessA.session.surface.blocks.map(\.id), ["c1", "p1", "p2", "p3"],
+            "abandoned queued drop must not apply after endEditingMode()")
+        let p3Text = harnessA.session.surface.blocks.first { $0.id == "p3" }?.runs.map(\.text).joined()
+        XCTAssertEqual(p3Text, "Third!", "held typing keys must remain preserved across endEditingMode()")
+        XCTAssertEqual(spyA.drops, 0)
+        XCTAssertTrue(announcementsA.isEmpty)
+
+        // Part B: An already-in-flight `.moveBlock` barrier settling after leaving editing mode fires no feedback.
+        let gateB = Latch(open: true)
+        let harnessB = try await makeHarness(
+            [paragraph("p1", "First"), paragraph("p2", "Second"), paragraph("p3", "Third")],
+            hooks: .init(beforeMessage: { await gateB.passing() }))
+        addTeardownBlock {
+            gateB.open()
+            await harnessB.close()
+        }
+        let viewB = harnessB.session.textView
+        _ = mount(viewB)
+        let dragB = try XCTUnwrap(viewB.blockDragController)
+        let spyB = SpyDragHaptics()
+        dragB.haptics = spyB
+        var announcementsB: [String] = []
+        dragB.postAnnouncement = { announcementsB.append($0) }
+
+        let b1Pt = try blockCenterWindowPoint(in: viewB, surface: harnessB.session.surface, blockID: "p1")
+        let b3Pt = try blockCenterWindowPoint(in: viewB, surface: harnessB.session.surface, blockID: "p3")
+        XCTAssertTrue(dragB.beginDrag(blockID: "p1", atWindowPoint: b1Pt))
+        dragB.updateDrag(atWindowPoint: CGPoint(x: b1Pt.x, y: b3Pt.y - 4))
+        gateB.close()
+        XCTAssertTrue(dragB.endDrag(), "move posts directly as an in-flight barrier")
+
+        viewB.isEditable = false
+        harnessB.input.endEditingMode()
+
+        gateB.open()
+        await harnessB.settle()
+
+        XCTAssertEqual(spyB.drops, 0, "no drop haptic after editing mode ended")
+        XCTAssertTrue(announcementsB.isEmpty, "no VoiceOver announcement after editing mode ended")
+        XCTAssertFalse(dragB.isHandleVisible)
+
+        // Part C: An already-in-flight `.moveBlock` barrier settling after `tearDown()` fires no feedback.
+        let gateC = Latch(open: true)
+        let harnessC = try await makeHarness(
+            [paragraph("p1", "First"), paragraph("p2", "Second"), paragraph("p3", "Third")],
+            hooks: .init(beforeMessage: { await gateC.passing() }))
+        addTeardownBlock {
+            gateC.open()
+            await harnessC.close()
+        }
+        let viewC = harnessC.session.textView
+        _ = mount(viewC)
+        let dragC = try XCTUnwrap(viewC.blockDragController)
+        let spyC = SpyDragHaptics()
+        dragC.haptics = spyC
+        var announcementsC: [String] = []
+        dragC.postAnnouncement = { announcementsC.append($0) }
+
+        let c1Pt = try blockCenterWindowPoint(in: viewC, surface: harnessC.session.surface, blockID: "p1")
+        let c3Pt = try blockCenterWindowPoint(in: viewC, surface: harnessC.session.surface, blockID: "p3")
+        XCTAssertTrue(dragC.beginDrag(blockID: "p1", atWindowPoint: c1Pt))
+        dragC.updateDrag(atWindowPoint: CGPoint(x: c1Pt.x, y: c3Pt.y - 4))
+        gateC.close()
+        XCTAssertTrue(dragC.endDrag())
+
+        dragC.tearDown()
+
+        gateC.open()
+        await harnessC.settle()
+
+        XCTAssertEqual(spyC.drops, 0, "no drop haptic after controller teardown")
+        XCTAssertTrue(announcementsC.isEmpty, "no VoiceOver announcement after controller teardown")
+        XCTAssertFalse(dragC.isHandleVisible, "teardown must keep handle hidden when move settles")
     }
 }
 

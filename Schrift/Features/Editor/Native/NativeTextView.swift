@@ -28,7 +28,7 @@ final class NativeTextView: UITextView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window != nil {
-            blockDragController?.updateHandle()
+            blockDragController?.didMoveToWindow()
         }
     }
 
