@@ -5,9 +5,32 @@ import UIKit
 final class NativeTextView: UITextView {
     weak var inputCoordinator: NativeInputCoordinator?
     private(set) var mediaDropController: NativeMediaDropController!
+    private(set) var blockDragController: NativeBlockDragController!
     /// UIKit's own marked-text application must reach storage directly; the
     /// command path would refuse it as a second writer.
     private(set) var isApplyingMarkedText = false
+
+    override var isEditable: Bool {
+        didSet {
+            if isEditable != oldValue {
+                blockDragController?.editingModeDidChange()
+            }
+        }
+    }
+
+    override func willMove(toWindow newWindow: UIWindow?) {
+        super.willMove(toWindow: newWindow)
+        if newWindow == nil {
+            blockDragController?.tearDown()
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            blockDragController?.didMoveToWindow()
+        }
+    }
 
     /// The collaborative history's UIKit face (PR07b): Edit ▸ Undo/Redo, the
     /// shake gesture, ⌘Z/⇧⌘Z and the keyboard's undo route to
@@ -643,6 +666,7 @@ final class NativeTextView: UITextView {
     }
 
     private var hasActiveDragOrLongPress: Bool {
+        if blockDragController?.isDragging == true { return true }
         let localActive = (gestureRecognizers ?? []).contains { recognizer in
             guard recognizer !== chipTapRecognizer else { return false }
             let isDragOrPress = recognizer is UIPanGestureRecognizer || recognizer is UILongPressGestureRecognizer
@@ -875,10 +899,12 @@ final class NativeTextView: UITextView {
         super.layoutSubviews()
         blockControls?.completeAspectRatioRefresh(anchor)
         blockControls?.layoutControls()
+        blockDragController?.textViewDidLayout()
         // After the viewport settled: collaborators' cursors on screen (PR10).
         cursorOverlay.layout(in: self)
         chipAccessibilityOverlay.frame = bounds
         orderAuxiliarySubviews()
+        blockDragController?.bringChromeToFront(in: self)
         mediaDropController?.bringIndicatorsToFront(in: self)
         if !hasReportedFirstVisibleContent {
             if !NativeEditorDiagnosticsStore.shared.isCollecting {
@@ -923,6 +949,27 @@ final class NativeTextView: UITextView {
                 return $0.frame.minY < $1.frame.minY
             }
             return $0.frame.minX < $1.frame.minX
+        }
+        if let dragHandle = blockDragController?.handleView, !dragHandle.isHidden, dragHandle.superview === self {
+            let rowControlIDs: Set<ObjectIdentifier>
+            if let handleBlockID = blockDragController?.handleBlockID {
+                var ids = Set((blockControls?.controlViews(for: handleBlockID) ?? []).map(ObjectIdentifier.init))
+                for view in mid {
+                    if let attachment = view as? NativeAttachmentView, attachment.content.blockID == handleBlockID {
+                        ids.insert(ObjectIdentifier(view))
+                    }
+                }
+                rowControlIDs = ids
+            } else {
+                rowControlIDs = []
+            }
+            if let lastRowControlIndex = mid.lastIndex(where: { rowControlIDs.contains(ObjectIdentifier($0)) }) {
+                mid.insert(dragHandle, at: lastRowControlIndex + 1)
+            } else if let nextRowIndex = mid.firstIndex(where: { $0.frame.minY > dragHandle.frame.minY + 0.5 }) {
+                mid.insert(dragHandle, at: nextRowIndex)
+            } else {
+                mid.append(dragHandle)
+            }
         }
         ordered.append(contentsOf: mid)
         if let footerAccessoryView, footerAccessoryView.superview === self {
@@ -1037,8 +1084,13 @@ final class NativeTextView: UITextView {
         (textLayoutManager?.textContentManager as? NSTextContentStorage)?.delegate = blockControls
         accessibilityCustomRotors = [blockControls.headingRotor]
         // Chrome colours resolve at draw time: light/dark only redraws.
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: NativeTextView, _) in
+        registerForTraitChanges([
+            UITraitUserInterfaceStyle.self,
+            UITraitPreferredContentSizeCategory.self,
+            UITraitHorizontalSizeClass.self,
+        ]) { (view: NativeTextView, _) in
             view.blockControls.invalidateChrome()
+            view.blockDragController?.traitEnvironmentDidChange()
         }
         isEditable = false
         isSelectable = true
@@ -1077,6 +1129,7 @@ final class NativeTextView: UITextView {
         mediaDropController = NativeMediaDropController(textView: self)
         addInteraction(UIDropInteraction(delegate: mediaDropController))
         textDropDelegate = mediaDropController
+        blockDragController = NativeBlockDragController(textView: self)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

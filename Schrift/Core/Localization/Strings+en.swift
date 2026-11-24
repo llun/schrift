@@ -611,5 +611,11 @@ enum Strings_en {
         .native_editor_waiting_classic_discard_title: "Discard offline edits?",
         .native_editor_waiting_classic_discard_message:
             "Your unsynced changes on this device will be permanently deleted.",
+        .native_editor_drag_handle: "Drag to reorder",
+        .native_editor_drag_moved_to_top: "Moved to top",
+        .native_editor_drag_moved_before: "Moved before %@",
+        .native_editor_drag_moved_after: "Moved after %@",
+        .native_editor_drag_moved_inside: "Moved inside %@",
+        .native_editor_drag_nested_count: "+%d nested",
     ]
 }

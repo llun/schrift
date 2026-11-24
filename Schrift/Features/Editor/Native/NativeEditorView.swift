@@ -842,7 +842,22 @@ extension NativeEditorLabels {
             blockMenu: loc[.native_editor_block_actions],
             blockActions: Dictionary(
                 uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) }),
-            pasteAndMatchStyle: loc[.native_editor_paste_and_match_style])
+            pasteAndMatchStyle: loc[.native_editor_paste_and_match_style],
+            dragHandle: loc[.native_editor_drag_handle],
+            dragMovedToTop: loc[.native_editor_drag_moved_to_top],
+            dragMovedBefore: loc[.native_editor_drag_moved_before],
+            dragMovedAfter: loc[.native_editor_drag_moved_after],
+            dragMovedInside: loc[.native_editor_drag_moved_inside],
+            dragNestedCount: loc[.native_editor_drag_nested_count],
+            divider: loc[.editor_divider_a11y],
+            paragraph: loc[.native_editor_block_paragraph],
+            heading: loc[.native_editor_block_heading],
+            callout: loc[.native_editor_block_callout],
+            bulletList: loc[.editor_slash_bulleted_list],
+            numberedList: loc[.editor_slash_numbered_list],
+            checklist: loc[.editor_slash_checklist],
+            quote: loc[.editor_slash_quote],
+            codeBlock: loc[.editor_slash_code_block])
     }
 }
 

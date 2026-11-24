@@ -82,6 +82,22 @@ struct NativeEditorLabels: Equatable {
     var blockActions = Dictionary(
         uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, Strings_en.table[$0.labelKey]!) })
     var pasteAndMatchStyle = Strings_en.table[.native_editor_paste_and_match_style]!
+    /// Drag-to-reorder handle label, nested badge and VoiceOver drop announcements.
+    var dragHandle = Strings_en.table[.native_editor_drag_handle]!
+    var dragMovedToTop = Strings_en.table[.native_editor_drag_moved_to_top]!
+    var dragMovedBefore = Strings_en.table[.native_editor_drag_moved_before]!
+    var dragMovedAfter = Strings_en.table[.native_editor_drag_moved_after]!
+    var dragMovedInside = Strings_en.table[.native_editor_drag_moved_inside]!
+    var dragNestedCount = Strings_en.table[.native_editor_drag_nested_count]!
+    var divider = Strings_en.table[.editor_divider_a11y]!
+    var paragraph = Strings_en.table[.native_editor_block_paragraph]!
+    var heading = Strings_en.table[.native_editor_block_heading]!
+    var callout = Strings_en.table[.native_editor_block_callout]!
+    var bulletList = Strings_en.table[.editor_slash_bulleted_list]!
+    var numberedList = Strings_en.table[.editor_slash_numbered_list]!
+    var checklist = Strings_en.table[.editor_slash_checklist]!
+    var quote = Strings_en.table[.editor_slash_quote]!
+    var codeBlock = Strings_en.table[.editor_slash_code_block]!
 }
 
 /// Disposable presentation, never a serialization or write-back source.

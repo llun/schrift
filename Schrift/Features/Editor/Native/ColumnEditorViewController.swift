@@ -798,7 +798,10 @@ final class ColumnTextContainer: UIScrollView {
     override func layoutSubviews() {
         super.layoutSubviews()
         place()
-        if let view = pendingReveal {
+        if frames.contains(where: { $0.textView.blockDragController?.isDragging == true }) {
+            pendingReveal = nil
+            pinnedCaret = nil
+        } else if let view = pendingReveal {
             pendingReveal = nil
             reveal(view)
         } else if let view = pinnedCaret, view.isFirstResponder, !caretIsVisible(view) {
@@ -873,6 +876,20 @@ final class ColumnTextContainer: UIScrollView {
         }
     }
 
+    /// The valid vertical scroll-offset bounds for `textView`'s column region.
+    /// Callers clamp strictly in the direction of travel so auto-scroll never
+    /// moves opposite to velocity when the container starts outside this range.
+    func scrollBounds(for textView: NativeTextView) -> ClosedRange<CGFloat>? {
+        guard let region = regions[ObjectIdentifier(textView)] else { return nil }
+        let topSafe = adjustedContentInset.top - contentInset.top
+        let bottomSafe = adjustedContentInset.bottom - contentInset.bottom
+        let containerMin = -adjustedContentInset.top
+        let containerMax = max(containerMin, contentSize.height + adjustedContentInset.bottom - bounds.height)
+        let minOffset = max(containerMin, min(containerMax, region.minY - topSafe))
+        let maxOffset = max(minOffset, min(containerMax, region.maxY - bounds.height + bottomSafe))
+        return minOffset...maxOffset
+    }
+
     /// The part of `region` on screen; off screen, a screen of it (at most)
     /// at the edge nearest the screen, so the text view stays a real viewport.
     static func viewport(_ region: CGRect, visible: CGRect) -> CGRect {
@@ -894,7 +911,9 @@ final class ColumnTextContainer: UIScrollView {
         let moved = view.isFirstResponder && selections[id] != view.selectedRange
         selections[id] = view.selectedRange
         if scrolled || moved {
-            if view.isFirstResponder { pendingReveal = view }
+            if view.isFirstResponder, view.blockDragController?.isDragging != true {
+                pendingReveal = view
+            }
             setNeedsLayout()
         }
     }
