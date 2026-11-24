@@ -711,7 +711,13 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   edit menu and via `⌘⇧V`) pastes bounded plain text from an explicit plain-text pasteboard
   type literally without converting HTML-only pasteboards (and fills a multi-cell selection
   with that plain text). Partial-block copies without inline objects stay plain
-  text. Drag to reorder is not built. Tests: `NativeBlockCommandsTests`,
+  text. Arbitrary single-subtree moves use `.moveBlock(NativeMoveDestination)`
+  (`.before`/`.after`/`.firstChild(of:)`), `BlockNoteWriter.moveBlockAsFirstChild`,
+  `NativeBlockReorder.dropTarget` (clamping depth, keeping tables, media and column
+  groups at depth 0, and refusing folded toggles, locked/opaque blocks, own subtrees
+  and no-ops), and `NativeInputCoordinator.moveBlock(_:to:)` (one undo step, selection
+  following the moved block, within the document or one open column); the drag gesture
+  UI is not built yet. Tests: `NativeBlockCommandsTests`, `NativeBlockReorderTests`,
   `NativeClipboardTests`, `NativePasteAsBlocksTests` (round trip byte-identical but for ids,
   malformed/oversized payloads, web HTML, Markdown, slice merge, table cells, code blocks,
   source editors, Paste and Match Style + `⌘⇧V` + edit menu, single-step undo), `BlockNoteTreeOracleTests.testMovesMatchTheBlockNoteCaptures`
