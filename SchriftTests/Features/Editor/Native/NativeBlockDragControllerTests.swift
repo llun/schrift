@@ -1208,6 +1208,27 @@ final class NativeBlockDragControllerTests: NativeEditingTestCase {
     /// Finding #2: in `orderAuxiliarySubviews`, the drag handle sits after its own
     /// row's block controls (checkbox/toggle) so it wins hit-testing over its own
     /// pixels while keeping sensible row-by-row reading order.
+    func testHandleReordersAfterItsNewRowsControlsWithoutALayoutPass() async throws {
+        let harness = try await makeHarness([
+            check("c1", "First checklist item"),
+            toggle("t1", "Toggle row", children: [paragraph("t1-c", "Child")]),
+        ])
+        addTeardownBlock { await harness.close() }
+        let view = harness.session.textView
+        _ = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+        setSelection(harness, NSRange(location: try location(harness.session, "c1", 0), length: 0))
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        let toggle1 = try XCTUnwrap(view.blockControls.toggleButtons["t1"])
+
+        // A caret move within the laid-out viewport moves the handle without a layout pass.
+        setSelection(harness, NSRange(location: try location(harness.session, "t1", 0), length: 0))
+        let handleIdx = try XCTUnwrap(view.subviews.firstIndex { $0 === drag.handleView })
+        let toggle1Idx = try XCTUnwrap(view.subviews.firstIndex { $0 === toggle1 })
+        XCTAssertGreaterThan(handleIdx, toggle1Idx, "the handle must order after its new row's toggle at once")
+    }
+
     func testCheckboxAndToggleRowHandleWinsHitTestOverItsOwnPixels() async throws {
         let harness = try await makeHarness([
             check("c1", "First checklist item"),

@@ -992,8 +992,17 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
         handleView.isRightToLeft = isRTL
         handleView.textLeadingBoundaryX = textLeadingX - frameX
         handleView.applyTheme(controls: textView.blockControls)
+        let moved = handleView.isHidden || orderedHandleBlockID != targetID
         handleView.isHidden = false
+        // Hit-testing and VoiceOver follow subview order, which only a layout pass refreshes otherwise.
+        if moved {
+            orderedHandleBlockID = targetID
+            textView.orderAuxiliarySubviews()
+        }
     }
+
+    /// The block the handle was last ordered beside in the text view's subviews.
+    private var orderedHandleBlockID: String?
 
     private func hideHandle(clearTarget: Bool) {
         if clearTarget {
