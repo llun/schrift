@@ -32,7 +32,12 @@ final class FakeWebSocket: WebSocketConnecting, @unchecked Sendable {
         }
     }
 
-    func sendPing() async throws { lock.withLock { _pingCount += 1 } }
+    func sendPing() async throws {
+        try lock.withLock {
+            if let error = _closedError { throw error }
+            _pingCount += 1
+        }
+    }
 
     func receiveData() async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
