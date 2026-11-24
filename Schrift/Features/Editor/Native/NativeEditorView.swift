@@ -494,13 +494,15 @@ extension NativeEditorView {
         }
     }
 
-    private func handleEmptyBodyTap() {
+    func handleEmptyBodyTap() {
         guard !isEditing, canEditDocument else { return }
-        session.requestBodyFocusWhenReady()
         if let onRequestEdit {
             onRequestEdit()
         } else {
             session.setEditing(true)
+        }
+        if session.textView.isEditable {
+            session.requestBodyFocusWhenReady()
         }
     }
 

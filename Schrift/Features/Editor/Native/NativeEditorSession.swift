@@ -866,20 +866,28 @@ final class NativeEditorSession {
     func setExpectedWritable(_ writable: Bool) {
         isWritable = writable
         if !writable {
+            pendingBodyFocus = false
             textView.isEditable = false
         }
         textView.setNeedsLayout()
     }
 
-    /// Arms a one-shot focus request for `textView` once it is editable, in a
-    /// window, and holds at least one block (used when tapping an empty body).
+    var hasPendingBodyFocus: Bool { pendingBodyFocus }
+
+    /// Arms a one-shot focus request for `textView` once it is editable and in
+    /// a window (used when tapping an empty body). Does nothing if editing has
+    /// not actually begun.
     func requestBodyFocusWhenReady() {
+        guard textView.isEditable else {
+            pendingBodyFocus = false
+            return
+        }
         pendingBodyFocus = true
         fulfillPendingBodyFocusIfReady()
     }
 
     private func fulfillPendingBodyFocusIfReady() {
-        guard pendingBodyFocus, textView.isEditable, textView.window != nil, !surface.blocks.isEmpty else { return }
+        guard pendingBodyFocus, textView.isEditable, textView.window != nil else { return }
         pendingBodyFocus = false
         if !textView.isFirstResponder {
             _ = textView.becomeFirstResponder()
@@ -897,6 +905,7 @@ final class NativeEditorSession {
     func setEditing(_ editing: Bool) {
         if editing {
             guard let input, !input.isFrozen, !input.isDetached, isWritable else {
+                pendingBodyFocus = false
                 textView.isEditable = false
                 return
             }
@@ -905,9 +914,6 @@ final class NativeEditorSession {
                 pendingEditStartNs = DispatchTime.now().uptimeNanoseconds
             }
             textView.isEditable = true
-            if table == nil, column == nil, source == nil, !hasUnsupportedRoot, canType {
-                input.seedEmptyParagraphIfNeeded()
-            }
             input.refreshSelectionMarks()
             fulfillPendingBodyFocusIfReady()
             if collecting, textView.isFirstResponder {

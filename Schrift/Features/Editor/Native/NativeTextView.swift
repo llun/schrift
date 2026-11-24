@@ -33,19 +33,24 @@ final class NativeTextView: UITextView {
         }
     }
 
-    /// Every block owns a trailing synthetic `"\n"` paragraph separator, so
-    /// `endOfDocument` sits past the last separator where no block owns a caret.
-    /// Clamp tap hit-tests that land below the last line (including below a
-    /// newly seeded empty paragraph) to the end of the last block's text.
+    /// Clamp hit-tests past the last visible block's text to the end of that
+    /// block's text range (skipping trailing synthetic `"\n"` and hidden blocks).
     override func closestPosition(to point: CGPoint) -> UITextPosition? {
         guard let position = super.closestPosition(to: point) else { return nil }
-        if textStorage.length > 0, compare(position, to: endOfDocument) == .orderedSame,
-            let surface = blockControls?.surface, !surface.rangeIndex.entries.isEmpty,
-            let clamped = self.position(from: endOfDocument, offset: -1)
-        {
-            return clamped
-        }
-        return position
+        return clampedClosestPosition(for: position)
+    }
+
+    func clampedClosestPosition(for position: UITextPosition) -> UITextPosition {
+        guard textStorage.length > 0, markedTextRange == nil,
+            let surface = blockControls?.surface,
+            surface.rangeIndex.length == textStorage.length,
+            let lastVisible = surface.rangeIndex.entries.indices.reversed().first(where: {
+                !surface.isHidden(position: $0)
+            })
+        else { return position }
+        let visibleEnd = NSMaxRange(surface.rangeIndex.entries[lastVisible].textRange)
+        guard offset(from: beginningOfDocument, to: position) > visibleEnd else { return position }
+        return self.position(from: beginningOfDocument, offset: visibleEnd) ?? position
     }
 
     /// The collaborative history's UIKit face (PR07b): Edit ▸ Undo/Redo, the
@@ -67,7 +72,7 @@ final class NativeTextView: UITextView {
     /// An unsupported composition keeps the preserved read-only refusal.
     override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
         guard !isApplyingMarkedText else { return super.setMarkedText(markedText, selectedRange: selectedRange) }
-        mark(markedText) { super.setMarkedText(markedText, selectedRange: selectedRange) }
+        mark(markedText, selectedRange: selectedRange) { super.setMarkedText(markedText, selectedRange: selectedRange) }
     }
 
     /// The system Japanese and Chinese keyboards mark attributed (segmented)
@@ -76,20 +81,28 @@ final class NativeTextView: UITextView {
         guard !isApplyingMarkedText else {
             return super.setAttributedMarkedText(markedText, selectedRange: selectedRange)
         }
-        mark(markedText?.string) { super.setAttributedMarkedText(markedText, selectedRange: selectedRange) }
+        mark(markedText?.string, attributed: markedText, selectedRange: selectedRange) {
+            super.setAttributedMarkedText(markedText, selectedRange: selectedRange)
+        }
     }
 
-    private func mark(_ markedText: String?, apply: () -> Void) {
+    private func mark(
+        _ markedText: String?, attributed: NSAttributedString? = nil, selectedRange: NSRange, apply: () -> Void
+    ) {
         guard let inputCoordinator, isEditable else { return }
         guard let markedText, !markedText.isEmpty else {
             dropMarkedText()
             inputCoordinator.cancelComposition()
             return
         }
-        guard inputCoordinator.beginComposition(markedText: markedText) else {
+        guard
+            inputCoordinator.beginComposition(
+                markedText: markedText, attributed: attributed, selectedRange: selectedRange)
+        else {
             inputCoordinator.refuseComposition()
             return
         }
+        guard inputCoordinator.composition.isActive else { return }
         isApplyingMarkedText = true
         apply()
         isApplyingMarkedText = false
@@ -99,7 +112,8 @@ final class NativeTextView: UITextView {
     /// displays and reconciles it to the projection, so clear the marked
     /// state first.
     override func unmarkText() {
-        guard let inputCoordinator, inputCoordinator.composition.isActive else {
+        guard let inputCoordinator, inputCoordinator.composition.isActive || inputCoordinator.hasWaitingMarkedText
+        else {
             super.unmarkText()
             return
         }
@@ -127,6 +141,10 @@ final class NativeTextView: UITextView {
             }
             return
         }
+        if inputCoordinator.hasWaitingMarkedText {
+            inputCoordinator.commitComposition(text: text)
+            return
+        }
         let location = offset(from: beginningOfDocument, to: range.start)
         let length = offset(from: range.start, to: range.end)
         inputCoordinator.replace(range: NSRange(location: location, length: length), with: text)
@@ -146,7 +164,9 @@ final class NativeTextView: UITextView {
         // structural; while a barrier is in flight every key is held (PR08b).
         // Typing over a CellSelection clears it (PR11c); the text goes into the active cell.
         if !inputCoordinator.composition.isActive { _ = inputCoordinator.tableKey?(.typing) }
-        if inputCoordinator.composition.isActive, text != "\n", text != "\r", text != "\t" {
+        if inputCoordinator.composition.isActive || inputCoordinator.hasWaitingMarkedText,
+            text != "\n", text != "\r", text != "\t"
+        {
             dropMarkedText()
             inputCoordinator.commitComposition(text: text)
             return
@@ -810,18 +830,31 @@ final class NativeTextView: UITextView {
         if !isFirstResponder {
             _ = becomeFirstResponder()
         }
-        if selectedRange.length == 0, let pos = closestPosition(to: point) {
-            let wordRange =
-                tokenizer.rangeEnclosingPosition(
-                    pos, with: .word, inDirection: UITextDirection.storage(.backward))
-                ?? tokenizer.rangeEnclosingPosition(
-                    pos, with: .word, inDirection: UITextDirection.storage(.forward))
-            if let wordRange {
-                selectedTextRange = wordRange
-            } else {
-                selectedTextRange = textRange(from: pos, to: pos)
-            }
+        if selectedRange.length == 0 {
+            selectWordForDoubleTap(at: point)
         }
+    }
+
+    func selectWordForDoubleTap(at point: CGPoint) {
+        guard let pos = closestPosition(to: point) else { return }
+        let wordRange =
+            tokenizer.rangeEnclosingPosition(
+                pos, with: .word, inDirection: UITextDirection.storage(.backward))
+            ?? tokenizer.rangeEnclosingPosition(
+                pos, with: .word, inDirection: UITextDirection.storage(.forward))
+        if let wordRange, !touchesHiddenContent(wordRange) {
+            selectedTextRange = wordRange
+        } else {
+            selectedTextRange = textRange(from: pos, to: pos)
+        }
+    }
+
+    private func touchesHiddenContent(_ range: UITextRange) -> Bool {
+        guard let surface = blockControls?.surface else { return false }
+        let start = offset(from: beginningOfDocument, to: range.start)
+        let end = offset(from: beginningOfDocument, to: range.end)
+        guard start >= 0, end > start else { return false }
+        return surface.isHidden(atUTF16: start) || surface.isHidden(atUTF16: end - 1)
     }
 
     /// Handles a tap at `point` (in this text view's coordinates), invoking
