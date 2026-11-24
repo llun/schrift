@@ -1292,6 +1292,26 @@ final class NativeBlockDragControllerTests: NativeEditingTestCase {
 
     /// Finding #3: removing the text view from its window tears down the handle,
     /// and returning it to a window restores the handle without a selection change.
+    func testHandleReturnsAfterACancelledComposition() async throws {
+        let harness = try await makeHarness([paragraph("p1", "First"), paragraph("p2", "Second")])
+        addTeardownBlock { await harness.close() }
+        let view = harness.session.textView
+        _ = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+        setSelection(harness, NSRange(location: try location(harness.session, "p1", 5), length: 0))
+        view.layoutIfNeeded()
+        XCTAssertTrue(drag.isHandleVisible)
+
+        view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        XCTAssertFalse(drag.isHandleVisible, "composition hides the handle")
+        // Deleting the marked text cancels the composition without a selection change.
+        view.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+        await harness.settle()
+        view.layoutIfNeeded()
+        XCTAssertTrue(drag.isHandleVisible, "the handle returns once the composition ends")
+        XCTAssertEqual(drag.handleBlockID, "p1")
+    }
+
     func testHandleReappearsAfterWindowRemovalAndReturnWithoutSelectionChange() async throws {
         let harness = try await makeHarness([
             paragraph("p1", "First"),

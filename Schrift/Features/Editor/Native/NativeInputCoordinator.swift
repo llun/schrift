@@ -564,6 +564,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         surface.holdForComposition(false)
         drain(forceSelectionRefresh: true)
         keepSelectionVisible()
+        // Composition hid the drag handle; a cancelled or empty commit changes no selection to bring it back.
+        view?.blockDragController?.updateHandle()
     }
 
     /// Applies one delivery: its patches in order, then its result, as one
