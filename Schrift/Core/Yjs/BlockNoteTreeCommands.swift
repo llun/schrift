@@ -119,6 +119,47 @@ extension BlockNoteWriter {
         }
     }
 
+    /// Moves the block and its subtree to become the first child of `parent`
+    /// (creating `parent`'s nested `blockGroup` when absent); the original
+    /// goes, and so does any nested group it leaves empty. Identity is not
+    /// preserved.
+    @discardableResult
+    func moveBlockAsFirstChild(
+        _ item: YItem, id: String, into parent: YType, parentID: String? = nil
+    ) throws -> Data {
+        guard !item.deleted, case .type(let container) = item.content else { throw Error.missingBlock(id) }
+        guard parent.typeRef == .xmlElement(nodeName: "blockContainer") else {
+            let label: String =
+                if let parentID {
+                    parentID
+                } else if case .xmlElement(let node)? = parent.typeRef {
+                    node
+                } else {
+                    "parent"
+                }
+            throw Error.malformedBlock(label)
+        }
+        let last = children(parent).last
+        var nested: YType?
+        if let last, case .type(let type) = last.content, type.typeRef == .xmlElement(nodeName: "blockGroup") {
+            nested = type
+        }
+        let copy = try snapshot(container, block: id, depth: 0)
+        return try transaction { tx in
+            let group: YType
+            if let nested {
+                group = nested
+            } else {
+                group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+                guard try YWrite.insertAfter(tx, into: parent, after: last, [.type(group)]) != nil else {
+                    throw Error.malformedBlock(parentID ?? id)
+                }
+            }
+            try insertCopy(tx, copy, into: group, after: nil)
+            removeBlock(tx, item)
+        }
+    }
+
     /// `removeBlocks` for one block and its subtree. A nested group left
     /// empty goes too (ProseMirror's `blockGroup` needs a child); the root
     /// group's last block is the caller's to refuse.

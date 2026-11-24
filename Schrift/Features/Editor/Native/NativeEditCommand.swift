@@ -47,6 +47,9 @@ struct NativeEditCommand: Equatable, Sendable {
         /// child, past the group's end out beside the parent.
         case moveUp
         case moveDown
+        /// Moves `blockID` and its nested subtree to an arbitrary validated
+        /// tree placement (`NativeMoveDestination`) in one transaction.
+        case moveBlock(NativeMoveDestination)
         /// A copy of `blockID`'s subtree after it, every container taking the
         /// next of `newIDs` in preorder.
         case duplicate(newIDs: [String])
@@ -143,7 +146,7 @@ struct NativeEditCommand: Equatable, Sendable {
         case .replace(_, let replacement, _): return replacement
         case .range(let range): return range.replacement
         case .split, .join, .marks, .markShortcut, .props, .blockType, .indent, .outdent, .moveUp, .moveDown,
-            .duplicate,
+            .moveBlock, .duplicate,
             .deleteBlock, .insertBlock, .insertSubtrees, .lineBreak, .table, .columns, .insertColumns, .insertMedia,
             .insertMediaBatch, .insertSourceBlock, .insertDivider, .mediaProps, .insertInlineObject,
             .insertInlineMath, .pasteInline, .undo, .redo:
