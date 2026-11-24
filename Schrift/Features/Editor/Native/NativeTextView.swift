@@ -25,6 +25,13 @@ final class NativeTextView: UITextView {
         }
     }
 
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            blockDragController?.updateHandle()
+        }
+    }
+
     /// The collaborative history's UIKit face (PR07b): Edit ▸ Undo/Redo, the
     /// shake gesture, ⌘Z/⇧⌘Z and the keyboard's undo route to
     /// `NativeUndoManager`. Without typing there is none; UIKit-only history
@@ -934,9 +941,6 @@ final class NativeTextView: UITextView {
         if let blockControls {
             mid.append(contentsOf: blockControls.orderedControlViews.filter { $0.superview === self })
         }
-        if let dragHandle = blockDragController?.handleView, !dragHandle.isHidden, dragHandle.superview === self {
-            mid.append(dragHandle)
-        }
         for subview in subviews where subview is NativeAttachmentView {
             mid.append(subview)
         }
@@ -945,6 +949,27 @@ final class NativeTextView: UITextView {
                 return $0.frame.minY < $1.frame.minY
             }
             return $0.frame.minX < $1.frame.minX
+        }
+        if let dragHandle = blockDragController?.handleView, !dragHandle.isHidden, dragHandle.superview === self {
+            let rowControlIDs: Set<ObjectIdentifier>
+            if let handleBlockID = blockDragController?.handleBlockID {
+                var ids = Set((blockControls?.controlViews(for: handleBlockID) ?? []).map(ObjectIdentifier.init))
+                for view in mid {
+                    if let attachment = view as? NativeAttachmentView, attachment.content.blockID == handleBlockID {
+                        ids.insert(ObjectIdentifier(view))
+                    }
+                }
+                rowControlIDs = ids
+            } else {
+                rowControlIDs = []
+            }
+            if let lastRowControlIndex = mid.lastIndex(where: { rowControlIDs.contains(ObjectIdentifier($0)) }) {
+                mid.insert(dragHandle, at: lastRowControlIndex + 1)
+            } else if let nextRowIndex = mid.firstIndex(where: { $0.frame.minY > dragHandle.frame.minY + 0.5 }) {
+                mid.insert(dragHandle, at: nextRowIndex)
+            } else {
+                mid.append(dragHandle)
+            }
         }
         ordered.append(contentsOf: mid)
         if let footerAccessoryView, footerAccessoryView.superview === self {

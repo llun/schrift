@@ -134,6 +134,32 @@ enum NativeBlockDragAutoScroll {
         }
         return 0
     }
+
+    /// Advances `currentOffset` by `velocity * dt` clamped strictly in the
+    /// direction of travel. Never moves opposite to `velocity`, and returns
+    /// `currentOffset` unchanged when already at or beyond the bound in that
+    /// direction.
+    static func clampedNextOffset(
+        currentOffset: CGFloat,
+        velocity: CGFloat,
+        dt: CGFloat,
+        minOffset: CGFloat,
+        maxOffset: CGFloat
+    ) -> CGFloat {
+        guard currentOffset.isFinite, velocity.isFinite, dt.isFinite, dt > 0,
+            minOffset.isFinite, maxOffset.isFinite
+        else { return currentOffset }
+        let proposed = currentOffset + velocity * dt
+        if velocity < 0 {
+            guard currentOffset > minOffset else { return currentOffset }
+            return min(currentOffset, max(minOffset, proposed))
+        }
+        if velocity > 0 {
+            guard currentOffset < maxOffset else { return currentOffset }
+            return max(currentOffset, min(maxOffset, proposed))
+        }
+        return currentOffset
+    }
 }
 
 /// Pure handle-visibility and card-eligibility policy.
@@ -462,6 +488,11 @@ final class NativeBlockDragHandleView: UIControl, UIPointerInteractionDelegate {
     private let pillView = UIView()
     private let iconView = UIImageView()
     private var isPointerHovering = false
+    /// Text-side hit boundary in this view's local X coordinates, computed from
+    /// `textContainerInset + lineFragmentPadding + depthIndent` (RTL-mirrored).
+    var textLeadingBoundaryX: CGFloat?
+    /// Mirrors outward expansion and the text-side boundary in RTL layouts.
+    var isRightToLeft = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -487,12 +518,35 @@ final class NativeBlockDragHandleView: UIControl, UIPointerInteractionDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// Keeps the 22 pt visual chrome in the margin while meeting the 44×44 pt
-    /// minimum touch-target floor (`DocsSpacing.rowMinHeight`).
+    /// Keeps the 22 pt visual chrome in the margin while expanding the hit area
+    /// vertically to 44 pt and outward away from the text, never reaching or
+    /// crossing the text's leading edge (`textLeadingBoundaryX`).
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        let dx = max(0, (DocsSpacing.rowMinHeight - bounds.width) / 2)
         let dy = max(0, (DocsSpacing.rowMinHeight - bounds.height) / 2)
-        return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
+        guard point.y >= bounds.minY - dy, point.y < bounds.maxY + dy else {
+            return false
+        }
+        if isRightToLeft {
+            let minX: CGFloat
+            if let boundary = textLeadingBoundaryX {
+                guard point.x > boundary else { return false }
+                minX = max(bounds.minX, boundary)
+            } else {
+                minX = bounds.minX
+            }
+            let maxX = max(bounds.maxX, minX + DocsSpacing.rowMinHeight)
+            return point.x >= minX && point.x < maxX
+        } else {
+            let maxX: CGFloat
+            if let boundary = textLeadingBoundaryX {
+                guard point.x < boundary else { return false }
+                maxX = min(bounds.maxX, boundary)
+            } else {
+                maxX = bounds.maxX
+            }
+            let minX = min(bounds.minX, maxX - DocsSpacing.rowMinHeight)
+            return point.x >= minX && point.x < maxX
+        }
     }
 
     override var isHighlighted: Bool {
@@ -701,7 +755,7 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
     private var lastWindowPoint: CGPoint = .zero
     private var previewStartCenter: CGPoint = .zero
     private var pendingCardBlockID: String?
-    private var dragStartBoundsSize: CGSize = .zero
+    private var dragStartBoundsWidth: CGFloat = 0
     private var dragStartContentSizeCategory: UIContentSizeCategory = .large
     private var dragStartHorizontalSizeClass: UIUserInterfaceSizeClass = .unspecified
     private var isResolvingDuringLayout = false
@@ -823,19 +877,18 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
         updateHandle()
     }
 
-    /// Called from `NativeTextView.layoutSubviews()`: cancels a drag on size or
-    /// Dynamic Type changes, re-resolves target/dim on content shifts mid-drag,
-    /// and updates contextual handle placement otherwise.
+    /// Called from `NativeTextView.layoutSubviews()`: cancels a drag only on a
+    /// bounds width, horizontal size-class, or Dynamic Type change; re-resolves
+    /// target/dim on height or content shifts mid-drag; updates handle otherwise.
     func textViewDidLayout() {
         guard let textView else { return }
         if let draggedID = draggedBlockID, let surface = textView.blockControls.surface {
             guard !isAutoScrolling else { return }
-            let sizeChanged =
-                abs(textView.bounds.width - dragStartBoundsSize.width) > 0.5
-                || abs(textView.bounds.height - dragStartBoundsSize.height) > 0.5
-            let contentSizeChanged =
+            let widthChanged = abs(textView.bounds.width - dragStartBoundsWidth) > 0.5
+            let traitsChanged =
                 textView.traitCollection.preferredContentSizeCategory != dragStartContentSizeCategory
-            if sizeChanged || contentSizeChanged {
+                || textView.traitCollection.horizontalSizeClass != dragStartHorizontalSizeClass
+            if widthChanged || traitsChanged {
                 cancelDrag()
                 return
             }
@@ -916,20 +969,28 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
             firstLineMidY = blockFragment?.firstLineMetrics?.midY ?? min(fragFrame.height / 2, 12)
         }
 
+        let padding = textView.textContainer.lineFragmentPadding
         let gutter = NativeDropLayoutHelper.scaledListGutter(for: textView)
         let depthInset = CGFloat(block.depth) * gutter
         let width = NativeBlockDragMetrics.handleWidth
         let height = NativeBlockDragMetrics.handleHeight
+        let isRTL = textView.effectiveUserInterfaceLayoutDirection == .rightToLeft
         let x: CGFloat
-        if textView.effectiveUserInterfaceLayoutDirection == .rightToLeft {
+        let textLeadingX: CGFloat
+        if isRTL {
             let leadingEdge = textView.bounds.width - textView.textContainerInset.right - depthInset
             x = min(textView.bounds.width - width, max(0, leadingEdge))
+            textLeadingX = leadingEdge - padding
         } else {
             let blockLeadX = textView.textContainerInset.left + depthInset
             x = max(0, blockLeadX - width)
+            textLeadingX = blockLeadX + padding
         }
         let y = fragFrame.minY + firstLineMidY - height / 2
-        handleView.frame = CGRect(x: round(x), y: round(y), width: width, height: height)
+        let frameX = round(x)
+        handleView.frame = CGRect(x: frameX, y: round(y), width: width, height: height)
+        handleView.isRightToLeft = isRTL
+        handleView.textLeadingBoundaryX = textLeadingX - frameX
         handleView.applyTheme(controls: textView.blockControls)
         handleView.isHidden = false
     }
@@ -1041,7 +1102,7 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
         draggedBlockID = blockID
         dragStartWindowPoint = windowPoint
         lastWindowPoint = windowPoint
-        dragStartBoundsSize = textView.bounds.size
+        dragStartBoundsWidth = textView.bounds.width
         dragStartContentSizeCategory = textView.traitCollection.preferredContentSizeCategory
         dragStartHorizontalSizeClass = textView.traitCollection.horizontalSizeClass
         currentCandidate = nil
@@ -1327,7 +1388,12 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
                 minOffsetY,
                 scrollOwner.contentSize.height + scrollOwner.adjustedContentInset.bottom - scrollOwner.bounds.height)
         }
-        let nextY = min(maxOffsetY, max(minOffsetY, scrollOwner.contentOffset.y + velocity * dt))
+        let nextY = NativeBlockDragAutoScroll.clampedNextOffset(
+            currentOffset: scrollOwner.contentOffset.y,
+            velocity: velocity,
+            dt: dt,
+            minOffset: minOffsetY,
+            maxOffset: maxOffsetY)
         guard abs(nextY - scrollOwner.contentOffset.y) > 0.25 else { return false }
 
         isAutoScrolling = true
@@ -1339,7 +1405,6 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
             // before hit-testing and resolving the new drop target.
             scrollOwner.setNeedsLayout()
             scrollOwner.layoutIfNeeded()
-            dragStartBoundsSize = textView.bounds.size
         }
         textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
         if let position = surface.rangeIndex.position(for: draggedID) {
@@ -1350,10 +1415,17 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
     }
 
     private func enclosingScrollOwner(for textView: NativeTextView) -> UIScrollView? {
+        var ancestor = textView.superview
+        while let current = ancestor {
+            if let container = current as? ColumnTextContainer, container.isScrollEnabled {
+                return container
+            }
+            ancestor = current.superview
+        }
         if textView.isScrollEnabled, textView.panGestureRecognizer.isEnabled {
             return textView
         }
-        var ancestor = textView.superview
+        ancestor = textView.superview
         while let current = ancestor {
             if let scroll = current as? UIScrollView, scroll.isScrollEnabled {
                 return scroll
@@ -1377,7 +1449,9 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
             textView.inputCoordinator?.canReorderBlocks == true,
             !isDragging
         else { return false }
-        if !handleView.isHidden, handleView.frame.contains(point) { return false }
+        if !handleView.isHidden, handleView.point(inside: textView.convert(point, to: handleView), with: nil) {
+            return false
+        }
         guard let id = blockID(at: point, in: textView, surface: surface, cardsOnly: true),
             NativeBlockReorder.canDrag(id, in: surface.blocks, expanded: surface.expanded, hidden: surface.hidden)
         else {

@@ -33,6 +33,14 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         Array(checkboxes.values) + Array(languageButtons.values) + Array(toggleButtons.values)
     }
 
+    func controlViews(for blockID: String) -> [UIView] {
+        var views: [UIView] = []
+        if let checkbox = checkboxes[blockID] { views.append(checkbox) }
+        if let toggle = toggleButtons[blockID] { views.append(toggle) }
+        if let language = languageButtons[blockID] { views.append(language) }
+        return views
+    }
+
     /// The display theme (a personal preference, never document data). A
     /// change only redraws.
     var theme: AppTheme = .white {

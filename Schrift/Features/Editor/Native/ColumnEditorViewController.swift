@@ -798,7 +798,10 @@ final class ColumnTextContainer: UIScrollView {
     override func layoutSubviews() {
         super.layoutSubviews()
         place()
-        if let view = pendingReveal {
+        if frames.contains(where: { $0.textView.blockDragController?.isDragging == true }) {
+            pendingReveal = nil
+            pinnedCaret = nil
+        } else if let view = pendingReveal {
             pendingReveal = nil
             reveal(view)
         } else if let view = pinnedCaret, view.isFirstResponder, !caretIsVisible(view) {
@@ -873,8 +876,9 @@ final class ColumnTextContainer: UIScrollView {
         }
     }
 
-    /// The valid vertical scroll-offset range for `textView`'s column region so
-    /// auto-scroll during a drag stays inside the active column.
+    /// The valid vertical scroll-offset bounds for `textView`'s column region.
+    /// Callers clamp strictly in the direction of travel so auto-scroll never
+    /// moves opposite to velocity when the container starts outside this range.
     func scrollBounds(for textView: NativeTextView) -> ClosedRange<CGFloat>? {
         guard let region = regions[ObjectIdentifier(textView)] else { return nil }
         let topSafe = adjustedContentInset.top - contentInset.top
@@ -907,7 +911,9 @@ final class ColumnTextContainer: UIScrollView {
         let moved = view.isFirstResponder && selections[id] != view.selectedRange
         selections[id] = view.selectedRange
         if scrolled || moved {
-            if view.isFirstResponder { pendingReveal = view }
+            if view.isFirstResponder, view.blockDragController?.isDragging != true {
+                pendingReveal = view
+            }
             setNeedsLayout()
         }
     }

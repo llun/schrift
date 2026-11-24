@@ -54,6 +54,12 @@ final class NativeBlockDragControllerTests: NativeEditingTestCase {
             node: "toggleListItem", props: Self.paragraphProps, runs: [InlineRun(text)], id: id, children: children)
     }
 
+    private func check(_ id: String, _ text: String, checked: Bool = false) -> BlockNoteBlock {
+        BlockNoteBlock(
+            node: "checkListItem", props: Self.paragraphProps + [("checked", .bool(checked))],
+            runs: [InlineRun(text)], id: id)
+    }
+
     private func tableDoc() throws -> Data {
         let doc = YDoc(clientID: 1, gc: true)
         defer { doc.destroy() }
@@ -918,12 +924,17 @@ final class NativeBlockDragControllerTests: NativeEditingTestCase {
             col1.textView.contentOffset.y, initialCol1Offset,
             "ColumnTextContainer must lay out col-1 immediately during auto-scroll")
 
-        // Step many times: must clamp at col-1's region and never scroll into col-2.
+        // Step many times: must advance the container and clamp at col-1's settled region, never spilling into col-2.
         for _ in 0..<80 {
             _ = colDrag.performAutoScrollStep(dt: 1.0 / 20.0)
         }
+        let settledCol1Bounds = try XCTUnwrap(container.scrollBounds(for: col1.textView))
+        XCTAssertLessThan(
+            settledCol1Bounds.upperBound, container.contentSize.height - container.bounds.height - 50,
+            "col-1 settled bounds must still stop well before col-2's bottom")
+        XCTAssertGreaterThan(container.contentOffset.y, 100, "auto-scroll must advance the column container")
         XCTAssertLessThanOrEqual(
-            container.contentOffset.y, col1Bounds.upperBound + 0.5,
+            container.contentOffset.y, settledCol1Bounds.upperBound + 0.5,
             "auto-scroll in col-1 must clamp to col-1's region, never spilling into col-2")
         colDrag.cancelDrag()
     }
@@ -983,14 +994,16 @@ final class NativeBlockDragControllerTests: NativeEditingTestCase {
         _ = mount(view)
         let drag = try XCTUnwrap(view.blockDragController)
 
-        // Handle visual width is 22 pt, hit target expands to 44×44 pt.
+        // Handle visual width is 22 pt; hit target expands vertically and outward away from text
+        // to 44×44 pt without crossing the text leading edge (`inset.left + lineFragmentPadding = 21`).
         setSelection(harness, NSRange(location: try location(harness.session, "p1", 0), length: 0))
         view.layoutIfNeeded()
         XCTAssertEqual(drag.handleView.bounds.size, CGSize(width: 22, height: 44))
         XCTAssertTrue(drag.handleView.point(inside: CGPoint(x: -10, y: 22), with: nil))
-        XCTAssertTrue(drag.handleView.point(inside: CGPoint(x: 32, y: 22), with: nil))
-        XCTAssertFalse(drag.handleView.point(inside: CGPoint(x: -13, y: 22), with: nil))
-        XCTAssertFalse(drag.handleView.point(inside: CGPoint(x: 35, y: 22), with: nil))
+        XCTAssertTrue(drag.handleView.point(inside: CGPoint(x: -22, y: 22), with: nil))
+        XCTAssertFalse(drag.handleView.point(inside: CGPoint(x: -24, y: 22), with: nil))
+        XCTAssertFalse(drag.handleView.point(inside: CGPoint(x: 21, y: 22), with: nil))
+        XCTAssertFalse(drag.handleView.point(inside: CGPoint(x: 32, y: 22), with: nil))
 
         // Preview grows past 76 pt and scales its grip icon at Accessibility Extra Extra Extra Large.
         let largeControls = NativeBlockControls(textView: view)
@@ -1097,6 +1110,370 @@ final class NativeBlockDragControllerTests: NativeEditingTestCase {
         XCTAssertTrue(harness.input.undo())
         await harness.settle()
         XCTAssertEqual(harness.session.surface.blocks.map(\.depth), [0, 1, 0])
+    }
+
+    // MARK: - Round 2 Review Regression Coverage
+
+    /// Finding #1: handle hit area may expand vertically and outward away from text,
+    /// but never past the text's leading edge (`textContainerInset + lineFragmentPadding + depthIndent`,
+    /// RTL-mirrored). A tap at the line start must reach the text view, not the handle.
+    func testHitTestAtTextStartReachesTextViewNotHandleInDocumentColumnAndRTL() async throws {
+        // 1) Document (LTR, depth 0 and depth 1).
+        var parent = bullet("b1", "Parent item")
+        parent.children = [paragraph("c1", "Nested child")]
+        let harness = try await makeHarness([paragraph("p1", "Hello world"), parent])
+        addTeardownBlock { await harness.close() }
+        let view = harness.session.textView
+        _ = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+
+        setSelection(harness, NSRange(location: try location(harness.session, "p1", 0), length: 0))
+        view.layoutIfNeeded()
+        XCTAssertTrue(drag.isHandleVisible)
+        let p1Y = drag.handleView.frame.midY
+        let p1TextLeadX = view.textContainerInset.left + view.textContainer.lineFragmentPadding
+
+        // Tap at the exact line start and first character reaches the text view, not the handle.
+        let hitAtStart = view.hitTest(CGPoint(x: p1TextLeadX, y: p1Y), with: nil)
+        XCTAssertNotNil(hitAtStart)
+        XCTAssertTrue(hitAtStart !== drag.handleView, "tap at line start must reach text view, not handle")
+        XCTAssertFalse(
+            drag.handleView.point(
+                inside: view.convert(CGPoint(x: p1TextLeadX, y: p1Y), to: drag.handleView), with: nil),
+            "handle hit area must not include the text's leading edge")
+        let hitFirstChar = view.hitTest(CGPoint(x: p1TextLeadX + 4, y: p1Y), with: nil)
+        XCTAssertTrue(hitFirstChar !== drag.handleView, "tap on first characters must reach text view, not handle")
+        // Tapping the handle's margin center still hits the handle.
+        XCTAssertTrue(
+            view.hitTest(CGPoint(x: drag.handleView.frame.midX, y: p1Y), with: nil) === drag.handleView,
+            "tap on handle margin must still hit handle")
+
+        // Nested depth 1: outward expansion away from text works, text start still reaches text view.
+        setSelection(harness, NSRange(location: try location(harness.session, "c1", 0), length: 0))
+        view.layoutIfNeeded()
+        let c1Y = drag.handleView.frame.midY
+        let gutter = NativeDropLayoutHelper.scaledListGutter(for: view)
+        let c1TextLeadX = view.textContainerInset.left + view.textContainer.lineFragmentPadding + gutter
+        XCTAssertTrue(
+            view.hitTest(CGPoint(x: c1TextLeadX, y: c1Y), with: nil) !== drag.handleView,
+            "tap at nested line start must reach text view")
+        let outwardPt = CGPoint(x: max(1, drag.handleView.frame.minX - 6), y: c1Y)
+        XCTAssertTrue(
+            view.hitTest(outwardPt, with: nil) === drag.handleView,
+            "handle hit area must expand outward away from text into leading margin")
+
+        // 2) Column (LTR, narrow 4 pt inset -> text starts at 9 pt).
+        let colHarness = try await makeHarness(state: try columnDoc())
+        addTeardownBlock { await colHarness.close() }
+        let colSession = try unwrapped(await colHarness.session.openColumn(group: "cl", column: "col-1"))
+        addTeardownBlock { await colSession.close().value }
+        let colView = colSession.textView
+        colView.textContainerInset = UIEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
+        _ = mount(colView)
+        let colDrag = try XCTUnwrap(colView.blockDragController)
+        colSession.input?.focus(at: "c1-a", offset: 0)
+        colView.layoutIfNeeded()
+        XCTAssertTrue(colDrag.isHandleVisible)
+        let colY = colDrag.handleView.frame.midY
+        let colTextLeadX = colView.textContainerInset.left + colView.textContainer.lineFragmentPadding
+        XCTAssertTrue(
+            colView.hitTest(CGPoint(x: colTextLeadX, y: colY), with: nil) !== colDrag.handleView,
+            "tap at column line start must reach text view, not handle")
+        XCTAssertTrue(
+            colView.hitTest(CGPoint(x: colTextLeadX + 6, y: colY), with: nil) !== colDrag.handleView,
+            "tap on first characters in column must reach text view, not handle")
+        XCTAssertTrue(
+            colView.hitTest(CGPoint(x: colTextLeadX - 4, y: colY), with: nil) === colDrag.handleView,
+            "tap in column margin left of text start must still hit handle")
+
+        // 3) RTL mirrored: text starts at bounds.width - inset.right - lineFragmentPadding.
+        setSelection(harness, NSRange(location: try location(harness.session, "p1", 0), length: 0))
+        view.semanticContentAttribute = .forceRightToLeft
+        view.textContainerInset = UIEdgeInsets(top: 16, left: 10, bottom: 16, right: 16)
+        view.layoutIfNeeded()
+        drag.layoutHandle()
+        let rtlY = drag.handleView.frame.midY
+        let rtlTextLeadX = view.bounds.width - view.textContainerInset.right - view.textContainer.lineFragmentPadding
+        XCTAssertTrue(
+            view.hitTest(CGPoint(x: rtlTextLeadX, y: rtlY), with: nil) !== drag.handleView,
+            "RTL tap at line start must reach text view, not handle")
+        XCTAssertTrue(
+            view.hitTest(CGPoint(x: rtlTextLeadX - 6, y: rtlY), with: nil) !== drag.handleView,
+            "RTL tap on first characters must reach text view, not handle")
+        XCTAssertTrue(
+            view.hitTest(CGPoint(x: rtlTextLeadX + 6, y: rtlY), with: nil) === drag.handleView,
+            "RTL tap in trailing margin away from text must hit handle")
+    }
+
+    /// Finding #2: in `orderAuxiliarySubviews`, the drag handle sits after its own
+    /// row's block controls (checkbox/toggle) so it wins hit-testing over its own
+    /// pixels while keeping sensible row-by-row reading order.
+    func testCheckboxAndToggleRowHandleWinsHitTestOverItsOwnPixels() async throws {
+        let harness = try await makeHarness([
+            check("c1", "First checklist item"),
+            toggle("t1", "Toggle row", children: [paragraph("t1-c", "Child")]),
+            check("c2", "Second checklist item"),
+        ])
+        addTeardownBlock { await harness.close() }
+        let view = harness.session.textView
+        _ = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+
+        // Caret on first checklist row c1.
+        setSelection(harness, NSRange(location: try location(harness.session, "c1", 0), length: 0))
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        XCTAssertTrue(drag.isHandleVisible)
+        let checkbox1 = try XCTUnwrap(view.blockControls.checkboxes["c1"])
+        let toggle1 = try XCTUnwrap(view.blockControls.toggleButtons["t1"])
+
+        let checkbox1Idx = try XCTUnwrap(view.subviews.firstIndex { $0 === checkbox1 })
+        let handleIdx = try XCTUnwrap(view.subviews.firstIndex { $0 === drag.handleView })
+        let toggle1Idx = try XCTUnwrap(view.subviews.firstIndex { $0 === toggle1 })
+        XCTAssertGreaterThan(handleIdx, checkbox1Idx, "handle must order after its own row's checkbox for hit-testing")
+        XCTAssertLessThan(handleIdx, toggle1Idx, "handle must stay before the next row's controls in reading order")
+
+        // Handle pixels overlapping checkbox.frame (x=11..<55), including right edge of grip, must hit handle.
+        let handleCenter = CGPoint(x: drag.handleView.frame.midX, y: drag.handleView.frame.midY)
+        let handleOverlap = CGPoint(x: drag.handleView.frame.maxX - 4, y: drag.handleView.frame.midY)
+        XCTAssertTrue(checkbox1.frame.contains(handleOverlap), "sanity check: checkbox frame overlaps handle pixels")
+        XCTAssertTrue(
+            view.hitTest(handleCenter, with: nil) === drag.handleView,
+            "handle must win hit-test at its center on a checkbox row")
+        XCTAssertTrue(
+            view.hitTest(handleOverlap, with: nil) === drag.handleView,
+            "handle must win hit-test over its own pixels overlapping the checkbox's 44 pt frame")
+        // Checkbox center (x=33) sits past the text leading edge, so checkbox must still win.
+        let checkboxCenter = CGPoint(x: checkbox1.frame.midX, y: checkbox1.frame.midY)
+        XCTAssertTrue(
+            view.hitTest(checkboxCenter, with: nil) === checkbox1,
+            "checkbox must still win taps on its own icon")
+
+        // Move caret to toggle row t1 -> handle orders after toggle1 and before checkbox2.
+        setSelection(harness, NSRange(location: try location(harness.session, "t1", 0), length: 0))
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        let checkbox2 = try XCTUnwrap(view.blockControls.checkboxes["c2"])
+        let t1Idx = try XCTUnwrap(view.subviews.firstIndex { $0 === toggle1 })
+        let t1HandleIdx = try XCTUnwrap(view.subviews.firstIndex { $0 === drag.handleView })
+        let c2Idx = try XCTUnwrap(view.subviews.firstIndex { $0 === checkbox2 })
+        XCTAssertGreaterThan(t1HandleIdx, t1Idx, "handle must order after its own row's toggle button")
+        XCTAssertLessThan(t1HandleIdx, c2Idx, "handle must stay before following rows' controls")
+        let toggleOverlap = CGPoint(x: drag.handleView.frame.maxX - 4, y: drag.handleView.frame.midY)
+        XCTAssertTrue(toggle1.frame.contains(toggleOverlap), "sanity check: toggle frame overlaps handle pixels")
+        XCTAssertTrue(
+            view.hitTest(toggleOverlap, with: nil) === drag.handleView,
+            "handle must win hit-test over its own pixels on a toggle row")
+        XCTAssertTrue(
+            view.hitTest(CGPoint(x: toggle1.frame.midX, y: toggle1.frame.midY), with: nil) === toggle1,
+            "toggle button must still win taps on its own disclosure icon")
+    }
+
+    /// Finding #3: removing the text view from its window tears down the handle,
+    /// and returning it to a window restores the handle without a selection change.
+    func testHandleReappearsAfterWindowRemovalAndReturnWithoutSelectionChange() async throws {
+        let harness = try await makeHarness([
+            paragraph("p1", "First"),
+            paragraph("p2", "Second"),
+        ])
+        addTeardownBlock { await harness.close() }
+        let view = harness.session.textView
+        let window = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+
+        setSelection(harness, NSRange(location: try location(harness.session, "p1", 0), length: 0))
+        view.layoutIfNeeded()
+        XCTAssertTrue(drag.isHandleVisible)
+        XCTAssertEqual(drag.handleBlockID, "p1")
+
+        // Simulate navigation push or full-screen cover removing the text view from the window.
+        view.removeFromSuperview()
+        XCTAssertFalse(drag.isHandleVisible)
+        XCTAssertNil(drag.handleBlockID)
+
+        // Return to the window without touching selection -> handle must reappear.
+        window.addSubview(view)
+        view.frame = window.bounds
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        XCTAssertEqual(drag.handleBlockID, "p1", "returning to a window must restore handleBlockID")
+        XCTAssertTrue(drag.isHandleVisible, "handle must reappear after returning to a window")
+    }
+
+    /// Finding #4: a keyboard-like or banner-like height change keeps an active drag
+    /// alive and re-resolves the drop target; width or horizontal size-class changes cancel.
+    func testKeyboardHeightChangeKeepsDragAliveAndReResolvesWhileWidthAndSizeClassCancel() async throws {
+        let blocks = (0..<20).map { paragraph("p\($0)", "Paragraph \($0)") }
+        let harness = try await makeHarness(blocks)
+        addTeardownBlock { await harness.close() }
+        let view = harness.session.textView
+        _ = mount(view, size: CGSize(width: 390, height: 500))
+        let drag = try XCTUnwrap(view.blockDragController)
+
+        let p0Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p0")
+        let p4Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p4")
+        XCTAssertTrue(drag.beginDrag(blockID: "p0", atWindowPoint: p0Pt))
+        drag.updateDrag(atWindowPoint: CGPoint(x: p0Pt.x, y: p4Pt.y - 4))
+        let targetBefore = drag.currentCandidate?.dropTarget
+        XCTAssertEqual(targetBefore, NativeBlockDropTarget(destination: .after("p3"), depth: 0))
+
+        // Keyboard/banner animation: height shrinks and top shifts down while width stays 390.
+        view.frame = CGRect(x: 0, y: 72, width: 390, height: 260)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        XCTAssertTrue(drag.isDragging, "bounds height change must keep active drag alive")
+        XCTAssertTrue(drag.isDropLineVisible, "drop line must remain visible after height change")
+        XCTAssertNotEqual(
+            drag.currentCandidate?.dropTarget, targetBefore,
+            "height/origin change must re-resolve the drop target against the new geometry")
+
+        // Width change still cancels.
+        view.frame = CGRect(x: 0, y: 72, width: 320, height: 260)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        XCTAssertFalse(drag.isDragging, "bounds width change must cancel active drag")
+
+        // Horizontal size-class change still cancels.
+        view.traitOverrides.horizontalSizeClass = .compact
+        view.updateTraitsIfNeeded()
+        view.layoutIfNeeded()
+        let p0Again = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p0")
+        XCTAssertTrue(drag.beginDrag(blockID: "p0", atWindowPoint: p0Again))
+        XCTAssertTrue(drag.isDragging)
+        view.traitOverrides.horizontalSizeClass = .regular
+        view.updateTraitsIfNeeded()
+        view.layoutIfNeeded()
+        XCTAssertFalse(drag.isDragging, "horizontal size-class change must cancel active drag")
+    }
+
+    /// Finding #5: auto-scroll clamps only in the direction of travel and never
+    /// snaps opposite to velocity when starting outside a column's scroll bounds.
+    func testAutoScrollNeverMovesOppositeToVelocityOutsideColumnBounds() async throws {
+        // Pure directional-clamp invariants.
+        // Moving up while already above minOffset -> no movement (never snaps down).
+        XCTAssertEqual(
+            NativeBlockDragAutoScroll.clampedNextOffset(
+                currentOffset: 450, velocity: -600, dt: 1.0 / 30.0, minOffset: 602, maxOffset: 900),
+            450)
+        // Moving up within bounds -> advances up and clamps at minOffset.
+        XCTAssertEqual(
+            NativeBlockDragAutoScroll.clampedNextOffset(
+                currentOffset: 610, velocity: -600, dt: 1.0 / 30.0, minOffset: 602, maxOffset: 900),
+            602)
+        // Moving down while already past maxOffset -> no movement (never snaps up).
+        XCTAssertEqual(
+            NativeBlockDragAutoScroll.clampedNextOffset(
+                currentOffset: 450, velocity: 600, dt: 1.0 / 30.0, minOffset: 0, maxOffset: 280),
+            450)
+        // Moving down from above minOffset -> advances smoothly by v*dt (never snaps straight to minOffset).
+        XCTAssertEqual(
+            NativeBlockDragAutoScroll.clampedNextOffset(
+                currentOffset: 450, velocity: 600, dt: 1.0 / 30.0, minOffset: 602, maxOffset: 900),
+            470)
+
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        let base = BlockNoteYjs.encode([paragraph("root", "Root")], clientID: 1)
+        try doc.applyUpdate(YUpdateDecoder.decode(base))
+        let root = try XCTUnwrap(doc.share[BlockNoteYjs.fragmentField])
+        guard case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content else {
+            return XCTFail("missing root group")
+        }
+        try doc.transact { tx in
+            let cl = YType(typeRef: .xmlElement(nodeName: "columnList"))
+            _ = try YWrite.insertAfter(tx, into: group, after: nil, [.type(cl)])
+            try YWrite.mapSet(tx, on: cl, key: "id", .any([.string("cl")]))
+            var lastCol: YItem?
+            for colID in ["col-1", "col-2"] {
+                let col = YType(typeRef: .xmlElement(nodeName: "column"))
+                lastCol = try YWrite.insertAfter(tx, into: cl, after: lastCol, [.type(col)])
+                try YWrite.mapSet(tx, on: col, key: "id", .any([.string(colID)]))
+                try YWrite.mapSet(tx, on: col, key: "width", .any([.int(1)]))
+                var lastBlock: YItem?
+                for idx in 0..<25 {
+                    let c = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+                    lastBlock = try YWrite.insertAfter(tx, into: col, after: lastBlock, [.type(c)])
+                    try YWrite.mapSet(tx, on: c, key: "id", .any([.string("\(colID)-\(idx)")]))
+                    let p = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+                    _ = try YWrite.insertAfter(tx, into: c, after: nil, [.type(p)])
+                    for (k, v) in Self.paragraphProps { try YWrite.mapSet(tx, on: p, key: k, .any([v])) }
+                    let t = YType(typeRef: .xmlText)
+                    _ = try YWrite.insertAfter(tx, into: p, after: nil, [.type(t)])
+                    try t.insert(0, "\(colID) line \(idx)", nil)
+                }
+            }
+        }
+        let colHarness = try await makeHarness(state: try YStateEncoder.encodeStateAsUpdate(doc))
+        addTeardownBlock { await colHarness.close() }
+        let col1 = try unwrapped(await colHarness.session.openColumn(group: "cl", column: "col-1"))
+        let col2 = try unwrapped(await colHarness.session.openColumn(group: "cl", column: "col-2"))
+        addTeardownBlock {
+            await col1.close().value
+            await col2.close().value
+        }
+
+        let colWindow = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 320))
+        let container = ColumnTextContainer(frame: colWindow.bounds)
+        colWindow.addSubview(container)
+        colWindow.isHidden = false
+        windows.append(colWindow)
+        container.show([col1.textView, col2.textView], widths: [1, 1], active: 0)
+        container.layoutIfNeeded()
+        col1.textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+        col2.textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        let col1Bounds = try XCTUnwrap(container.scrollBounds(for: col1.textView))
+        let col2Bounds = try XCTUnwrap(container.scrollBounds(for: col2.textView))
+        XCTAssertLessThan(col1Bounds.upperBound + 40, col2Bounds.lowerBound, "columns must have a straddle band")
+
+        // Straddle the boundary: container is above col-2's lowerBound and below col-1's upperBound.
+        let straddleOffset = round((col1Bounds.upperBound + col2Bounds.lowerBound) / 2)
+        container.contentOffset.y = straddleOffset
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        // 1) Dragging in col-2 with upward velocity (already above col-2's minBound) must NOT snap downward.
+        let col2Drag = try XCTUnwrap(col2.textView.blockDragController)
+        let col2Start = try blockCenterWindowPoint(in: col2.textView, surface: col2.surface, blockID: "col-2-0")
+        XCTAssertTrue(col2Drag.beginDrag(blockID: "col-2-0", atWindowPoint: col2Start))
+        col2Drag.updateDrag(atWindowPoint: CGPoint(x: col2Start.x, y: colWindow.bounds.minY + 4))
+        XCTAssertFalse(
+            col2Drag.performAutoScrollStep(dt: 1.0 / 30.0),
+            "upward auto-scroll must not move when already above column minBound")
+        XCTAssertEqual(
+            container.contentOffset.y, straddleOffset, accuracy: 0.01,
+            "upward auto-scroll must never snap downward opposite to velocity")
+
+        // Dragging in col-2 with downward velocity moves smoothly downward (not snapping straight to minBound).
+        col2Drag.updateDrag(atWindowPoint: CGPoint(x: col2Start.x, y: colWindow.bounds.maxY - 4))
+        XCTAssertTrue(col2Drag.performAutoScrollStep(dt: 1.0 / 30.0))
+        XCTAssertGreaterThan(container.contentOffset.y, straddleOffset)
+        XCTAssertLessThan(container.contentOffset.y, straddleOffset + 40, "downward scroll must advance by v*dt")
+        col2Drag.cancelDrag()
+
+        // 2) Symmetric: dragging in col-1 with downward velocity (already past col-1's maxBound) must NOT snap upward.
+        container.contentOffset.y = straddleOffset
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+        let col1Drag = try XCTUnwrap(col1.textView.blockDragController)
+        let col1Start = try blockCenterWindowPoint(in: col1.textView, surface: col1.surface, blockID: "col-1-24")
+        XCTAssertTrue(col1Drag.beginDrag(blockID: "col-1-24", atWindowPoint: col1Start))
+        col1Drag.updateDrag(atWindowPoint: CGPoint(x: col1Start.x, y: colWindow.bounds.maxY - 4))
+        XCTAssertFalse(
+            col1Drag.performAutoScrollStep(dt: 1.0 / 30.0),
+            "downward auto-scroll must not move when already below column maxBound")
+        XCTAssertEqual(
+            container.contentOffset.y, straddleOffset, accuracy: 0.01,
+            "downward auto-scroll must never snap upward opposite to velocity")
+
+        // Dragging in col-1 with upward velocity moves smoothly upward.
+        col1Drag.updateDrag(atWindowPoint: CGPoint(x: col1Start.x, y: colWindow.bounds.minY + 4))
+        XCTAssertTrue(col1Drag.performAutoScrollStep(dt: 1.0 / 30.0))
+        XCTAssertLessThan(container.contentOffset.y, straddleOffset)
+        XCTAssertGreaterThan(container.contentOffset.y, straddleOffset - 40, "upward scroll must advance by v*dt")
+        col1Drag.cancelDrag()
     }
 }
 
