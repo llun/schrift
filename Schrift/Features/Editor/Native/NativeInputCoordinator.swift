@@ -114,11 +114,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         var reset: Bool
     }
     private typealias BlockRange = (start: (String, Int), end: (String, Int))
-    /// A key held while a barrier is in flight (internal so a column a block
-    /// moved into can adopt them, PR12c).
+    /// A key or drag-drop move held while a barrier is in flight (internal so
+    /// a column a block moved into can adopt held keys, PR12c).
     enum Intent {
         case insert(String)
         case deleteBackward
+        case moveBlock(id: String, destination: NativeMoveDestination, onSettled: ((Bool) -> Void)?)
     }
     @ObservationIgnored private var intents: [Intent] = []
     /// Blocks whose predictions the session refused: typing there is a barrier.
@@ -469,11 +470,20 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     }
 
     /// The caret's block went elsewhere: its held keys go with it, never
-    /// replayed here.
+    /// replayed here; any queued drag-drop moves on this surface settle false.
     private func blockLeft(_ blockID: String, offset: Int, length: Int) {
-        let keys = intents
+        let previous = intents
         intents = []
+        var keys: [Intent] = []
+        var droppedMoves: [Intent] = []
+        for intent in previous {
+            switch intent {
+            case .insert, .deleteBackward: keys.append(intent)
+            case .moveBlock: droppedMoves.append(intent)
+            }
+        }
         onBlockLeft?(BlockLeft(blockID: blockID, offset: offset, length: length, keys: keys))
+        settleDroppedMoveIntents(droppedMoves)
     }
 
     /// Keys held by the column a block left, typed here after the caret
@@ -997,7 +1007,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // A dropped commit's text becomes the recovery entry below.
         for prediction in dropped { composition.finish(prediction.commandID) }
         var text = dropped.map(\.text).joined()
-        for case .insert(let typed) in intents { text += typed }
+        let droppedIntents = intents
+        for case .insert(let typed) in droppedIntents { text += typed }
         intents = []
         typingCaret = nil
         if let pending = pendingCompositionCommit {
@@ -1012,6 +1023,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         if let view {
             selection.place(NSRange(location: min(view.selectedRange.location, surface.storage.length), length: 0))
         }
+        settleDroppedMoveIntents(droppedIntents)
     }
 
     private var hasActiveBarrier: Bool {
@@ -1057,21 +1069,33 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     }
 
     private func replayIntents() {
-        // Held keys wait for marked text too: they replay after it resolves.
+        // Held keys and queued drag moves wait for marked text too: they replay after it resolves.
         while !isBusy, !compositionOwnsView, !intents.isEmpty {
             switch intents.removeFirst() {
             case .insert(let text): typeKey(text)
             case .deleteBackward: deleteKey()
+            case .moveBlock(let id, let destination, let onSettled):
+                if !moveBlock(id, to: destination, onSettled: onSettled) {
+                    onSettled?(false)
+                }
             }
         }
     }
 
-    private func hold(_ intent: Intent) {
+    @discardableResult
+    private func hold(_ intent: Intent) -> Bool {
         guard intents.count < Self.maxIntents else {
             noticeKey = .native_editor_input_busy
-            return
+            return false
         }
         intents.append(intent)
+        return true
+    }
+
+    private func settleDroppedMoveIntents(_ dropped: [Intent]) {
+        for case .moveBlock(_, _, let onSettled) in dropped {
+            onSettled?(false)
+        }
     }
 
     /// Tests: forget earlier outcomes before an action.
@@ -1854,6 +1878,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         directInsertion = nil
         guard sourceKind == nil, let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else {
             return false
+        }
+        // While another barrier or busy work is in flight, queue the drop in
+        // FIFO order so it runs once input settles and re-validates against the
+        // settled surface then rather than silently dropping the move.
+        if !isRetrying, isBusy {
+            return hold(.moveBlock(id: id, destination: destination, onSettled: onSettled))
         }
         guard let entry = surface.rangeIndex.entry(for: id), !surface.isHidden(blockID: id) else { return false }
         let targetID = destination.referenceBlockID
@@ -3884,8 +3914,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let dropped = barrier?.onSettled
         barrier = nil
         pendingCopies = [:]
+        let droppedIntents = intents
         var held = ""
-        for case .insert(let typed) in intents { held += typed }
+        for case .insert(let typed) in droppedIntents { held += typed }
         intents = []
         if !held.isEmpty, let block = blockSelection()?.start.0 ?? surface.blocks.first?.id {
             composition.recover(held, blockID: block)
@@ -3893,6 +3924,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         view?.isEditable = false
         view?.resignFirstResponder()
         dropped?(false)
+        settleDroppedMoveIntents(droppedIntents)
     }
 
     /// The session closed: nothing more is posted.
@@ -3901,11 +3933,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         pendingInputStarts.removeAll(keepingCapacity: false)
         let dropped = barrier?.onSettled
         barrier = nil
+        let droppedIntents = intents
         intents = []
         history.destroy()
         view?.blockDragController?.cancelDrag()
         view?.blockDragController?.updateHandle()
         dropped?(false)
+        settleDroppedMoveIntents(droppedIntents)
     }
 
     /// A composition this editor cannot support (a multi-block selection, an

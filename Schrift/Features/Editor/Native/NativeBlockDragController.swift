@@ -99,8 +99,9 @@ enum NativeBlockDragMetrics {
     static let autoScrollEdgeThreshold: CGFloat = DocsSpacing.space3XL
     /// Peak auto-scroll speed (points per second) right at the viewport edge.
     static let autoScrollMaxSpeed: CGFloat = 680
-    /// Drag handle touch-target width sitting in the leading margin (no permanent gutter).
-    static let handleWidth: CGFloat = 22
+    /// Drag handle visual width sitting in the leading margin (no permanent
+    /// gutter), staying clear of the default depth-0 text leading edge (`21 pt`).
+    static let handleWidth: CGFloat = 20
     /// Drag handle touch-target height (44 pt minimum tap target).
     static let handleHeight: CGFloat = DocsSpacing.rowMinHeight
     /// Non-text block types that support direct 0.4 s long-press dragging.
@@ -518,7 +519,7 @@ final class NativeBlockDragHandleView: UIControl, UIPointerInteractionDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// Keeps the 22 pt visual chrome in the margin while expanding the hit area
+    /// Keeps the visual chrome in the margin while expanding the hit area
     /// vertically to 44 pt and outward away from the text, never reaching or
     /// crossing the text's leading edge (`textLeadingBoundaryX`).
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
@@ -987,8 +988,25 @@ final class NativeBlockDragController: NSObject, UIGestureRecognizerDelegate {
             textLeadingX = blockLeadX + padding
         }
         let y = fragFrame.minY + firstLineMidY - height / 2
-        let frameX = round(x)
-        handleView.frame = CGRect(x: frameX, y: round(y), width: width, height: height)
+        // Keep the handle's frame (and therefore its accessibilityFrame) strictly
+        // clear of `textLeadingX` so it never obscures the text's leading edge or
+        // `UITextView`'s accessibility activation point.
+        let frameX: CGFloat
+        let frameWidth: CGFloat
+        if isRTL {
+            let minX = max(round(x), ceil(textLeadingX) + 1)
+            frameX = minX
+            frameWidth = min(width, max(0, textView.bounds.width - minX))
+        } else {
+            frameX = round(x)
+            let maxX = floor(textLeadingX) - 1
+            frameWidth = min(width, max(0, maxX - frameX))
+        }
+        guard frameWidth >= 1 else {
+            hideHandle(clearTarget: false)
+            return
+        }
+        handleView.frame = CGRect(x: frameX, y: round(y), width: frameWidth, height: height)
         handleView.isRightToLeft = isRTL
         handleView.textLeadingBoundaryX = textLeadingX - frameX
         handleView.applyTheme(controls: textView.blockControls)

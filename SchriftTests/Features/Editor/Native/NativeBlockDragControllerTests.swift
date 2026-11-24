@@ -982,7 +982,8 @@ final class NativeBlockDragControllerTests: NativeEditingTestCase {
         XCTAssertEqual(line.frame.minX, 10, accuracy: 1.0, "RTL drop line ends at left inset")
     }
 
-    /// Finding #9: handle keeps 22 pt visual width with a 44×44 hit target, preview
+    /// Finding #9: handle keeps 20 pt visual width (strictly clear of the 21 pt
+    /// depth-0 text leading edge) with a 44×44 outward hit target, preview
     /// height grows without a 76 pt cap at AX Dynamic Type, grip icon scales, and
     /// shadow uses a design-system token instead of raw `UIColor.black`.
     func testDesignSystemHandleHitTarget44x44DynamicTypePreviewHeightScaledGripAndTokenShadow() async throws {
@@ -994,14 +995,17 @@ final class NativeBlockDragControllerTests: NativeEditingTestCase {
         _ = mount(view)
         let drag = try XCTUnwrap(view.blockDragController)
 
-        // Handle visual width is 22 pt; hit target expands vertically and outward away from text
-        // to 44×44 pt without crossing the text leading edge (`inset.left + lineFragmentPadding = 21`).
+        // Handle visual width is 20 pt (staying clear of `inset.left + lineFragmentPadding = 21`);
+        // hit target expands vertically and outward away from text to 44×44 pt (`x in [-24, 20)`).
         setSelection(harness, NSRange(location: try location(harness.session, "p1", 0), length: 0))
         view.layoutIfNeeded()
-        XCTAssertEqual(drag.handleView.bounds.size, CGSize(width: 22, height: 44))
+        XCTAssertEqual(drag.handleView.bounds.size, CGSize(width: 20, height: 44))
+        XCTAssertLessThan(
+            drag.handleView.frame.maxX, view.textContainerInset.left + view.textContainer.lineFragmentPadding)
         XCTAssertTrue(drag.handleView.point(inside: CGPoint(x: -10, y: 22), with: nil))
-        XCTAssertTrue(drag.handleView.point(inside: CGPoint(x: -22, y: 22), with: nil))
-        XCTAssertFalse(drag.handleView.point(inside: CGPoint(x: -24, y: 22), with: nil))
+        XCTAssertTrue(drag.handleView.point(inside: CGPoint(x: -24, y: 22), with: nil))
+        XCTAssertFalse(drag.handleView.point(inside: CGPoint(x: -25, y: 22), with: nil))
+        XCTAssertFalse(drag.handleView.point(inside: CGPoint(x: 20, y: 22), with: nil))
         XCTAssertFalse(drag.handleView.point(inside: CGPoint(x: 21, y: 22), with: nil))
         XCTAssertFalse(drag.handleView.point(inside: CGPoint(x: 32, y: 22), with: nil))
 
@@ -1515,6 +1519,153 @@ final class NativeBlockDragControllerTests: NativeEditingTestCase {
         XCTAssertLessThan(container.contentOffset.y, straddleOffset)
         XCTAssertGreaterThan(container.contentOffset.y, straddleOffset - 40, "upward scroll must advance by v*dt")
         col1Drag.cancelDrag()
+    }
+
+    /// Regression: `handleView.frame` (and thus its `accessibilityFrame`) must
+    /// stay strictly clear of the text leading edge and start-of-text caret
+    /// activation point in default-inset documents, columns, narrow-inset
+    /// columns, and RTL layouts. Overlapping `textLeadingX` (21 pt) caused
+    /// accessibility/XCUITest taps on a single-line column to fall back to the
+    /// text view's geometric center below the trailing newline separator.
+    func testHandleFrameStaysStrictlyClearOfTextLeadingEdgeAndCaretStartInDocumentColumnAndRTL() async throws {
+        // 1) Default-inset LTR document (inset.left = 16, lineFragmentPadding = 5 -> textLeadingX = 21).
+        let harness = try await makeHarness([paragraph("p1", "Left")])
+        addTeardownBlock { await harness.close() }
+        let view = harness.session.textView
+        _ = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+        setSelection(harness, NSRange(location: try location(harness.session, "p1", 0), length: 0))
+        view.layoutIfNeeded()
+        XCTAssertTrue(drag.isHandleVisible)
+        let docLeadX = view.textContainerInset.left + view.textContainer.lineFragmentPadding
+        XCTAssertLessThan(
+            drag.handleView.frame.maxX, docLeadX,
+            "handle frame must stay strictly left of the text leading edge")
+        let docCaret = view.caretRect(for: view.beginningOfDocument)
+        XCTAssertFalse(
+            drag.handleView.frame.contains(CGPoint(x: docCaret.midX, y: docCaret.midY)),
+            "handle frame must not cover the text view's start-of-text caret / activation point")
+
+        // 2) Default-inset column and narrow-inset column.
+        let colHarness = try await makeHarness(state: try columnDoc())
+        addTeardownBlock { await colHarness.close() }
+        let colSession = try unwrapped(await colHarness.session.openColumn(group: "cl", column: "col-1"))
+        addTeardownBlock { await colSession.close().value }
+        let colView = colSession.textView
+        _ = mount(colView)
+        let colDrag = try XCTUnwrap(colView.blockDragController)
+        colSession.input?.focus(at: "c1-a", offset: 0)
+        colView.layoutIfNeeded()
+        XCTAssertTrue(colDrag.isHandleVisible)
+        let colDefaultLeadX = colView.textContainerInset.left + colView.textContainer.lineFragmentPadding
+        let colCaret = colView.caretRect(for: colView.beginningOfDocument)
+        XCTAssertLessThan(colDrag.handleView.frame.maxX, colDefaultLeadX)
+        XCTAssertFalse(
+            colDrag.handleView.frame.contains(CGPoint(x: colCaret.midX, y: colCaret.midY)),
+            "column handle frame must not cover column 0's start-of-text activation point")
+
+        colView.textContainerInset = UIEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
+        colView.setNeedsLayout()
+        colView.layoutIfNeeded()
+        let narrowLeadX = colView.textContainerInset.left + colView.textContainer.lineFragmentPadding
+        XCTAssertTrue(colDrag.isHandleVisible)
+        XCTAssertLessThan(
+            colDrag.handleView.frame.maxX, narrowLeadX,
+            "narrow-inset column handle frame must clamp strictly left of textLeadingX")
+
+        // 3) Default-inset RTL document (inset.right = 16, lineFragmentPadding = 5).
+        view.semanticContentAttribute = .forceRightToLeft
+        view.textContainerInset = UIEdgeInsets(top: 16, left: 16, bottom: 24, right: 16)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        drag.layoutHandle()
+        let rtlLeadX = view.bounds.width - view.textContainerInset.right - view.textContainer.lineFragmentPadding
+        XCTAssertTrue(drag.isHandleVisible)
+        XCTAssertGreaterThan(
+            drag.handleView.frame.minX, rtlLeadX,
+            "RTL handle frame must stay strictly right of the RTL text leading edge")
+    }
+
+    /// Dropping a block while another structural command's barrier is still
+    /// active queues the move in FIFO intent order, runs it once the barrier
+    /// settles, and re-validates the destination against the settled surface.
+    func testDropWhileStructuralBarrierIsActiveQueuesAndReValidatesOnceSettled() async throws {
+        let gate = Latch(open: true)
+        let harness = try await makeHarness(
+            [
+                check("c1", "Task item", checked: false),
+                paragraph("p1", "First"),
+                paragraph("p2", "Second"),
+                paragraph("p3", "Third"),
+            ],
+            hooks: .init(beforeMessage: { await gate.passing() }))
+        addTeardownBlock {
+            gate.open()
+            await harness.close()
+        }
+        let view = harness.session.textView
+        _ = mount(view)
+        let drag = try XCTUnwrap(view.blockDragController)
+        let spy = SpyDragHaptics()
+        drag.haptics = spy
+        var announcements: [String] = []
+        drag.postAnnouncement = { announcements.append($0) }
+
+        // Part A: Active structural barrier (checkbox toggle) while dropping `p1` after `p2`.
+        let p1Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p1")
+        let p3Pt = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p3")
+        XCTAssertTrue(drag.beginDrag(blockID: "p1", atWindowPoint: p1Pt))
+        drag.updateDrag(atWindowPoint: CGPoint(x: p1Pt.x, y: p3Pt.y - 4))
+        XCTAssertEqual(drag.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .after("p2"), depth: 0))
+
+        gate.close()
+        XCTAssertTrue(
+            harness.input.toggleCheckbox(blockID: "c1"), "checkbox toggle opens an active structural barrier")
+        XCTAssertTrue(drag.endDrag(), "drop while barrier is active must be queued rather than silently discarded")
+        XCTAssertFalse(drag.isDragging)
+        XCTAssertEqual(harness.session.surface.blocks.map(\.id), ["c1", "p1", "p2", "p3"])
+        XCTAssertEqual(spy.drops, 0, "drop haptic waits until the queued move actually settles")
+        XCTAssertTrue(announcements.isEmpty)
+
+        gate.open()
+        await harness.settle()
+
+        let checkedProp = harness.session.surface.blocks.first { $0.id == "c1" }?.props.last { $0.key == "checked" }
+        XCTAssertEqual(checkedProp?.value, .bool(true), "first structural barrier still applies")
+        XCTAssertEqual(
+            harness.session.surface.blocks.map(\.id), ["c1", "p2", "p1", "p3"],
+            "queued drop runs once the active barrier settles")
+        XCTAssertEqual(spy.drops, 1)
+        XCTAssertEqual(announcements, ["Moved after Second"])
+
+        // One undo reverses the queued move while keeping the earlier checkbox toggle.
+        XCTAssertTrue(harness.input.undo())
+        await harness.settle()
+        XCTAssertEqual(harness.session.surface.blocks.map(\.id), ["c1", "p1", "p2", "p3"])
+
+        // Part B: Re-validation rejects a queued drop whose target was deleted by the active barrier.
+        spy.drops = 0
+        announcements = []
+        let p1Again = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p1")
+        let p3Again = try blockCenterWindowPoint(in: view, surface: harness.session.surface, blockID: "p3")
+        XCTAssertTrue(drag.beginDrag(blockID: "p1", atWindowPoint: p1Again))
+        drag.updateDrag(atWindowPoint: CGPoint(x: p1Again.x, y: p3Again.y - 4))
+        XCTAssertEqual(drag.currentCandidate?.dropTarget, NativeBlockDropTarget(destination: .after("p2"), depth: 0))
+
+        setSelection(harness, NSRange(location: try location(harness.session, "p2", 0), length: 0))
+        gate.close()
+        XCTAssertTrue(harness.input.performBlockAction(.delete), "delete of p2 opens an active barrier")
+        XCTAssertTrue(drag.endDrag(), "drop queues behind the delete barrier")
+
+        gate.open()
+        await harness.settle()
+
+        XCTAssertEqual(
+            harness.session.surface.blocks.map(\.id), ["c1", "p1", "p3"],
+            "queued drop whose target was deleted by the preceding barrier is cleanly refused on re-validation")
+        XCTAssertEqual(spy.drops, 0, "rejected queued drop must not fire drop haptic")
+        XCTAssertTrue(announcements.isEmpty, "rejected queued drop must not post VoiceOver announcement")
+        XCTAssertFalse(harness.input.hasInFlightWork)
     }
 }
 
