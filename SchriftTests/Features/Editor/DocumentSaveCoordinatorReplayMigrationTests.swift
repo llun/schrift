@@ -95,6 +95,8 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             {"id": "\(serverID.uuidString.lowercased())", "title": "Notes", "content": "",
              "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-01T12:00:00Z"}
             """.utf8)
+        let getGate = MockURLProtocol.ResponseGate()
+        let patchGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             let url = request.url?.absoluteString ?? ""
@@ -104,25 +106,30 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
                     body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
             }
             if request.httpMethod == "PATCH" {
-                return .init(statusCode: 200, headers: [:], body: Data(), error: nil, delay: 2.0)
+                return .init(statusCode: 200, headers: [:], body: Data(), error: nil, releasedBy: patchGate)
             }
             if url.contains("formatted-content") {
-                return .init(statusCode: 200, headers: [:], body: formatted, error: nil, delay: 0.6)
+                return .init(statusCode: 200, headers: [:], body: formatted, error: nil, releasedBy: getGate)
             }
             return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
         }
         // The save must START AFTER the resume takes its marker, or the pass exits at
         // `replayCreate`'s own `mayPredateSave` guard and never reaches `finishMigration` —
         // which is what an earlier version of this test did, passing for a guard it does not
-        // name. So it is launched from inside the resume's own fetch window: the recorder logs
-        // a request when it is issued, so once the `formatted-content` GET appears the marker
-        // is already taken, and that GET is held open long enough for the PATCH to be on the
-        // wire when it answers. `hadPendingSave` is then false and `settledSaves` has not
-        // moved, so only `finishMigration`'s `inFlight[serverID] == nil` can defer this.
+        // name. So it is launched from inside the resume's own fetch window: once the gated
+        // `formatted-content` GET is held, the marker is already taken; enqueue the save, wait
+        // until its PATCH is also held, then release the GET while the PATCH remains on the wire.
+        // `hadPendingSave` is then false and `settledSaves` has not moved, so only
+        // `finishMigration`'s `inFlight[serverID] == nil` can defer this.
         let starter = Task { @MainActor in
-            await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+            await waitUntil {
+                MockURLProtocol.deferredDeliveryCount >= 1
+                    && log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+            }
             relaunched.coordinator.enqueue(
                 documentID: serverID, title: "Notes", markdown: "# On the wire")
+            await waitUntil { MockURLProtocol.deferredDeliveryCount >= 2 }
+            getGate.open()
         }
 
         await relaunched.coordinator.syncPendingDrafts()
@@ -133,6 +140,8 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             log.count(ofMethod: "GET", urlContaining: "formatted-content"), 1,
             "the resume issued its fetch, so the pass reached the migration")
         XCTAssertEqual(savesInFlight(log), 1, "the save was still on the wire when it deferred")
+        patchGate.open()
+        await waitUntil { relaunched.coordinator.state(for: self.serverID) != .saving }
     }
 
     /// A death *between* the migration's two draft writes leaves **both** drafts present. The
@@ -960,6 +969,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
              "content": "",
              "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-01T12:00:00Z"}
             """.utf8)
+        let getGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             let url = request.url?.absoluteString ?? ""
@@ -969,16 +979,20 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
                     body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
             }
             if url.contains("formatted-content") {
-                return .init(statusCode: 200, headers: [:], body: formatted, error: nil, delay: 0.6)
+                return .init(statusCode: 200, headers: [:], body: formatted, error: nil, releasedBy: getGate)
             }
             return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
         }
 
         let pass = Task { await coordinator.syncPendingDrafts() }
         // Inside that window the user types under the server id and the save lands.
-        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount >= 1
+                && log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
         coordinator.enqueue(documentID: serverID, title: "Untitled document", markdown: "# World")
         await waitUntil { coordinator.lastConfirmedPush(documentID: self.serverID) == "# World" }
+        getGate.open()
         await pass.value
 
         XCTAssertNotNil(

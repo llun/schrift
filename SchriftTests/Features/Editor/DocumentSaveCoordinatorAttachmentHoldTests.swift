@@ -65,7 +65,7 @@ final class DocumentSaveCoordinatorAttachmentHoldTests: XCTestCase {
         return (coordinator, drafts)
     }
 
-    private func stubSavePipeline(log: RequestRecorder, saveDelay: TimeInterval = 0) {
+    private func stubSavePipeline(log: RequestRecorder, releasedBy gate: MockURLProtocol.ResponseGate? = nil) {
         let formattedBody = Self.formattedBody
         MockURLProtocol.stubHandler = { request in
             log.record(request)
@@ -74,7 +74,7 @@ final class DocumentSaveCoordinatorAttachmentHoldTests: XCTestCase {
             case "GET" where url.contains("formatted-content"):
                 return .init(statusCode: 200, headers: [:], body: formattedBody, error: nil)
             case "PATCH" where url.hasSuffix("/content/"):
-                return .init(statusCode: 204, headers: [:], body: Data(), error: nil, delay: saveDelay)
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil, releasedBy: gate)
             default:
                 return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
             }
@@ -169,16 +169,18 @@ final class DocumentSaveCoordinatorAttachmentHoldTests: XCTestCase {
 
     func testAPlaceholderQueuedBehindALiveSaveStillReadsAsSaving() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, saveDelay: 0.3)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
         let (coordinator, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Notes")
-        await waitUntil { self.contentPatches(log) == 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: heldMarkdown)
 
         // A save really is on the wire, so "Saved on this device" would be a lie — this is the
         // one hold that can co-occur with an in-flight save. `finish` stamps it on re-park.
         XCTAssertFalse(isPendingSync(coordinator.state(for: documentID)))
+        patchGate.open()
         await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
     }
 
@@ -186,17 +188,20 @@ final class DocumentSaveCoordinatorAttachmentHoldTests: XCTestCase {
 
     func testFinishReParksAQueuedPlaceholderSaveInsteadOfStartingIt() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, saveDelay: 0.2)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
         let (coordinator, _) = makeCoordinator()
 
         // An ordinary autosave goes out first...
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Notes")
-        await waitUntil { self.contentPatches(log) == 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
         // ...and the queued photo lands behind it. This is the reachable path: a photo whose
         // upload failed transiently while a save was already on the wire parks on `inFlight`,
         // so `finish`'s queued restart — which calls `start` directly — is what would push it.
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: heldMarkdown)
+        patchGate.open()
 
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
         await waitAndConfirmNever(timeout: 0.6) { self.contentPatches(log) > 1 }
         XCTAssertEqual(coordinator.pendingSave(documentID: documentID)?.markdown, heldMarkdown)
         XCTAssertTrue(isPendingSync(coordinator.state(for: documentID)))
@@ -204,12 +209,14 @@ final class DocumentSaveCoordinatorAttachmentHoldTests: XCTestCase {
 
     func testFinishStartsAQueuedSaveThatCarriesNoPlaceholder() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, saveDelay: 0.2)
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
         let (coordinator, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Notes")
-        await waitUntil { self.contentPatches(log) == 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: resolvedMarkdown)
+        patchGate.open()
 
         await waitUntil(timeout: 5) { self.contentPatches(log) == 2 }
     }

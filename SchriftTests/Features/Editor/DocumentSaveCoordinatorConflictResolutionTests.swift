@@ -165,16 +165,20 @@ final class DocumentSaveCoordinatorConflictResolutionTests: DocumentSaveCoordina
     /// our own write (decision rule 1) instead of flagging a false conflict.
     func testEnqueueStampsTheDraftWithTheLastConfirmedPush() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, saveDelay: 0.3)
+        stubSavePipeline(log: log)
         let (coordinator, draftStore, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# v1")
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
         XCTAssertNil(draftStore.draft(for: documentID))
 
+        let patchGate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: patchGate)
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# v2")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
 
         XCTAssertEqual(draftStore.draft(for: documentID)?.lastPushedMarkdown, "# v1")
+        patchGate.open()
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
     }
 
@@ -187,11 +191,32 @@ final class DocumentSaveCoordinatorConflictResolutionTests: DocumentSaveCoordina
     /// already settled and its draft was removed by the equality branch.
     func testASurvivingNewerDraftIsStampedWithTheJustConfirmedPush() async {
         let log = RequestRecorder()
-        // Hold the content PATCH open so a newer edit can coalesce behind the in-flight save.
-        stubSavePipeline(log: log, saveDelay: 0.3)
+        // Hold each content PATCH behind its own gate: `firstGate` lets B coalesce behind A,
+        // and `secondGate` holds B open after A lands so we can observe the re-stamped B draft
+        // before B finishes and clears it.
+        let firstGate = MockURLProtocol.ResponseGate()
+        let secondGate = MockURLProtocol.ResponseGate()
+        let contentPatches = Counter()
+        let formattedBody = Self.formattedBody
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            switch request.httpMethod {
+            case "GET" where url.contains("formatted-content"):
+                return .init(statusCode: 200, headers: [:], body: formattedBody, error: nil)
+            case "PATCH" where url.hasSuffix("/content/"):
+                let gate = contentPatches.next() == 1 ? firstGate : secondGate
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil, releasedBy: gate)
+            case "PATCH":
+                return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+            default:
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+        }
         let (coordinator, draftStore, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# A")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# B")  // queued behind A
         XCTAssertEqual(
             coordinator.state(for: documentID), .saving,
@@ -200,11 +225,13 @@ final class DocumentSaveCoordinatorConflictResolutionTests: DocumentSaveCoordina
         XCTAssertNil(
             draftStore.draft(for: documentID)?.lastPushedMarkdown, "nothing has been confirmed pushed yet")
 
-        // A lands → finish() re-stamps the surviving B draft with A's markdown.
+        // A lands → finish() re-stamps the surviving B draft with A's markdown and starts B.
+        firstGate.open()
         await waitUntil { draftStore.draft(for: self.documentID)?.lastPushedMarkdown == "# A" }
         XCTAssertEqual(
             draftStore.draft(for: documentID)?.markdown, "# B", "B is still the unsaved work, only re-stamped")
 
+        secondGate.open()
         await waitUntil {
             self.isSaved(coordinator.state(for: self.documentID))
                 && coordinator.pendingSave(documentID: self.documentID) == nil

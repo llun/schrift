@@ -112,7 +112,8 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
     /// `/users/me/` plus a server that accepts the DELETE. `deleteStatus` drives the outcome
     /// ladder; everything else answers 200 so nothing unrelated fails for the wrong reason.
     private func stubDeletePipeline(
-        log: RequestRecorder, deleteStatus: Int = 204, deleteError: Error? = nil, deleteDelay: TimeInterval = 0
+        log: RequestRecorder, deleteStatus: Int = 204, deleteError: Error? = nil,
+        releasedBy gate: MockURLProtocol.ResponseGate? = nil
     ) {
         let userBody = Data(
             """
@@ -134,7 +135,7 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
             if request.httpMethod == "DELETE" {
                 return .init(
                     statusCode: deleteStatus, headers: ["Content-Type": "application/json"],
-                    body: Data(#"{"detail":"."}"#.utf8), error: deleteError, delay: deleteDelay)
+                    body: Data(#"{"detail":"."}"#.utf8), error: deleteError, releasedBy: gate)
             }
             return .init(statusCode: 200, headers: [:], body: documentBody, error: nil)
         }
@@ -145,7 +146,7 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
     /// 200 for `formatted-content` afterwards, so any test using it exercised a server that had
     /// simultaneously deleted the document and still served it, and could not see what the rest
     /// of the pass does with a 404 the pass itself caused.
-    private func stubDeleteThenGone(log: RequestRecorder, deleteDelay: TimeInterval = 0) {
+    private func stubDeleteThenGone(log: RequestRecorder, releasedBy gate: MockURLProtocol.ResponseGate? = nil) {
         let userBody = Data(
             """
             {"id": "\(user.uuidString.lowercased())", "email": "a@example.org"}
@@ -166,7 +167,7 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
             }
             if request.httpMethod == "DELETE" {
                 deleted.set()
-                return .init(statusCode: 204, headers: [:], body: Data(), error: nil, delay: deleteDelay)
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil, releasedBy: gate)
             }
             if deleted.isSet {
                 return .init(
@@ -724,14 +725,16 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         let env = makeEnvironment()
         env.drafts.save(draft(serverID))
         env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
-        stubDeletePipeline(log: log, deleteDelay: 0.25)
+        let deleteGate = MockURLProtocol.ResponseGate()
+        stubDeletePipeline(log: log, releasedBy: deleteGate)
 
         let coordinator = env.coordinator
         let pass = Task { await coordinator.syncPendingDrafts() }
         // Pin the order: undo only once the DELETE has actually reached the stub, or this
         // would be testing the plain "cancelled before the pass looked" path instead.
-        await waitUntil { log.methods.contains("DELETE") }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.cancelPendingDelete(documentID: serverID)
+        deleteGate.open()
         await pass.value
 
         XCTAssertEqual(
@@ -753,12 +756,14 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         let env = makeEnvironment()
         env.drafts.save(draft(serverID, markdown: "the user's only copy"))
         env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
-        stubDeleteThenGone(log: log, deleteDelay: 0.25)
+        let deleteGate = MockURLProtocol.ResponseGate()
+        stubDeleteThenGone(log: log, releasedBy: deleteGate)
 
         let coordinator = env.coordinator
         let pass = Task { await coordinator.syncPendingDrafts() }
-        await waitUntil { log.methods.contains("DELETE") }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.cancelPendingDelete(documentID: serverID)
+        deleteGate.open()
         await pass.value
 
         let bodies = env.drafts.allDrafts().map(\.markdown)
@@ -785,12 +790,14 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
                 documentID: serverID, title: "Doc", markdown: "the user's only copy", updatedAt: Date(),
                 replica: ReplicaDraftReference(manifest: manifest, markdown: "the user's only copy")))
         env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
-        stubDeleteThenGone(log: log, deleteDelay: 0.25)
+        let deleteGate = MockURLProtocol.ResponseGate()
+        stubDeleteThenGone(log: log, releasedBy: deleteGate)
 
         let coordinator = env.coordinator
         let pass = Task { await coordinator.syncPendingDrafts() }
-        await waitUntil { log.methods.contains("DELETE") }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.cancelPendingDelete(documentID: serverID)
+        deleteGate.open()
         await pass.value
 
         XCTAssertNotNil(env.drafts.draft(for: serverID)?.replica, "the raw draft is kept")
@@ -922,12 +929,14 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         checkpointed.postedTitle = "Doomed"
         env.coordinator.savePendingCreateForTesting(checkpointed)
         env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
-        stubDeleteThenGone(log: log, deleteDelay: 0.25)
+        let deleteGate = MockURLProtocol.ResponseGate()
+        stubDeleteThenGone(log: log, releasedBy: deleteGate)
 
         let coordinator = env.coordinator
         let pass = Task { await coordinator.syncPendingDrafts() }
-        await waitUntil { log.methods.contains("DELETE") }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.cancelPendingDelete(documentID: serverID)
+        deleteGate.open()
         await pass.value
 
         XCTAssertEqual(announcements.ids, [serverID])
@@ -1117,12 +1126,14 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         checkpointed.postedTitle = "Doomed"
         env.coordinator.savePendingCreateForTesting(checkpointed)
         env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
-        stubDeleteThenGone(log: log, deleteDelay: 0.25)
+        let deleteGate = MockURLProtocol.ResponseGate()
+        stubDeleteThenGone(log: log, releasedBy: deleteGate)
 
         let coordinator = env.coordinator
         let pass = Task { await coordinator.syncPendingDrafts() }
-        await waitUntil { log.methods.contains("DELETE") }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.cancelPendingDelete(documentID: serverID)
+        deleteGate.open()
         await pass.value
 
         XCTAssertTrue(
@@ -1145,15 +1156,17 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         let env = makeEnvironment()
         env.drafts.save(draft(serverID, markdown: "the user's only copy"))
         env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
-        stubDeleteThenGone(log: log, deleteDelay: 0.25)
+        let deleteGate = MockURLProtocol.ResponseGate()
+        stubDeleteThenGone(log: log, releasedBy: deleteGate)
 
         let coordinator = env.coordinator
         let pass = Task { await coordinator.syncPendingDrafts() }
         // Both acquired *during* the request: the pre-send guard has already run, so this is
         // the post-await re-check and nothing else.
-        await waitUntil { log.methods.contains("DELETE") }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.retainOpenEditor(documentID: serverID)
         coordinator.cancelPendingDelete(documentID: serverID)
+        deleteGate.open()
         await pass.value
 
         let revived = env.creates.allCreates().first

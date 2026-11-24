@@ -34,7 +34,8 @@ final class DocumentSaveCoordinatorReplayMultiRecordTests: DocumentSaveCoordinat
     /// every `updatePendingCreate` on this path is guarded on it still existing.)
     func testARecordDeletedDuringAnEarlierPostIsNeverCreated() async {
         let log = RequestRecorder()
-        stubReplayPipeline(log: log, postDelay: 0.3)
+        let postGate = MockURLProtocol.ResponseGate()
+        stubReplayPipeline(log: log, releasedBy: postGate)
         let env = makeEnvironment()
         let first = env.coordinator.createLocalDocument(
             title: "First", parentID: nil, ownerUserID: user)
@@ -44,8 +45,9 @@ final class DocumentSaveCoordinatorReplayMultiRecordTests: DocumentSaveCoordinat
         let coordinator = env.coordinator
         let pass = Task { await coordinator.syncPendingDrafts() }
         // Delete the second while the first is still on the wire.
-        await waitUntil { self.creates(log) == 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.discardPendingWork(documentID: second.id)
+        postGate.open()
         await pass.value
 
         XCTAssertEqual(creates(log), 1, "only the first — the deleted one is never POSTed")
@@ -114,12 +116,20 @@ final class DocumentSaveCoordinatorReplayMultiRecordTests: DocumentSaveCoordinat
         let relaunched = makeEnvironment(sharing: env.defaults)
         let coordinator = relaunched.coordinator
         // Hold the resume GET open, delete during it, then let the 404 land.
-        stubUsersMeThen(log: log) { _ in
-            .init(statusCode: 404, headers: [:], body: Data(), error: nil, delay: 0.3)
+        let getGate = MockURLProtocol.ResponseGate()
+        stubUsersMeThen(log: log) { request in
+            let isFormatted = request.url?.absoluteString.contains("formatted-content") == true
+            return .init(
+                statusCode: 404, headers: [:], body: Data(), error: nil,
+                releasedBy: isFormatted ? getGate : nil)
         }
         let pass = Task { await coordinator.syncPendingDrafts() }
-        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount >= 1
+                && log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
         coordinator.discardPendingWork(documentID: serverID)
+        getGate.open()
         await pass.value
 
         XCTAssertNil(relaunched.creates.create(for: local.id), "the delete stands")

@@ -403,13 +403,15 @@ final class DocumentSaveCoordinatorReplayTests: DocumentSaveCoordinatorReplayTes
         let local = env.coordinator.createLocalDocument(
             title: "Untitled document", parentID: nil, ownerUserID: user)
         env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Written offline")
-        stubReplayPipeline(log: log, postDelay: 0.2)
+        let postGate = MockURLProtocol.ResponseGate()
+        stubReplayPipeline(log: log, releasedBy: postGate)
 
         let coordinator = env.coordinator
         let pass = Task { await coordinator.syncPendingDrafts() }
         // Open the screen while the POST is on the wire.
-        await waitUntil { self.creates(log) == 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.retainOpenEditor(documentID: local.id)
+        postGate.open()
         await pass.value
 
         XCTAssertTrue(coordinator.isPendingCreate(documentID: local.id), "migration deferred")
@@ -428,12 +430,14 @@ final class DocumentSaveCoordinatorReplayTests: DocumentSaveCoordinatorReplayTes
         let local = env.coordinator.createLocalDocument(
             title: "Untitled document", parentID: nil, ownerUserID: user)
         env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Written offline")
-        stubReplayPipeline(log: log, postDelay: 0.2)
+        let postGate = MockURLProtocol.ResponseGate()
+        stubReplayPipeline(log: log, releasedBy: postGate)
 
         let coordinator = env.coordinator
         let pass = Task { await coordinator.syncPendingDrafts() }
-        await waitUntil { self.creates(log) == 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
         coordinator.discardPendingWork(documentID: local.id)
+        postGate.open()
         await pass.value
 
         XCTAssertNil(env.creates.create(for: local.id), "the record stays deleted")

@@ -53,6 +53,7 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
         record.syncedServerID = serverID
         env.creates.save(record)
         // The seed draft under the local id stays, so the take-back is skipped outright.
+        let getGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             let url = request.url?.absoluteString ?? ""
@@ -67,17 +68,21 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
                 return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
             }
             if url.contains("formatted-content") {
-                return .init(statusCode: 404, headers: [:], body: Data(), error: nil, delay: 1.5)
+                return .init(statusCode: 404, headers: [:], body: Data(), error: nil, releasedBy: getGate)
             }
             return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
         }
 
         let relaunched = makeEnvironment(sharing: env.defaults)
         let starter = Task { @MainActor in
-            await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+            await waitUntil {
+                MockURLProtocol.deferredDeliveryCount >= 1
+                    && log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+            }
             relaunched.coordinator.enqueue(
                 documentID: serverID, title: "Notes", markdown: "# Saved during the fetch")
             await waitUntil { relaunched.drafts.draft(for: serverID) == nil }
+            getGate.open()
         }
 
         await relaunched.coordinator.syncPendingDrafts()
@@ -114,6 +119,7 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
             PendingDraft(
                 documentID: serverID, title: "Notes", markdown: "# Only copy", updatedAt: Date(),
                 baseline: nil))
+        let getGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             if request.url?.absoluteString.hasSuffix("users/me/") == true {
@@ -127,18 +133,22 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
                 return .init(statusCode: 503, headers: [:], body: Data(), error: nil)
             }
             if request.url?.absoluteString.contains("formatted-content") == true {
-                return .init(statusCode: 404, headers: [:], body: Data(), error: nil, delay: 1.5)
+                return .init(statusCode: 404, headers: [:], body: Data(), error: nil, releasedBy: getGate)
             }
             return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
         }
 
         let relaunched = makeEnvironment(sharing: env.defaults)
         let starter = Task { @MainActor in
-            await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+            await waitUntil {
+                MockURLProtocol.deferredDeliveryCount >= 1
+                    && log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+            }
             relaunched.coordinator.enqueue(
                 documentID: serverID, title: "Notes", markdown: "# Typed during the fetch")
             // Settled before the 404 lands: `inFlight` is nil again, so only the marker knows.
             await waitUntil { relaunched.coordinator.pendingSave(documentID: serverID) == nil }
+            getGate.open()
         }
 
         await relaunched.coordinator.syncPendingDrafts()
@@ -246,15 +256,16 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
         var record = env.creates.create(for: local.id)!
         record.syncedServerID = serverID
         env.creates.save(record)
+        let patchGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
-            return .init(statusCode: 200, headers: [:], body: Data(), error: nil, delay: 0.2)
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil, releasedBy: patchGate)
         }
         let relaunched = makeEnvironment(sharing: env.defaults)
         relaunched.coordinator.retainOpenEditor(documentID: local.id)
         // The user opened the server stray, typed, and a save is on the wire for it.
         relaunched.coordinator.enqueue(documentID: serverID, title: "Stray", markdown: "# Typed")
-        await waitUntil { self.savesInFlight(log) == 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
 
         relaunched.coordinator.discardPendingWork(documentID: serverID)
 
@@ -266,6 +277,7 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
         // could not have failed however the code behaved — vacuous, which is the one thing
         // this PR's review keeps finding. `finish` sets `.idle` on the discarded path and
         // `.saved` otherwise, so this synchronises for both.
+        patchGate.open()
         await waitUntil { relaunched.coordinator.state(for: self.serverID) != .saving }
         let cache = DocumentContentCacheStore(directory: cacheDirectory)
         XCTAssertNil(
@@ -317,6 +329,8 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
         record.syncedServerID = serverID
         env.creates.save(record)
         env.drafts.remove(documentID: local.id)
+        let getGate = MockURLProtocol.ResponseGate()
+        let patchGate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             if request.url?.absoluteString.hasSuffix("users/me/") == true {
@@ -325,10 +339,10 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
                     body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
             }
             if request.httpMethod == "PATCH" {
-                return .init(statusCode: 200, headers: [:], body: Data(), error: nil, delay: 2.0)
+                return .init(statusCode: 200, headers: [:], body: Data(), error: nil, releasedBy: patchGate)
             }
             if request.url?.absoluteString.contains("formatted-content") == true {
-                return .init(statusCode: 404, headers: [:], body: Data(), error: nil, delay: 0.6)
+                return .init(statusCode: 404, headers: [:], body: Data(), error: nil, releasedBy: getGate)
             }
             return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
         }
@@ -338,13 +352,18 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
         // `marker.hadPendingSave` true, and the take-back is then blocked by `!mayPredateSave`
         // — a *different* conjunct — leaving the one this test names with no coverage at all.
         // That is what the first version of this test did. Launch it from inside the resume's
-        // fetch window instead: the recorder logs a request when it is issued, so once the
-        // `formatted-content` GET appears the marker is taken, and that GET is held open long
-        // enough for the PATCH to still be on the wire when the take-back runs.
+        // fetch window instead: once the gated `formatted-content` GET is held, the marker is
+        // taken; enqueue the save, wait until its PATCH is also held, then release the GET while
+        // the PATCH remains on the wire.
         let starter = Task { @MainActor in
-            await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+            await waitUntil {
+                MockURLProtocol.deferredDeliveryCount >= 1
+                    && log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+            }
             relaunched.coordinator.enqueue(
                 documentID: serverID, title: "Notes", markdown: "# On the wire")
+            await waitUntil { MockURLProtocol.deferredDeliveryCount >= 2 }
+            getGate.open()
         }
 
         await relaunched.coordinator.syncPendingDrafts()
@@ -359,6 +378,8 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
         // establishes it was still open is the pair above: the draft was neither moved nor
         // removed, and the checkpoint survived.
         XCTAssertEqual(savesInFlight(log), 1, "the save reached the network")
+        patchGate.open()
+        await waitUntil { relaunched.coordinator.state(for: self.serverID) != .saving }
     }
 
     /// With a local draft still present this is *not* the partial-migration window, so a draft
