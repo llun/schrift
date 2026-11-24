@@ -17,12 +17,20 @@ final class FakeWebSocket: WebSocketConnecting, @unchecked Sendable {
     private var _pingCount = 0
     private var _cancelCloseCode: URLSessionWebSocketTask.CloseCode?
     private var _closeCode: URLSessionWebSocketTask.CloseCode = .invalid
+    /// Set once the socket has failed or closed: like `URLSessionWebSocketTask`,
+    /// a send after that throws instead of reaching the server.
+    private var _closedError: Error?
 
     // MARK: WebSocketConnecting
 
     func resume() { lock.withLock { _didResume = true } }
 
-    func send(_ data: Data) async throws { lock.withLock { _sentFrames.append(data) } }
+    func send(_ data: Data) async throws {
+        try lock.withLock {
+            if let error = _closedError { throw error }
+            _sentFrames.append(data)
+        }
+    }
 
     func sendPing() async throws { lock.withLock { _pingCount += 1 } }
 
@@ -44,6 +52,7 @@ final class FakeWebSocket: WebSocketConnecting, @unchecked Sendable {
         lock.withLock {
             _cancelCloseCode = closeCode
             _closeCode = closeCode
+            _closedError = _closedError ?? URLError(.cancelled)
         }
         deliver(.failure(URLError(.cancelled)))
     }
@@ -64,12 +73,18 @@ final class FakeWebSocket: WebSocketConnecting, @unchecked Sendable {
 
     /// Simulate the server closing with `code` (sets `closeCode`, unblocks the pump).
     func serverClose(code: URLSessionWebSocketTask.CloseCode, error: Error = URLError(.networkConnectionLost)) {
-        lock.withLock { _closeCode = code }
+        lock.withLock {
+            _closeCode = code
+            _closedError = _closedError ?? error
+        }
         deliver(.failure(error))
     }
 
     /// Simulate a transport error with no close code (stays `.invalid`).
-    func failTransport(_ error: Error = URLError(.networkConnectionLost)) { deliver(.failure(error)) }
+    func failTransport(_ error: Error = URLError(.networkConnectionLost)) {
+        lock.withLock { _closedError = _closedError ?? error }
+        deliver(.failure(error))
+    }
 
     private func deliver(_ result: Result<Data, Error>) {
         lock.lock()
