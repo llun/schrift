@@ -29,7 +29,23 @@ final class NativeTextView: UITextView {
         super.didMoveToWindow()
         if window != nil {
             blockDragController?.didMoveToWindow()
+            onDidMoveToWindow?()
         }
+    }
+
+    /// Every block owns a trailing synthetic `"\n"` paragraph separator, so
+    /// `endOfDocument` sits past the last separator where no block owns a caret.
+    /// Clamp tap hit-tests that land below the last line (including below a
+    /// newly seeded empty paragraph) to the end of the last block's text.
+    override func closestPosition(to point: CGPoint) -> UITextPosition? {
+        guard let position = super.closestPosition(to: point) else { return nil }
+        if textStorage.length > 0, compare(position, to: endOfDocument) == .orderedSame,
+            let surface = blockControls?.surface, !surface.rangeIndex.entries.isEmpty,
+            let clamped = self.position(from: endOfDocument, offset: -1)
+        {
+            return clamped
+        }
+        return position
     }
 
     /// The collaborative history's UIKit face (PR07b): Edit ▸ Undo/Redo, the
@@ -546,6 +562,7 @@ final class NativeTextView: UITextView {
     let editTapRecognizer = UITapGestureRecognizer()
     let editDoubleTapRecognizer = UITapGestureRecognizer()
     var onRequestEdit: (() -> Void)?
+    var onDidMoveToWindow: (() -> Void)?
     weak var headerAccessoryView: UIView?
     weak var footerAccessoryView: UIView?
     private var lastEditTapDate: TimeInterval = 0

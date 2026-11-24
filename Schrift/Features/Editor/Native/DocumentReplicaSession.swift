@@ -660,7 +660,11 @@ actor DocumentReplicaSession {
         }
         surface.unseen.removeAll { $0.revision <= message.command.baseRevision }
         var command = message.command
-        let unseen = surface.droppedThrough > command.baseRevision || !surface.unseen.isEmpty
+        // `.seedEmptyParagraph` has no block-relative coordinates and re-checks live
+        // replica emptiness inside `engine.seedEmptyParagraph`, so unseen remote updates
+        // settle it cleanly as a no-op instead of bouncing `.stale`.
+        let isSeed = if case .seedEmptyParagraph = command.kind { true } else { false }
+        let unseen = !isSeed && (surface.droppedThrough > command.baseRevision || !surface.unseen.isEmpty)
         if unseen {
             guard message.predicted, surface.droppedThrough <= command.baseRevision,
                 case .replace(let range, let text, let marks) = command.kind,
@@ -707,6 +711,9 @@ actor DocumentReplicaSession {
                 let changed = try engine.applyHistoryStep(
                     command, step: { try history?.step(undo: undo) ?? false }, persist: persist)
                 result = .applied(commandID: id, caret: nil, journaled: changed)
+            case .seedEmptyParagraph:
+                let caret = try engine.seedEmptyParagraph(command, persist: persist)
+                result = .applied(commandID: id, caret: caret, journaled: caret != nil)
             default:
                 let caret = try engine.applyStructural(command, persist: persist)
                 result = .applied(commandID: id, caret: caret, journaled: true)

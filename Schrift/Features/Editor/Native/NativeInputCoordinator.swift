@@ -2008,6 +2008,20 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             })
     }
 
+    /// Seeds an empty writable document with one empty paragraph when editing
+    /// begins. No-op when blocks already exist, a barrier is already in flight,
+    /// or authoring is unavailable. Re-checks emptiness on the replica so
+    /// concurrent remote content settles as a no-op without showing an error.
+    @discardableResult
+    func seedEmptyParagraphIfNeeded() -> Bool {
+        guard surface.blocks.isEmpty, let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView,
+            barrier == nil, !awaitsReset
+        else { return false }
+        return postBarrier(
+            "", .seedEmptyParagraph(newID: UUID().uuidString), refusal: nil, placement: .caret,
+            undoBefore: false, undoAfter: false, retry: nil)
+    }
+
     private func postBarrier(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, placement: Barrier.Placement,
         undoBefore: Bool, undoAfter: Bool, retry: (() -> Bool)?, readsSelection: Bool = false,

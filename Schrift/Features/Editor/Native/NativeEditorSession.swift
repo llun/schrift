@@ -274,6 +274,11 @@ final class NativeEditorSession {
     /// Server origin for interlink clipboard plain-text serialization and
     /// same-origin URL paste-interlink.
     @ObservationIgnored private var interlinkingOrigin: String = ""
+    /// Armed when the user taps the empty-document body to start writing: once
+    /// the seeded paragraph is on screen and `textView` is in a window, focus
+    /// `textView` at the start of the first block without stealing focus from a
+    /// newly created document's title field.
+    @ObservationIgnored private var pendingBodyFocus = false
 
     private init(
         replica: DocumentReplicaSession?, surfaceID: UUID = UUID(), blocks: [BlockSnapshot], revision: UInt64,
@@ -317,6 +322,9 @@ final class NativeEditorSession {
         }
         view.onBecameFirstResponder = { [weak self] in
             self?.completeTimeToEdit()
+        }
+        view.onDidMoveToWindow = { [weak self] in
+            self?.fulfillPendingBodyFocusIfReady()
         }
         surface.onFoldChange = { [weak view, weak self] in
             view?.blockControls.foldDidChange()
@@ -792,6 +800,7 @@ final class NativeEditorSession {
         if let result = delivery.result, let id = result.commandID {
             results.removeValue(forKey: id)?.resume(returning: result)
         }
+        fulfillPendingBodyFocusIfReady()
         onApplied?(delivery)
     }
 
@@ -862,6 +871,27 @@ final class NativeEditorSession {
         textView.setNeedsLayout()
     }
 
+    /// Arms a one-shot focus request for `textView` once it is editable, in a
+    /// window, and holds at least one block (used when tapping an empty body).
+    func requestBodyFocusWhenReady() {
+        pendingBodyFocus = true
+        fulfillPendingBodyFocusIfReady()
+    }
+
+    private func fulfillPendingBodyFocusIfReady() {
+        guard pendingBodyFocus, textView.isEditable, textView.window != nil, !surface.blocks.isEmpty else { return }
+        pendingBodyFocus = false
+        if !textView.isFirstResponder {
+            _ = textView.becomeFirstResponder()
+        }
+        if let first = surface.rangeIndex.entries.first {
+            let start = NSRange(location: first.textRange.location, length: 0)
+            if textView.selectedRange != start {
+                input?.selection.place(start)
+            }
+        }
+    }
+
     /// Switches this surface between Reading and Editing mode without tearing
     /// down its `NativeInputCoordinator`.
     func setEditing(_ editing: Bool) {
@@ -875,12 +905,17 @@ final class NativeEditorSession {
                 pendingEditStartNs = DispatchTime.now().uptimeNanoseconds
             }
             textView.isEditable = true
+            if table == nil, column == nil, source == nil, !hasUnsupportedRoot, canType {
+                input.seedEmptyParagraphIfNeeded()
+            }
             input.refreshSelectionMarks()
+            fulfillPendingBodyFocusIfReady()
             if collecting, textView.isFirstResponder {
                 completeTimeToEdit()
             }
         } else {
             pendingEditStartNs = nil
+            pendingBodyFocus = false
             if textView.markedTextRange != nil {
                 textView.unmarkText()
             }
@@ -959,6 +994,7 @@ final class NativeEditorSession {
     func close() -> Task<Void, Never> {
         if let closing { return closing }
         isClosed = true
+        pendingBodyFocus = false
         sampleDiagnosticsSnapshot(steady: true)
         if ownsDiagnosticsSession {
             NativeEditorDiagnosticsStore.shared.endSession(sessionSeq)

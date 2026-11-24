@@ -277,6 +277,66 @@ final class DocumentEngine {
         }
     }
 
+    /// Seeds an empty canonical document with one empty paragraph `newID`,
+    /// journaled before publication. Re-checks emptiness against the live
+    /// replica: if blocks already exist (e.g. from a concurrent remote update),
+    /// returns `nil` without mutating, persisting, or advancing `revision`.
+    /// Uses an untracked (`origin: nil`) transaction so implicit empty-document
+    /// scaffolding is not an undo step.
+    @discardableResult
+    func seedEmptyParagraph(
+        _ command: NativeEditCommand, persist: (Data) throws -> Void
+    ) throws -> EditorPosition? {
+        try requireCompositionBoundary()
+        guard nativeCommand == nil, !holdingDurableRemote, !isFlushing, composition == nil,
+            revision == command.baseRevision, revision < UInt64.max
+        else { throw DocumentEngineError.staleNativeCommand }
+        guard case .seedEmptyParagraph(let newID) = command.kind, !newID.isEmpty,
+            !NativeBlockProjection.hasUnsupportedAuxiliaryRoot(doc),
+            builder.index.isCanonical
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        if !builder.index.order.isEmpty {
+            return nil
+        }
+        if let root = doc.share[BlockNoteYjs.fragmentField] {
+            let rootChildren = YBlockProjection.children(of: root, includeFormats: false)
+            if !rootChildren.isEmpty {
+                guard rootChildren.count == 1,
+                    case .type(let group) = rootChildren[0].content,
+                    group.typeRef == .xmlElement(nodeName: "blockGroup")
+                else { throw DocumentEngineError.unsupportedNativeInput }
+                if !YBlockProjection.children(of: group, includeFormats: false).isEmpty {
+                    return nil
+                }
+            }
+        }
+        nativeCommand = command
+        nativeEmission = 0
+        selectionBeforeCommand = selection
+        defer { selectionBeforeCommand = nil }
+        do {
+            guard let update = try writer.seedEmptyParagraph(id: newID) else {
+                nativeCommand = nil
+                return nil
+            }
+            unconfirmedNativeUpdate = update
+            try persist(update)
+            revision += 1
+            unconfirmedNativeUpdate = nil
+            nativeCommand = nil
+            flush()
+            return EditorPosition(blockID: newID, offset: 0, assoc: -1)
+        } catch {
+            nativeCommand = nil
+            if error is BlockNoteWriter.Error, buffered.isEmpty {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            nativeWriteFailed = true
+            buffered = []
+            throw error
+        }
+    }
+
     /// One durable step of the native history (PR07b: `.undo`/`.redo`). `step`
     /// runs the step's own transaction, whose origin is neither `.localUser` nor
     /// `.remote` (so its patch is `.other`, which every surface applies), and
@@ -666,6 +726,8 @@ final class DocumentEngine {
             caret = { EditorPosition(blockID: command.blockID, offset: removing.lowerBound, assoc: -1) }
         case .moveUp, .moveDown, .moveBlock, .duplicate, .deleteBlock, .insertBlock, .insertSubtrees:
             throw DocumentEngineError.unsupportedNativeInput  // prepared above
+        case .seedEmptyParagraph:
+            throw DocumentEngineError.unsupportedNativeInput  // `seedEmptyParagraph`
         case .undo, .redo:
             throw DocumentEngineError.unsupportedNativeInput  // `applyHistoryStep`
         case .lineBreak, .table, .columns, .insertColumns, .insertMedia, .insertMediaBatch, .insertSourceBlock,
