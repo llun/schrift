@@ -780,6 +780,7 @@ final class NativeEditorSession {
             // The replica turned read-only (a reader answer): the view stops
             // taking input, so nothing typed looks accepted.
             if wasWritable, !state.writable { textView.isEditable = false }
+            if !state.writable || state.frozen || state.detached || !canType { pendingBodyFocus = false }
         } else {
             if case .reset(let epoch) = delivery.resync { headlessEpoch = epoch }
             if case .invalidated(let epoch, _)? = delivery.result { headlessEpoch = epoch }

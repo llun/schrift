@@ -573,7 +573,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         if needsSelectionRefresh { refreshSelectionMarks() }
         if pendingSeed, !isBusy, !compositionOwnsView {
-            if view?.isFirstResponder == true { _ = seedEmptyParagraphIfNeeded() } else { pendingSeed = false }
+            if view?.isFirstResponder == true || holdsTypedKeys {
+                _ = seedEmptyParagraphIfNeeded()
+            } else {
+                pendingSeed = false
+            }
         }
         replayIntents()
     }
@@ -1358,7 +1362,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     func textViewDidEndEditing(_ textView: UITextView) {
         // An allowance for a keystroke that never arrived ends with editing.
         directInsertion = nil
-        pendingSeed = false
+        // Keys typed while the seed waited still need a paragraph to land in.
+        if !holdsTypedKeys { pendingSeed = false }
         isEditingBlurred = true
         slashPageLinkSession = nil
         pendingSlashPageLink = nil
@@ -2062,6 +2067,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return true
     }
 
+    private var holdsTypedKeys: Bool {
+        intents.contains { if case .insert = $0 { true } else { false } }
+    }
+
     /// Seeds an empty writable root document with one empty paragraph when the
     /// body begins editing, deferring to `drain()` if input is busy or resetting.
     @discardableResult
@@ -2075,7 +2084,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return false
         }
         guard !isBusy, !compositionOwnsView else {
-            pendingSeed = view.isFirstResponder
+            pendingSeed = view.isFirstResponder || holdsTypedKeys
             return false
         }
         pendingSeed = false

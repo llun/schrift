@@ -1059,4 +1059,76 @@ final class NativeEmptyDocumentSeedTests: NativeEditingTestCase {
         await harness.settle()
         XCTAssertEqual(session.surface.blocks[1].runs, [InlineRun("Hi Body")])
     }
+
+    /// Keys typed while a body-focus seed is deferred (e.g. behind an in-flight
+    /// resync) still seed a paragraph and land cleanly even if the user blurs
+    /// the body before input becomes idle.
+    func testBlurringBodyWhileSeedIsDeferredStillSeedsAndReplaysHeldKeys() async throws {
+        let gate = Latch()
+        let gated = Locked(false)
+        let session = try await NativeEditorSession.seed(
+            state: Self.emptyUpdate,
+            hooks: .init(beforeMessage: {
+                if gated.value { await gate.passing() }
+            }))
+        addTeardownBlock { await session.close().value }
+        session.enableTyping(persist: { _, _ in })
+        session.setEditing(true)
+        let unmount = mountInWindow(session.textView)
+        defer {
+            gated.value = false
+            gate.open()
+            unmount()
+        }
+        let input = try XCTUnwrap(session.input)
+
+        gated.value = true
+        input.requestResync()
+        await waitUntil { gate.waiting > 0 }
+        XCTAssertTrue(session.textView.becomeFirstResponder())
+        input.typeKey("H")
+        input.typeKey("i")
+        XCTAssertTrue(session.textView.resignFirstResponder())
+
+        gated.value = false
+        gate.open()
+        await session.settle()
+
+        XCTAssertNil(input.noticeKey)
+        XCTAssertEqual(session.surface.blocks.count, 1)
+        XCTAssertEqual(session.surface.blocks.first?.runs, [InlineRun("Hi")])
+    }
+
+    /// When a delivery turns a session read-only while `pendingBodyFocus` is
+    /// armed before the view enters a window, the pending request is cleared so
+    /// later editing or mounting never steals focus.
+    func testReadOnlyDeliveryClearsPendingBodyFocusRequest() async throws {
+        let session = try await NativeEditorSession.seed(state: Self.emptyUpdate)
+        addTeardownBlock { await session.close().value }
+        session.enableTyping(persist: { _, _ in })
+        await session.settle()
+        let replica = try XCTUnwrap(session.replica)
+
+        session.setEditing(true)
+        session.requestBodyFocusWhenReady()
+        XCTAssertTrue(session.hasPendingBodyFocus)
+
+        // A replica delivery turns the session read-only before the view mounts.
+        XCTAssertTrue(replica.mailbox.post(.setWritable(nil)))
+        await session.settle()
+        XCTAssertFalse(session.isWritable)
+        XCTAssertFalse(session.textView.isEditable)
+        XCTAssertFalse(session.hasPendingBodyFocus, "read-only delivery must clear pendingBodyFocus")
+
+        // Restoring writability, entering editing, and mounting in a window must not steal focus.
+        XCTAssertTrue(replica.mailbox.post(.setWritable({ _, _ in })))
+        await session.settle()
+        session.setEditing(true)
+        let unmount = mountInWindow(session.textView)
+        defer { unmount() }
+        await session.settle()
+
+        XCTAssertFalse(session.textView.isFirstResponder, "cleared body-focus request must not later steal focus")
+        XCTAssertTrue(session.surface.blocks.isEmpty)
+    }
 }
