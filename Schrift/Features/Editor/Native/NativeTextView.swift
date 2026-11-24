@@ -72,7 +72,7 @@ final class NativeTextView: UITextView {
     /// An unsupported composition keeps the preserved read-only refusal.
     override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
         guard !isApplyingMarkedText else { return super.setMarkedText(markedText, selectedRange: selectedRange) }
-        mark(markedText, selectedRange: selectedRange) { super.setMarkedText(markedText, selectedRange: selectedRange) }
+        mark(markedText) { super.setMarkedText(markedText, selectedRange: selectedRange) }
     }
 
     /// The system Japanese and Chinese keyboards mark attributed (segmented)
@@ -81,28 +81,20 @@ final class NativeTextView: UITextView {
         guard !isApplyingMarkedText else {
             return super.setAttributedMarkedText(markedText, selectedRange: selectedRange)
         }
-        mark(markedText?.string, attributed: markedText, selectedRange: selectedRange) {
-            super.setAttributedMarkedText(markedText, selectedRange: selectedRange)
-        }
+        mark(markedText?.string) { super.setAttributedMarkedText(markedText, selectedRange: selectedRange) }
     }
 
-    private func mark(
-        _ markedText: String?, attributed: NSAttributedString? = nil, selectedRange: NSRange, apply: () -> Void
-    ) {
+    private func mark(_ markedText: String?, apply: () -> Void) {
         guard let inputCoordinator, isEditable else { return }
         guard let markedText, !markedText.isEmpty else {
             dropMarkedText()
             inputCoordinator.cancelComposition()
             return
         }
-        guard
-            inputCoordinator.beginComposition(
-                markedText: markedText, attributed: attributed, selectedRange: selectedRange)
-        else {
+        guard inputCoordinator.beginComposition(markedText: markedText) else {
             inputCoordinator.refuseComposition()
             return
         }
-        guard inputCoordinator.composition.isActive else { return }
         isApplyingMarkedText = true
         apply()
         isApplyingMarkedText = false
@@ -112,8 +104,7 @@ final class NativeTextView: UITextView {
     /// displays and reconciles it to the projection, so clear the marked
     /// state first.
     override func unmarkText() {
-        guard let inputCoordinator, inputCoordinator.composition.isActive || inputCoordinator.hasWaitingMarkedText
-        else {
+        guard let inputCoordinator, inputCoordinator.composition.isActive else {
             super.unmarkText()
             return
         }
@@ -141,10 +132,6 @@ final class NativeTextView: UITextView {
             }
             return
         }
-        if inputCoordinator.hasWaitingMarkedText {
-            inputCoordinator.commitComposition(text: text)
-            return
-        }
         let location = offset(from: beginningOfDocument, to: range.start)
         let length = offset(from: range.start, to: range.end)
         inputCoordinator.replace(range: NSRange(location: location, length: length), with: text)
@@ -164,9 +151,7 @@ final class NativeTextView: UITextView {
         // structural; while a barrier is in flight every key is held (PR08b).
         // Typing over a CellSelection clears it (PR11c); the text goes into the active cell.
         if !inputCoordinator.composition.isActive { _ = inputCoordinator.tableKey?(.typing) }
-        if inputCoordinator.composition.isActive || inputCoordinator.hasWaitingMarkedText,
-            text != "\n", text != "\r", text != "\t"
-        {
+        if inputCoordinator.composition.isActive, text != "\n", text != "\r", text != "\t" {
             dropMarkedText()
             inputCoordinator.commitComposition(text: text)
             return

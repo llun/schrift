@@ -126,9 +126,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         case moveBlock(id: String, destination: NativeMoveDestination, onSettled: ((Bool) -> Void)?)
     }
     @ObservationIgnored private var intents: [Intent] = []
-    /// Body focus asked to seed while busy/resetting; marked text started while seed is in flight.
+    /// Body focus asked to seed an empty document while input was busy or resetting.
     @ObservationIgnored private var pendingSeed = false
-    @ObservationIgnored private var waitingMarkedText: (text: String, attributed: NSAttributedString?, range: NSRange)?
     /// Blocks whose predictions the session refused: typing there is a barrier.
     @ObservationIgnored private var barrierOnly: Set<String> = []
     private enum PendingShortcutKind {
@@ -576,14 +575,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         if pendingSeed, !isBusy, !compositionOwnsView {
             if view?.isFirstResponder == true { _ = seedEmptyParagraphIfNeeded() } else { pendingSeed = false }
         }
-        if let waiting = waitingMarkedText, !isBusy, !compositionOwnsView, !surface.blocks.isEmpty, let view {
-            waitingMarkedText = nil
-            if let attributed = waiting.attributed {
-                view.setAttributedMarkedText(attributed, selectedRange: waiting.range)
-            } else {
-                view.setMarkedText(waiting.text, selectedRange: waiting.range)
-            }
-        }
         replayIntents()
     }
 
@@ -705,7 +696,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 keepSelectionVisible()
             }
             needsRestore = false
-            if wasEmpty, !surface.blocks.isEmpty, barrier == nil, view?.isEditable == true {
+            if wasEmpty, !surface.blocks.isEmpty, delivery.result == nil, barrier == nil, view?.isEditable == true {
                 placeCaretInFirstVisibleBlock()
             }
             if delivery.state.detached { isDetached = true }
@@ -915,7 +906,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                     if !keptUserSelection { placeCaretInFirstVisibleBlock() }
                     onSettled?(true)
                 } else {
-                    dropPendingSeedInput()
+                    if dropPendingSeedInput() { noticeKey = .native_editor_input_unavailable }
                     lastOutcome = false
                     onSettled?(false)
                 }
@@ -974,11 +965,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             if retried, let next = lastCommandID, next != id {
                 // A cut's copy follows its retried delete.
                 for (copy, pending) in pendingCopies where pending.after == id { pendingCopies[copy]?.after = next }
+            } else if barrier.isSeed, pendingSeed {
+                // Retry deferred while busy or resetting: `drain()` posts it once idle and replays held keys.
+                return
             } else {
-                if barrier.isSeed { dropPendingSeedInput() }
+                let droppedInput = barrier.isSeed && dropPendingSeedInput()
                 settleCopies(after: id, applied: false)
                 lastOutcome = false
-                if !barrier.isSeed, self.barrier == nil, noticeKey == nil {
+                if !barrier.isSeed || droppedInput, self.barrier == nil, noticeKey == nil {
                     noticeKey = .native_editor_input_unavailable
                 }
                 onSettled?(false)
@@ -1053,7 +1047,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let droppedIntents = intents
         for case .insert(let typed) in droppedIntents { text += typed }
         intents = []
-        waitingMarkedText = nil
         typingCaret = nil
         if let pending = pendingCompositionCommit {
             pendingCompositionCommit = nil
@@ -1085,7 +1078,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// True while a command, a held key, a composition result or a reset is in flight.
     var hasInFlightWork: Bool {
         barrier != nil || hasUnansweredPrediction || !intents.isEmpty || !pendingCopies.isEmpty || awaitsReset
-            || pendingCompositionCommit != nil || pendingSeed || waitingMarkedText != nil
+            || pendingCompositionCommit != nil || pendingSeed
     }
 
     /// A prediction whose answer has not arrived (one queued behind a
@@ -1170,7 +1163,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// A typed key: held while a barrier is in flight, else ordinary input.
     func typeKey(_ text: String) {
         // Return during a composition commits it, whatever is in flight.
-        if composition.isActive || waitingMarkedText != nil, text == "\n" || text == "\r" {
+        if composition.isActive, text == "\n" || text == "\r" {
             insertNewline()
             return
         }
@@ -1225,12 +1218,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     /// The delete key: held while a barrier is in flight.
     func deleteKey() {
-        if let waiting = waitingMarkedText {
-            let shorter = String(waiting.text.dropLast())
-            waitingMarkedText =
-                shorter.isEmpty ? nil : (shorter, nil, NSRange(location: shorter.utf16.count, length: 0))
-            return
-        }
         if isBusy {
             hold(.deleteBackward)
             return
@@ -1372,7 +1359,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // An allowance for a keystroke that never arrived ends with editing.
         directInsertion = nil
         pendingSeed = false
-        waitingMarkedText = nil
         isEditingBlurred = true
         slashPageLinkSession = nil
         pendingSlashPageLink = nil
@@ -1669,7 +1655,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     func insertNewline() -> Bool {
         directInsertion = nil
         guard let view, view.isEditable, !isFrozen, !isDetached else { return false }
-        if composition.isActive || waitingMarkedText != nil {
+        if composition.isActive {
             view.dropMarkedText()
             return commitComposition()
         }
@@ -2059,9 +2045,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             })
     }
 
-    var hasWaitingMarkedText: Bool { waitingMarkedText != nil }
-
-    private func placeCaretInFirstVisibleBlock() {
+    func placeCaretInFirstVisibleBlock() {
         let index =
             surface.blocks.indices.first {
                 !surface.isHidden(position: $0) && !AttributedDocumentProjection.isPlaceholder(surface.blocks[$0])
@@ -2069,11 +2053,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         if let index { show(NSRange(location: surface.rangeIndex.entries[index].textRange.location, length: 0)) }
     }
 
-    private func dropPendingSeedInput() {
-        waitingMarkedText = nil
+    @discardableResult
+    private func dropPendingSeedInput() -> Bool {
+        guard !intents.isEmpty else { return false }
         let dropped = intents
         intents = []
         settleDroppedMoveIntents(dropped)
+        return true
     }
 
     /// Seeds an empty writable root document with one empty paragraph when the
@@ -2176,7 +2162,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         activeMarks = []
         typingCaret = nil
         pendingSeed = false
-        waitingMarkedText = nil
         isEditingBlurred = false
         var keptIntents: [Intent] = []
         var droppedMoves: [Intent] = []
@@ -3797,17 +3782,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     // MARK: - Marked text
 
     /// Called by `setMarkedText` before UIKit applies the marked range.
-    func beginComposition(
-        markedText: String, attributed: NSAttributedString? = nil,
-        selectedRange: NSRange = NSRange(location: 0, length: 0)
-    ) -> Bool {
+    func beginComposition(markedText: String) -> Bool {
         guard let view, view.isEditable, !isFrozen, !isDetached else { return false }
-        if (surface.blocks.isEmpty && (barrier?.isSeed == true || pendingSeed)) || waitingMarkedText != nil {
-            directInsertion = nil
-            waitingMarkedText = (markedText, attributed, selectedRange)
-            noticeKey = nil
-            return true
-        }
+        if surface.blocks.isEmpty, barrier?.isSeed == true || pendingSeed { return false }
         directInsertion = nil
         let began = composition.begin(markedText: markedText)
         if began {
@@ -3825,12 +3802,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// by the session).
     @discardableResult
     func commitComposition(text: String? = nil) -> Bool {
-        if let waiting = waitingMarkedText {
-            waitingMarkedText = nil
-            let committed = text ?? waiting.text
-            if !committed.isEmpty { _ = hold(.insert(committed)) }
-            return true
-        }
         guard composition.isActive else { return false }
         typingCaret = nil
         guard let commit = composition.commit(text: text) else {
@@ -3922,10 +3893,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     @discardableResult
     func cancelComposition() -> Bool {
-        if waitingMarkedText != nil {
-            waitingMarkedText = nil
-            return true
-        }
         guard composition.isActive else { return false }
         let cancelled = composition.cancel()
         // A cancel that could not be posted froze authoring: its notice stays.
@@ -4022,7 +3989,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         directInsertion = nil
         pendingSeed = false
-        waitingMarkedText = nil
         let first = !isFrozen
         isFrozen = true
         let dropped = barrier?.onSettled
@@ -4052,7 +4018,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard !isFrozen else { return }
         isFrozen = true
         pendingSeed = false
-        waitingMarkedText = nil
         let dropped = barrier?.onSettled
         barrier = nil
         pendingCopies = [:]
@@ -4073,7 +4038,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     func detach() {
         isDetached = true
         pendingSeed = false
-        waitingMarkedText = nil
         pendingInputStarts.removeAll(keepingCapacity: false)
         let dropped = barrier?.onSettled
         barrier = nil
@@ -4091,6 +4055,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// provisional text become committed content.
     func refuseComposition() {
         directInsertion = nil
+        if surface.blocks.isEmpty, barrier?.isSeed == true || pendingSeed {
+            view?.unmarkText()
+            return
+        }
         // Folding is view state and never locks the editor: a composition that
         // would start in folded content is cancelled (nothing was marked or
         // written), the keyboard is told, and the caret moves out of the fold.

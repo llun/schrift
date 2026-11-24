@@ -892,12 +892,7 @@ final class NativeEditorSession {
         if !textView.isFirstResponder {
             _ = textView.becomeFirstResponder()
         }
-        if let first = surface.rangeIndex.entries.first {
-            let start = NSRange(location: first.textRange.location, length: 0)
-            if textView.selectedRange != start {
-                input?.selection.place(start)
-            }
-        }
+        input?.placeCaretInFirstVisibleBlock()
     }
 
     /// Switches this surface between Reading and Editing mode without tearing

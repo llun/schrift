@@ -265,10 +265,10 @@ final class NativeEmptyDocumentSeedTests: NativeEditingTestCase {
         XCTAssertEqual(restored.surface.blocks[0].runs, [InlineRun("Hello")])
     }
 
-    /// Keys and IME marked text started immediately after body focus while the
-    /// seed barrier is still in flight wait for the seed and land in order
-    /// without losing text or refusing composition.
-    func testKeysAndIMEMarkedTextWhileSeedIsInFlightLandInOrder() async throws {
+    /// Keys typed while the seed barrier is in flight land in order; marked
+    /// text started while the seed is in flight is refused quietly without a
+    /// notice or disabling editing, and composition works once the seed lands.
+    func testKeysAndMarkedTextWhileSeedIsInFlight() async throws {
         // 1. Rapid keys typed while the seed barrier is in flight land in exact order.
         do {
             let gate = Latch()
@@ -307,7 +307,7 @@ final class NativeEmptyDocumentSeedTests: NativeEditingTestCase {
             XCTAssertEqual(session.textView.selectedRange, NSRange(location: 5, length: 0))
         }
 
-        // 2. IME marked text started while the seed is in flight starts once settled, then commits.
+        // 2. Marked text started while the seed is in flight is refused quietly; composition works once it lands.
         do {
             let gate = Latch()
             let gated = Locked(false)
@@ -330,8 +330,11 @@ final class NativeEmptyDocumentSeedTests: NativeEditingTestCase {
             XCTAssertTrue(session.textView.becomeFirstResponder())
             await waitUntil { gate.waiting > 0 }
             session.textView.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
-            XCTAssertTrue(session.textView.isEditable, "marked text during in-flight seed must not refuse")
-            XCTAssertNil(session.input?.noticeKey)
+            XCTAssertEqual(session.input?.composition.isActive, false, "marked text while seeding must be refused")
+            XCTAssertNil(session.textView.markedTextRange)
+            XCTAssertTrue(session.textView.isEditable, "refusing marked text while seeding must not lock editing")
+            XCTAssertTrue(session.textView.isFirstResponder)
+            XCTAssertNil(session.input?.noticeKey, "refusing marked text while seeding must not show a notice")
 
             gated.value = false
             gate.open()
@@ -339,50 +342,17 @@ final class NativeEmptyDocumentSeedTests: NativeEditingTestCase {
 
             XCTAssertTrue(session.textView.isEditable)
             XCTAssertNil(session.input?.noticeKey)
+            XCTAssertEqual(session.input?.composition.isActive, false, "refused marked text must not replay")
+            XCTAssertNil(session.textView.markedTextRange)
+            XCTAssertEqual(session.surface.blocks.count, 1)
+
+            // Once the seeded paragraph lands, composition works normally.
+            session.textView.setMarkedText("日本", selectedRange: NSRange(location: 2, length: 0))
             XCTAssertEqual(session.input?.composition.isActive, true)
             XCTAssertNotNil(session.textView.markedTextRange)
-            XCTAssertEqual(session.surface.blocks.count, 1)
-
-            session.textView.setMarkedText("日本", selectedRange: NSRange(location: 2, length: 0))
             session.textView.unmarkText()
             await session.settle()
             XCTAssertNil(session.input?.noticeKey)
-            XCTAssertEqual(session.surface.blocks[0].runs, [InlineRun("日本")])
-        }
-
-        // 3. IME marked text committed before the seed settles still lands without losing text.
-        do {
-            let gate = Latch()
-            let gated = Locked(false)
-            let session = try await NativeEditorSession.seed(
-                state: Self.emptyUpdate,
-                hooks: .init(beforeMessage: {
-                    if gated.value { await gate.passing() }
-                }))
-            addTeardownBlock { await session.close().value }
-            session.enableTyping(persist: { _, _ in })
-            session.setEditing(true)
-            let unmount = mountInWindow(session.textView)
-            defer {
-                gated.value = false
-                gate.open()
-                unmount()
-            }
-
-            gated.value = true
-            XCTAssertTrue(session.textView.becomeFirstResponder())
-            await waitUntil { gate.waiting > 0 }
-            session.textView.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
-            session.textView.setMarkedText("日本", selectedRange: NSRange(location: 2, length: 0))
-            session.textView.unmarkText()
-
-            gated.value = false
-            gate.open()
-            await session.settle()
-
-            XCTAssertTrue(session.textView.isEditable)
-            XCTAssertNil(session.input?.noticeKey)
-            XCTAssertEqual(session.surface.blocks.count, 1)
             XCTAssertEqual(session.surface.blocks[0].runs, [InlineRun("日本")])
         }
     }
@@ -845,5 +815,248 @@ final class NativeEmptyDocumentSeedTests: NativeEditingTestCase {
         XCTAssertTrue(session.textView.isFirstResponder, "accepted empty-body tap must focus the empty canvas")
         XCTAssertFalse(session.hasPendingBodyFocus)
         XCTAssertEqual(session.surface.blocks.count, 1, "accepted empty-body tap focuses body and seeds once")
+    }
+
+    /// When a stale seed's retry is deferred (`pendingSeed` set because input
+    /// became busy/resetting during the drain), held keys are NOT dropped and
+    /// `lastOutcome` is not failed; once the reset finishes, the deferred seed
+    /// runs and the held keys land.
+    func testStaleSeedWithDeferredRetryKeepsHeldKeysAndLands() async throws {
+        let gate = Latch()
+        let gated = Locked(false)
+        let session = try await NativeEditorSession.seed(
+            state: Self.emptyUpdate,
+            hooks: .init(beforeMessage: {
+                if gated.value { await gate.passing() }
+            }))
+        addTeardownBlock { await session.close().value }
+        session.enableTyping(persist: { _, _ in })
+        session.setEditing(true)
+        let unmount = mountInWindow(session.textView)
+        defer {
+            gated.value = false
+            gate.open()
+            unmount()
+        }
+        let input = try XCTUnwrap(session.input)
+        let replica = try XCTUnwrap(session.replica)
+        input.resetOutcome()
+
+        var sawStale = false
+        session.onDelivery = { delivery in
+            if case .stale? = delivery.result { sawStale = true }
+        }
+
+        // Queue: replica-side resync (epoch 0 -> 1), body-focus seed (epoch 0 -> .stale),
+        // held keys, and two coordinator resyncs so `.stale` is queued while `resyncsAsked == 1`
+        // and drains in the same batch as the second `.reset`. When that `.reset` patch applies,
+        // trigger one more resync so the stale seed's retry sees `awaitsReset == true` and defers
+        // via `pendingSeed` instead of dropping held keys.
+        var deferredOnce = false
+        let previousOnPatch = session.surface.onPatchApplied
+        session.surface.onPatchApplied = { [weak input] patch in
+            previousOnPatch?(patch)
+            if !deferredOnce, sawStale {
+                deferredOnce = true
+                input?.requestResync()
+            }
+        }
+
+        gated.value = true
+        XCTAssertTrue(replica.mailbox.post(.resync(surfaceID: session.surfaceID)))
+        await waitUntil { gate.waiting > 0 }
+        XCTAssertTrue(session.textView.becomeFirstResponder())
+        input.typeKey("H")
+        input.typeKey("i")
+        input.requestResync()
+        input.requestResync()
+
+        gated.value = false
+        gate.open()
+        await session.settle()
+
+        XCTAssertTrue(sawStale, "the initial seed barrier must have gone .stale")
+        XCTAssertTrue(deferredOnce, "the resync inside drain must have forced the stale retry to defer")
+        XCTAssertNil(input.noticeKey, "a deferred stale seed retry must not show an error notice")
+        XCTAssertNotEqual(input.lastOutcome, false, "a deferred stale seed retry must not fail lastOutcome")
+        XCTAssertEqual(session.surface.blocks.count, 1)
+        XCTAssertEqual(session.surface.blocks[0].runs, [InlineRun("Hi")])
+    }
+
+    /// A refused seed on a still-empty document shows `native_editor_input_unavailable`
+    /// when held keys were dropped, and stays quiet when no held input was lost.
+    func testRefusedSeedWithHeldKeysShowsNoticeAndWithoutHeldKeysStaysQuiet() async throws {
+        // 1. Refused seed with held keys -> noticeKey == .native_editor_input_unavailable.
+        do {
+            let gate = Latch()
+            let gated = Locked(false)
+            let session = try await NativeEditorSession.seed(
+                state: Self.emptyUpdate,
+                hooks: .init(beforeMessage: {
+                    if gated.value { await gate.passing() }
+                }))
+            addTeardownBlock { await session.close().value }
+            session.enableTyping(persist: { _, _ in })
+            session.setEditing(true)
+            let unmount = mountInWindow(session.textView)
+            defer {
+                gated.value = false
+                gate.open()
+                unmount()
+            }
+            let input = try XCTUnwrap(session.input)
+            let replica = try XCTUnwrap(session.replica)
+
+            gated.value = true
+            XCTAssertTrue(replica.mailbox.post(.setWritable(nil)))
+            await waitUntil { gate.waiting > 0 }
+            XCTAssertTrue(session.textView.becomeFirstResponder())
+            input.typeKey("L")
+            input.typeKey("o")
+
+            gated.value = false
+            gate.open()
+            await session.settle()
+
+            XCTAssertTrue(session.surface.blocks.isEmpty)
+            XCTAssertEqual(
+                input.noticeKey, .native_editor_input_unavailable,
+                "dropping held keys on a refused empty-doc seed must surface input unavailable")
+        }
+
+        // 2. Refused seed with NO held keys -> no spurious notice.
+        do {
+            let gate = Latch()
+            let gated = Locked(false)
+            let session = try await NativeEditorSession.seed(
+                state: Self.emptyUpdate,
+                hooks: .init(beforeMessage: {
+                    if gated.value { await gate.passing() }
+                }))
+            addTeardownBlock { await session.close().value }
+            session.enableTyping(persist: { _, _ in })
+            session.setEditing(true)
+            let unmount = mountInWindow(session.textView)
+            defer {
+                gated.value = false
+                gate.open()
+                unmount()
+            }
+            let input = try XCTUnwrap(session.input)
+            let replica = try XCTUnwrap(session.replica)
+
+            gated.value = true
+            XCTAssertTrue(replica.mailbox.post(.setWritable(nil)))
+            await waitUntil { gate.waiting > 0 }
+            XCTAssertTrue(session.textView.becomeFirstResponder())
+
+            gated.value = false
+            gate.open()
+            await session.settle()
+
+            XCTAssertTrue(session.surface.blocks.isEmpty)
+            XCTAssertNil(input.noticeKey, "refused empty-doc seed with no held keys must not show a notice")
+        }
+    }
+
+    /// Redoing a history step on an emptied document restores the step's saved
+    /// selection instead of clobbering it back to offset 0 of the first block.
+    func testRedoOnEmptiedDocumentKeepsRestoredSelection() async throws {
+        let initial = BlockNoteYjs.encode(
+            [
+                BlockNoteBlock(
+                    node: "paragraph", props: Self.paragraphProps, runs: [InlineRun("Hello")], id: "p1")
+            ],
+            clientID: 1)
+        let harness = try await makeHarness(state: initial)
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+        session.setEditing(true)
+        let unmount = mountInWindow(harness.view)
+        defer { unmount() }
+
+        // Paste multi-block text as one undoable step so redo restores the pasted blocks with caret at the end.
+        let board = try XCTUnwrap(UIPasteboard(name: UIPasteboard.Name("redo-empty-\(UUID())"), create: true))
+        defer { UIPasteboard.remove(withName: board.name) }
+        harness.input.pasteboard = board
+        board.string = "First\n\nSecond"
+        harness.view.selectedRange = NSRange(location: 5, length: 0)
+        XCTAssertTrue(harness.input.pasteFromPasteboard())
+        await harness.settle()
+        XCTAssertGreaterThan(session.surface.blocks.count, 1)
+        let expectedRunsAfterDelete = Array(session.surface.blocks.dropFirst().map(\.runs))
+
+        // Remote peer deletes the original first block, leaving only the locally pasted block(s).
+        let peerDoc = YDoc(clientID: 99)
+        defer { peerDoc.destroy() }
+        try peerDoc.applyUpdate(YUpdateDecoder.decode(initial), origin: .remote)
+        let deleteFirstUpdate = try BlockNoteWriter(doc: peerDoc).transaction(origin: .remote) { tx in
+            guard let root = peerDoc.share[BlockNoteYjs.fragmentField],
+                let firstChild = YBlockProjection.children(of: root, includeFormats: false).first,
+                case .type(let group) = firstChild.content
+            else { return XCTFail("Expected blockGroup in peer doc") }
+            try YWrite.delete(tx, from: group, at: 0, length: 1)
+        }
+        try await session.integrateServerState(deleteFirstUpdate)
+        XCTAssertEqual(session.surface.blocks.map(\.runs), expectedRunsAfterDelete)
+        let expectedRestoredRange = harness.view.selectedRange
+        XCTAssertGreaterThan(expectedRestoredRange.location, 0, "selection before undo must be past offset 0")
+
+        // Undo removes the locally pasted block(s), emptying the document while keeping redo available.
+        let undone = await harness.run { harness.input.undo() }
+        XCTAssertTrue(undone)
+        XCTAssertTrue(session.surface.blocks.isEmpty, "undoing the only remaining local blocks empties the doc")
+        XCTAssertTrue(harness.input.history.canRedo)
+
+        // Redo brings the blocks back; applyNow must NOT overwrite history's restored caret back to 0.
+        let redone = await harness.run { harness.input.redo() }
+        XCTAssertTrue(redone)
+        XCTAssertEqual(session.surface.blocks.map(\.runs), expectedRunsAfterDelete)
+        XCTAssertEqual(
+            harness.view.selectedRange, expectedRestoredRange,
+            "redo on an emptied doc must preserve history's restored caret rather than resetting to 0")
+    }
+
+    /// Fulfilling a pending body focus after a remote `[image, paragraph]`
+    /// update places the caret in the paragraph, not the leading image placeholder.
+    func testBodyFocusAfterRemoteImageAndParagraphPlacesCaretInParagraph() async throws {
+        let harness = try await makeHarness(state: Self.emptyUpdate)
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+        session.setEditing(false)
+        await harness.settle()
+
+        let remoteUpdate = BlockNoteYjs.encode(
+            [
+                BlockNoteBlock(
+                    node: "image", props: [("url", .string("/media/photo.png"))], runs: [], id: "img-1"),
+                BlockNoteBlock(
+                    node: "paragraph", props: Self.paragraphProps, runs: [InlineRun("Body")], id: "para-1"),
+            ],
+            clientID: 99)
+        try await session.integrateServerState(remoteUpdate)
+        XCTAssertEqual(session.surface.blocks.map(\.node), ["image", "paragraph"])
+        let paraEntry = try XCTUnwrap(session.surface.rangeIndex.entry(for: "para-1"))
+        XCTAssertGreaterThan(paraEntry.textRange.location, 0)
+
+        // Enter editing and arm body focus before mounting in a window; caret starts at 0 (the image).
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.setEditing(true)
+        session.requestBodyFocusWhenReady()
+        XCTAssertTrue(session.hasPendingBodyFocus)
+
+        let unmount = mountInWindow(session.textView)
+        defer { unmount() }
+        await harness.settle()
+
+        XCTAssertTrue(session.textView.isFirstResponder)
+        XCTAssertFalse(session.hasPendingBodyFocus)
+        XCTAssertEqual(
+            session.textView.selectedRange, NSRange(location: paraEntry.textRange.location, length: 0),
+            "body focus must skip the leading image placeholder and place the caret in the paragraph")
+
+        session.textView.insertText("Hi ")
+        await harness.settle()
+        XCTAssertEqual(session.surface.blocks[1].runs, [InlineRun("Hi Body")])
     }
 }
