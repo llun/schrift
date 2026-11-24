@@ -641,7 +641,10 @@ enum BlockNoteMarkdownPaste {
 
             func match(from open: Int) -> MatchedImage? {
                 let bytes = syntax.bytes
-                guard open + 1 < bytes.count, bytes[open] == Byte.bang, bytes[open + 1] == Byte.openBracket else {
+                guard open + 1 < bytes.count,
+                    syntax.isStandaloneByte(at: open, equals: Byte.bang),
+                    syntax.isStandaloneByte(at: open + 1, equals: Byte.openBracket)
+                else {
                     return nil
                 }
                 guard syntax.hasLinkTokens else { return nil }
@@ -660,16 +663,17 @@ enum BlockNoteMarkdownPaste {
                     unescaped.reserveCapacity(closeBracket - altStart)
                     var i = altStart
                     while i < closeBracket {
-                        if bytes[i] == Byte.backslash, i + 1 < closeBracket,
-                            BlockNoteMarkdownPaste.isASCIIPunctuation(bytes[i + 1]),
-                            !BlockNoteMarkdownPaste.isExtendedByGrapheme(bytes, at: i + 1, limit: closeBracket)
+                        if syntax.isStandaloneByte(at: i, equals: Byte.backslash), i + 1 < closeBracket,
+                            syntax.isSingleByteCluster(at: i + 1),
+                            BlockNoteMarkdownPaste.isASCIIPunctuation(bytes[i + 1])
                         {
                             unescaped.append(bytes[i + 1])
                             i += 2
                             continue
                         }
-                        unescaped.append(bytes[i])
-                        i += 1
+                        let end = min(syntax.nextClusterEnd(from: i), closeBracket)
+                        unescaped.append(contentsOf: bytes[i..<end])
+                        i = end
                     }
                     alt = String(decoding: unescaped, as: UTF8.self)
                 } else {
@@ -704,6 +708,8 @@ enum BlockNoteMarkdownPaste {
             }
             let syntax = LineSyntax(text)
             let bytes = syntax.bytes
+            let clusterEnd = syntax.clusterEnd
+            let isPureASCII = clusterEnd.isEmpty
             let matcher = ImageMatcher(syntax: syntax)
             var pieces: [ImageScanPiece] = []
             var current = ""
@@ -712,47 +718,48 @@ enum BlockNoteMarkdownPaste {
             var i = 0
             let count = bytes.count
             while i < count {
-                let b = bytes[i]
-                if b == Byte.backslash, !BlockNoteMarkdownPaste.isExtendedByGrapheme(bytes, at: i, limit: count),
-                    i + 1 < count
-                {
-                    i = BlockNoteMarkdownPaste.graphemeClusterEnd(in: bytes, from: i + 1, limit: count)
-                    continue
-                }
-                if b == Byte.backtick, let backticks = syntax.backticks,
-                    !BlockNoteMarkdownPaste.isExtendedByGrapheme(bytes, at: i, limit: count)
-                {
-                    var runLen = 0
-                    while i + runLen < count,
-                        BlockNoteMarkdownPaste.isStandaloneByte(
-                            bytes, at: i + runLen, equals: Byte.backtick, limit: count)
-                    {
-                        runLen += 1
+                if isPureASCII || clusterEnd[i] == i + 1 {
+                    let b = bytes[i]
+                    if b == Byte.backslash, i + 1 < count {
+                        let next = i + 1
+                        i = isPureASCII ? (next + 1) : (clusterEnd[next] > next ? clusterEnd[next] : next + 1)
+                        continue
                     }
-                    if let close = backticks.closingRun(length: runLen, from: i + runLen, limit: count) {
-                        i = close + runLen
-                    } else {
-                        i += runLen
-                    }
-                    continue
-                }
-                if b == Byte.bang, let match = matcher.match(from: i) {
-                    if i > literalStart {
-                        current += String(decoding: bytes[literalStart..<i], as: UTF8.self)
-                    }
-                    matchedAny = true
-                    if let url = BlockNoteHTMLParser.pastedHTTPSImageURL(match.url) {
-                        if !current.isEmpty {
-                            pieces.append(.text(current))
-                            current = ""
+                    if b == Byte.backtick, let backticks = syntax.backticks {
+                        var runLen = 0
+                        while i + runLen < count,
+                            bytes[i + runLen] == Byte.backtick,
+                            isPureASCII || clusterEnd[i + runLen] == i + runLen + 1
+                        {
+                            runLen += 1
                         }
-                        pieces.append(.image(url: url, alt: match.alt))
+                        if let close = backticks.closingRun(length: runLen, from: i + runLen, limit: count) {
+                            i = close + runLen
+                        } else {
+                            i += runLen
+                        }
+                        continue
                     }
-                    i = match.next
-                    literalStart = i
-                    continue
+                    if b == Byte.bang, let match = matcher.match(from: i) {
+                        if i > literalStart {
+                            current += String(decoding: bytes[literalStart..<i], as: UTF8.self)
+                        }
+                        matchedAny = true
+                        if let url = BlockNoteHTMLParser.pastedHTTPSImageURL(match.url) {
+                            if !current.isEmpty {
+                                pieces.append(.text(current))
+                                current = ""
+                            }
+                            pieces.append(.image(url: url, alt: match.alt))
+                        }
+                        i = match.next
+                        literalStart = i
+                        continue
+                    }
+                    i += 1
+                } else {
+                    i = clusterEnd[i] > i ? clusterEnd[i] : i + 1
                 }
-                i += 1
             }
             guard matchedAny else { return ([.text(text)], false, syntax) }
             if literalStart < count {
@@ -935,11 +942,10 @@ enum BlockNoteMarkdownPaste {
         }
     }
 
-    private static func lastIndexOfStandaloneASCII(_ bytes: [UInt8], _ byte: UInt8) -> Int? {
-        let count = bytes.count
-        var i = count - 1
+    private static func lastIndexOfStandaloneASCII(_ bytes: [UInt8], clusterEnd: [Int], _ byte: UInt8) -> Int? {
+        var i = bytes.count - 1
         while i >= 0 {
-            if isStandaloneByte(bytes, at: i, equals: byte, limit: count) { return i }
+            if bytes[i] == byte && (clusterEnd.isEmpty || clusterEnd[i] == i + 1) { return i }
             i -= 1
         }
         return nil
@@ -957,87 +963,24 @@ enum BlockNoteMarkdownPaste {
             && containsASCII(text, Byte.closeBracket)
     }
 
-    private static func utf8ScalarLength(_ leading: UInt8) -> Int {
-        if leading < 0x80 { return 1 }
-        if leading & 0xE0 == 0xC0 { return 2 }
-        if leading & 0xF0 == 0xE0 { return 3 }
-        if leading & 0xF8 == 0xF0 { return 4 }
-        return 1
-    }
-
-    private static func isGraphemeExtender(_ scalar: Unicode.Scalar) -> Bool {
-        let v = scalar.value
-        if v < 0x80 { return false }
-        if scalar.properties.isGraphemeExtend { return true }
-        if v == 0x200D || v == 0x20E3 { return true }
-        if (0xFE00...0xFE0F).contains(v) || (0xE0100...0xE01EF).contains(v) { return true }
-        if (0x1F3FB...0x1F3FF).contains(v) { return true }
-        return scalar.properties.generalCategory == .spacingMark
-    }
-
-    /// Returns `true` when `bytes[index]` is immediately followed by a Unicode
-    /// grapheme extender, so the ASCII byte at `index` is the base of a larger
-    /// grapheme cluster rather than a standalone Markdown syntax character.
-    private static func isExtendedByGrapheme(_ bytes: [UInt8], at index: Int, limit: Int) -> Bool {
-        let next = index + 1
-        guard next < limit, bytes[next] >= 0x80 else { return false }
-        let (scalar, _) = decodeUTF8Scalar(in: bytes, at: next, limit: limit)
-        guard let scalar else { return false }
-        return isGraphemeExtender(scalar)
-    }
-
-    private static func isStandaloneByte(_ bytes: [UInt8], at index: Int, equals expected: UInt8, limit: Int) -> Bool {
-        bytes[index] == expected && !isExtendedByGrapheme(bytes, at: index, limit: limit)
-    }
-
-    private static func graphemeClusterEnd(in bytes: [UInt8], from index: Int, limit: Int) -> Int {
-        guard index < limit else { return index }
-        var cursor = index + utf8ScalarLength(bytes[index])
-        if cursor > limit { return limit }
-        while cursor < limit, bytes[cursor] >= 0x80 {
-            let (scalar, len) = decodeUTF8Scalar(in: bytes, at: cursor, limit: limit)
-            guard let scalar, isGraphemeExtender(scalar) else { break }
-            cursor += len
-        }
-        return min(cursor, limit)
-    }
-
-    private static func decodeUTF8Scalar(
-        in bytes: [UInt8], at i: Int, limit: Int
-    ) -> (scalar: Unicode.Scalar?, length: Int) {
-        let b0 = bytes[i]
-        if b0 < 0x80 {
-            return (Unicode.Scalar(b0), 1)
-        }
-        if b0 & 0xE0 == 0xC0, i + 1 < limit {
-            let value = (UInt32(b0 & 0x1F) << 6) | UInt32(bytes[i + 1] & 0x3F)
-            return (Unicode.Scalar(value), 2)
-        }
-        if b0 & 0xF0 == 0xE0, i + 2 < limit {
-            let value =
-                (UInt32(b0 & 0x0F) << 12)
-                | (UInt32(bytes[i + 1] & 0x3F) << 6)
-                | UInt32(bytes[i + 2] & 0x3F)
-            return (Unicode.Scalar(value), 3)
-        }
-        if b0 & 0xF8 == 0xF0, i + 3 < limit {
-            let value =
-                (UInt32(b0 & 0x07) << 18)
-                | (UInt32(bytes[i + 1] & 0x3F) << 12)
-                | (UInt32(bytes[i + 2] & 0x3F) << 6)
-                | UInt32(bytes[i + 3] & 0x3F)
-            return (Unicode.Scalar(value), 4)
-        }
-        return (nil, 1)
-    }
-
     // MARK: - Line syntax index
 
-    /// Precomputed UTF-8 byte view and lazy syntax tables shared between the
-    /// inline image scan and `PasteInlineParser` for a single line.
+    /// Precomputed UTF-8 byte view, Swift `Character` grapheme cluster
+    /// boundaries, and lazy syntax tables shared between the inline image scan
+    /// and `PasteInlineParser` for a single line.
     private struct LineSyntax {
         let text: String
         let bytes: [UInt8]
+        /// For non-ASCII lines (or lines containing `\r`), maps every UTF-8
+        /// byte offset where a Swift `Character` begins to its exclusive UTF-8
+        /// end offset (`> i`), and `-1` for mid-cluster offsets. Empty on
+        /// pure-ASCII lines without `\r`, where every byte is a 1-byte
+        /// `Character`.
+        let clusterEnd: [Int]
+        /// Companion reverse boundary table mapping every `Character` end byte
+        /// offset (including `bytes.count`) to that `Character`'s start offset.
+        /// Empty when `clusterEnd` is empty.
+        let prevClusterStart: [Int]
         let hasLinkTokens: Bool
         let hasStarPair: Bool
         let hasTildePair: Bool
@@ -1052,8 +995,41 @@ enum BlockNoteMarkdownPaste {
             self.text = text
             self.bytes = bytes
 
+            // Every non-ASCII scalar has utf8.count > utf16.count, and between
+            // ASCII bytes only CR+LF can form a multi-byte Character (UAX #29).
+            let isPureASCII =
+                text.utf8.count == text.utf16.count
+                && !BlockNoteMarkdownPaste.containsASCII(bytes, Byte.carriageReturn)
+            let clusterEnd: [Int]
+            let prevClusterStart: [Int]
+            if isPureASCII {
+                clusterEnd = []
+                prevClusterStart = []
+            } else {
+                var ends = [Int](repeating: -1, count: bytes.count)
+                var prevStarts = [Int](repeating: -1, count: bytes.count + 1)
+                let utf8 = text.utf8
+                var charIndex = text.startIndex
+                var curUTF8 = utf8.startIndex
+                var byteStart = 0
+                while charIndex < text.endIndex {
+                    let nextChar = text.index(after: charIndex)
+                    let nextUTF8 = nextChar.samePosition(in: utf8) ?? utf8.endIndex
+                    let byteEnd = byteStart + utf8.distance(from: curUTF8, to: nextUTF8)
+                    ends[byteStart] = byteEnd
+                    prevStarts[byteEnd] = byteStart
+                    byteStart = byteEnd
+                    curUTF8 = nextUTF8
+                    charIndex = nextChar
+                }
+                clusterEnd = ends
+                prevClusterStart = prevStarts
+            }
+            self.clusterEnd = clusterEnd
+            self.prevClusterStart = prevClusterStart
+
             let hasBacktickPair = BlockNoteMarkdownPaste.containsAtLeastTwoASCII(bytes, Byte.backtick)
-            let backticks = hasBacktickPair ? BacktickIndex(bytes) : nil
+            let backticks = hasBacktickPair ? BacktickIndex(bytes, clusterEnd: clusterEnd) : nil
             self.backticks = backticks
 
             self.hasStarPair = BlockNoteMarkdownPaste.containsAtLeastTwoASCII(bytes, Byte.star)
@@ -1069,10 +1045,14 @@ enum BlockNoteMarkdownPaste {
             self.hasLinkTokens = hasLinkTokens
 
             if hasLinkTokens {
-                self.matchingClose = BlockNoteMarkdownPaste.matchingCloseBrackets(bytes, backticks: backticks)
-                self.lastCloseParen = BlockNoteMarkdownPaste.lastIndexOfStandaloneASCII(bytes, Byte.closeParen) ?? -1
+                self.matchingClose = BlockNoteMarkdownPaste.matchingCloseBrackets(
+                    bytes, clusterEnd: clusterEnd, backticks: backticks)
+                self.lastCloseParen =
+                    BlockNoteMarkdownPaste.lastIndexOfStandaloneASCII(
+                        bytes, clusterEnd: clusterEnd, Byte.closeParen) ?? -1
                 if BlockNoteMarkdownPaste.containsAtLeastTwoASCII(bytes, Byte.closeParen) {
-                    self.suffixCloseParens = BlockNoteMarkdownPaste.suffixCloseParenCounts(bytes)
+                    self.suffixCloseParens = BlockNoteMarkdownPaste.suffixCloseParenCounts(
+                        bytes, clusterEnd: clusterEnd)
                 } else {
                     self.suffixCloseParens = []
                 }
@@ -1081,6 +1061,26 @@ enum BlockNoteMarkdownPaste {
                 self.lastCloseParen = -1
                 self.suffixCloseParens = []
             }
+        }
+
+        func isSingleByteCluster(at index: Int) -> Bool {
+            clusterEnd.isEmpty || clusterEnd[index] == index + 1
+        }
+
+        func isStandaloneByte(at index: Int, equals expected: UInt8) -> Bool {
+            bytes[index] == expected && (clusterEnd.isEmpty || clusterEnd[index] == index + 1)
+        }
+
+        func isPrecedingStandaloneByte(before end: Int, equals expected: UInt8) -> Bool {
+            guard end > 0, bytes[end - 1] == expected else { return false }
+            return prevClusterStart.isEmpty || prevClusterStart[end] == end - 1
+        }
+
+        func nextClusterEnd(from index: Int) -> Int {
+            guard index < bytes.count else { return bytes.count }
+            if clusterEnd.isEmpty { return index + 1 }
+            let end = clusterEnd[index]
+            return end > index ? end : index + 1
         }
 
         func suffixCloseParenCount(from index: Int) -> Int {
@@ -1096,19 +1096,18 @@ enum BlockNoteMarkdownPaste {
     private struct BacktickIndex {
         private let runsByLength: [Int: [Int]]
 
-        init(_ bytes: [UInt8]) {
+        init(_ bytes: [UInt8], clusterEnd: [Int]) {
             var runs: [Int: [Int]] = [:]
             var i = 0
             let count = bytes.count
             while i < count {
-                guard BlockNoteMarkdownPaste.isStandaloneByte(bytes, at: i, equals: Byte.backtick, limit: count) else {
-                    i += 1
+                let isTick = bytes[i] == Byte.backtick && (clusterEnd.isEmpty || clusterEnd[i] == i + 1)
+                guard isTick else {
+                    i = clusterEnd.isEmpty ? (i + 1) : (clusterEnd[i] > i ? clusterEnd[i] : i + 1)
                     continue
                 }
                 let start = i
-                while i < count,
-                    BlockNoteMarkdownPaste.isStandaloneByte(bytes, at: i, equals: Byte.backtick, limit: count)
-                {
+                while i < count, bytes[i] == Byte.backtick, clusterEnd.isEmpty || clusterEnd[i] == i + 1 {
                     i += 1
                 }
                 runs[i - start, default: []].append(start)
@@ -1145,12 +1144,11 @@ enum BlockNoteMarkdownPaste {
             || (0x5B...0x60).contains(byte) || (0x7B...0x7E).contains(byte)
     }
 
-    private static func suffixCloseParenCounts(_ bytes: [UInt8]) -> [Int] {
+    private static func suffixCloseParenCounts(_ bytes: [UInt8], clusterEnd: [Int]) -> [Int] {
         var counts = [Int](repeating: 0, count: bytes.count + 1)
-        let count = bytes.count
-        var i = count - 1
+        var i = bytes.count - 1
         while i >= 0 {
-            let isClose = isStandaloneByte(bytes, at: i, equals: Byte.closeParen, limit: count)
+            let isClose = bytes[i] == Byte.closeParen && (clusterEnd.isEmpty || clusterEnd[i] == i + 1)
             counts[i] = counts[i + 1] + (isClose ? 1 : 0)
             i -= 1
         }
@@ -1160,41 +1158,49 @@ enum BlockNoteMarkdownPaste {
     /// Maps every balanced `[` byte index in `bytes` to its matching `]` byte
     /// index (or `-1` when unmatched), honoring backslash escapes and
     /// N-backtick code spans in a single O(n) / O(n log n) pass.
-    private static func matchingCloseBrackets(_ bytes: [UInt8], backticks: BacktickIndex?) -> [Int] {
+    private static func matchingCloseBrackets(
+        _ bytes: [UInt8], clusterEnd: [Int], backticks: BacktickIndex?
+    ) -> [Int] {
         var matching = [Int](repeating: -1, count: bytes.count)
         var stack: [Int] = []
         var i = 0
         let count = bytes.count
         while i < count {
-            let b = bytes[i]
-            if b == Byte.backslash, !isExtendedByGrapheme(bytes, at: i, limit: count), i + 1 < count {
-                i = graphemeClusterEnd(in: bytes, from: i + 1, limit: count)
-                continue
-            }
-            if b == Byte.backtick, let backticks, !isExtendedByGrapheme(bytes, at: i, limit: count) {
-                var runLen = 0
-                while i + runLen < count,
-                    isStandaloneByte(bytes, at: i + runLen, equals: Byte.backtick, limit: count)
-                {
-                    runLen += 1
+            if clusterEnd.isEmpty || clusterEnd[i] == i + 1 {
+                let b = bytes[i]
+                if b == Byte.backslash, i + 1 < count {
+                    let next = i + 1
+                    i = clusterEnd.isEmpty ? (next + 1) : (clusterEnd[next] > next ? clusterEnd[next] : next + 1)
+                    continue
                 }
-                if let close = backticks.closingRun(length: runLen, from: i + runLen, limit: count),
-                    close > i + runLen
-                {
-                    i = close + runLen
-                } else {
-                    i += runLen
+                if b == Byte.backtick, let backticks {
+                    var runLen = 0
+                    while i + runLen < count,
+                        bytes[i + runLen] == Byte.backtick,
+                        clusterEnd.isEmpty || clusterEnd[i + runLen] == i + runLen + 1
+                    {
+                        runLen += 1
+                    }
+                    if let close = backticks.closingRun(length: runLen, from: i + runLen, limit: count),
+                        close > i + runLen
+                    {
+                        i = close + runLen
+                    } else {
+                        i += runLen
+                    }
+                    continue
                 }
-                continue
-            }
-            if b == Byte.openBracket, !isExtendedByGrapheme(bytes, at: i, limit: count) {
-                stack.append(i)
-            } else if b == Byte.closeBracket, !isExtendedByGrapheme(bytes, at: i, limit: count) {
-                if let open = stack.popLast() {
-                    matching[open] = i
+                if b == Byte.openBracket {
+                    stack.append(i)
+                } else if b == Byte.closeBracket {
+                    if let open = stack.popLast() {
+                        matching[open] = i
+                    }
                 }
+                i += 1
+            } else {
+                i = clusterEnd[i] > i ? clusterEnd[i] : i + 1
             }
-            i += 1
         }
         return matching
     }
@@ -1217,85 +1223,93 @@ enum BlockNoteMarkdownPaste {
         in syntax: LineSyntax, from parenOpen: Int, limit: Int
     ) -> (url: String, next: Int)? {
         let bytes = syntax.bytes
+        let clusterEnd = syntax.clusterEnd
+        let isPureASCII = clusterEnd.isEmpty
         guard parenOpen + 1 < limit,
-            isStandaloneByte(bytes, at: parenOpen, equals: Byte.openParen, limit: limit),
+            bytes[parenOpen] == Byte.openParen,
+            isPureASCII || clusterEnd[parenOpen] == parenOpen + 1,
             syntax.suffixCloseParenCount(from: parenOpen + 1) > 0
         else {
             return nil
         }
         var i = parenOpen + 1
         while i < limit,
-            (bytes[i] == Byte.space || bytes[i] == Byte.tab) && !isExtendedByGrapheme(bytes, at: i, limit: limit)
+            isPureASCII || clusterEnd[i] == i + 1,
+            bytes[i] == Byte.space || bytes[i] == Byte.tab
         {
             i += 1
         }
         let destStart: Int
         let destEnd: Int
         var hasEscape = false
-        if i < limit, isStandaloneByte(bytes, at: i, equals: Byte.lt, limit: limit) {
+        if i < limit, bytes[i] == Byte.lt, isPureASCII || clusterEnd[i] == i + 1 {
             i += 1
             destStart = i
-            while i < limit,
-                !isStandaloneByte(bytes, at: i, equals: Byte.gt, limit: limit),
-                !isStandaloneByte(bytes, at: i, equals: Byte.lt, limit: limit)
-            {
-                if bytes[i] == Byte.backslash, i + 1 < limit,
-                    isASCIIPunctuation(bytes[i + 1]),
-                    !isExtendedByGrapheme(bytes, at: i + 1, limit: limit)
-                {
-                    hasEscape = true
-                    i += 2
-                    continue
+            while i < limit {
+                if isPureASCII || clusterEnd[i] == i + 1 {
+                    let b = bytes[i]
+                    if b == Byte.gt || b == Byte.lt { break }
+                    if b == Byte.backslash, i + 1 < limit,
+                        isPureASCII || clusterEnd[i + 1] == i + 2,
+                        isASCIIPunctuation(bytes[i + 1])
+                    {
+                        hasEscape = true
+                        i += 2
+                        continue
+                    }
+                    i += 1
+                } else {
+                    i = min(clusterEnd[i] > i ? clusterEnd[i] : i + 1, limit)
                 }
-                i += 1
             }
-            guard i < limit, isStandaloneByte(bytes, at: i, equals: Byte.gt, limit: limit) else { return nil }
+            guard i < limit, bytes[i] == Byte.gt, isPureASCII || clusterEnd[i] == i + 1 else { return nil }
             destEnd = i
             i += 1
         } else {
             destStart = i
             var depth = 0
             while i < limit {
-                let b = bytes[i]
-                if b == Byte.backslash, i + 1 < limit,
-                    isASCIIPunctuation(bytes[i + 1]),
-                    !isExtendedByGrapheme(bytes, at: i + 1, limit: limit)
-                {
-                    hasEscape = true
-                    i += 2
-                    continue
-                }
-                if b == Byte.openParen, !isExtendedByGrapheme(bytes, at: i, limit: limit) {
-                    depth += 1
-                    guard depth <= maxDestinationParenDepth,
-                        i + 1 < limit,
-                        depth < syntax.suffixCloseParenCount(from: i + 1)
-                    else {
-                        return nil
+                if isPureASCII || clusterEnd[i] == i + 1 {
+                    let b = bytes[i]
+                    if b == Byte.backslash, i + 1 < limit,
+                        isPureASCII || clusterEnd[i + 1] == i + 2,
+                        isASCIIPunctuation(bytes[i + 1])
+                    {
+                        hasEscape = true
+                        i += 2
+                        continue
                     }
-                } else if b == Byte.closeParen, !isExtendedByGrapheme(bytes, at: i, limit: limit) {
-                    if depth == 0 { break }
-                    depth -= 1
-                } else if b < 0x80 {
-                    if b == Byte.space || b == Byte.tab {
-                        break
-                    } else if b < 0x20 || b == Byte.del {
-                        if !isExtendedByGrapheme(bytes, at: i, limit: limit) {
+                    if b == Byte.openParen {
+                        depth += 1
+                        guard depth <= maxDestinationParenDepth,
+                            i + 1 < limit,
+                            depth < syntax.suffixCloseParenCount(from: i + 1)
+                        else {
                             return nil
                         }
-                        if b >= Byte.lineFeed && b <= Byte.carriageReturn {
-                            break
-                        }
+                    } else if b == Byte.closeParen {
+                        if depth == 0 { break }
+                        depth -= 1
+                    } else if b == Byte.space || b == Byte.tab {
+                        break
+                    } else if b < 0x20 || b == Byte.del {
+                        return nil
                     }
+                    i += 1
                 } else {
-                    let (scalar, len) = decodeUTF8Scalar(in: bytes, at: i, limit: limit)
-                    if let scalar, scalar.properties.isWhitespace {
+                    let end = min(clusterEnd[i] > i ? clusterEnd[i] : i + 1, limit)
+                    let ch = Character(String(decoding: bytes[i..<end], as: UTF8.self))
+                    if let ascii = ch.asciiValue {
+                        if ascii == Byte.space || ascii == Byte.tab {
+                            break
+                        } else if ascii < 0x20 || ascii == Byte.del {
+                            return nil
+                        }
+                    } else if ch.isWhitespace {
                         break
                     }
-                    i += len
-                    continue
+                    i = end
                 }
-                i += 1
             }
             guard depth == 0 else { return nil }
             destEnd = i
@@ -1303,47 +1317,58 @@ enum BlockNoteMarkdownPaste {
         guard destEnd > destStart else { return nil }
         let afterDestination = i
         while i < limit,
-            (bytes[i] == Byte.space || bytes[i] == Byte.tab) && !isExtendedByGrapheme(bytes, at: i, limit: limit)
+            isPureASCII || clusterEnd[i] == i + 1,
+            bytes[i] == Byte.space || bytes[i] == Byte.tab
         {
             i += 1
         }
         if i > afterDestination, i < limit,
-            (bytes[i] == Byte.quote || bytes[i] == Byte.apostrophe)
-                && !isExtendedByGrapheme(bytes, at: i, limit: limit)
+            isPureASCII || clusterEnd[i] == i + 1,
+            bytes[i] == Byte.quote || bytes[i] == Byte.apostrophe
         {
             let quote = bytes[i]
             i += 1
-            while i < limit, !isStandaloneByte(bytes, at: i, equals: quote, limit: limit) {
-                if bytes[i] == Byte.backslash, !isExtendedByGrapheme(bytes, at: i, limit: limit), i + 1 < limit {
-                    i = graphemeClusterEnd(in: bytes, from: i + 1, limit: limit)
+            while i < limit {
+                if isPureASCII || clusterEnd[i] == i + 1 {
+                    if bytes[i] == quote { break }
+                    if bytes[i] == Byte.backslash, i + 1 < limit {
+                        let next = i + 1
+                        i = min(
+                            isPureASCII ? (next + 1) : (clusterEnd[next] > next ? clusterEnd[next] : next + 1),
+                            limit)
+                    } else {
+                        i += 1
+                    }
                 } else {
-                    i += 1
+                    i = min(clusterEnd[i] > i ? clusterEnd[i] : i + 1, limit)
                 }
             }
             guard i < limit else { return nil }
             i += 1
             while i < limit,
-                (bytes[i] == Byte.space || bytes[i] == Byte.tab) && !isExtendedByGrapheme(bytes, at: i, limit: limit)
+                isPureASCII || clusterEnd[i] == i + 1,
+                bytes[i] == Byte.space || bytes[i] == Byte.tab
             {
                 i += 1
             }
         }
-        guard i < limit, isStandaloneByte(bytes, at: i, equals: Byte.closeParen, limit: limit) else { return nil }
+        guard i < limit, bytes[i] == Byte.closeParen, isPureASCII || clusterEnd[i] == i + 1 else { return nil }
         let url: String
         if hasEscape {
             var unescaped: [UInt8] = []
             unescaped.reserveCapacity(destEnd - destStart)
             var k = destStart
             while k < destEnd {
-                if bytes[k] == Byte.backslash, k + 1 < destEnd,
-                    isASCIIPunctuation(bytes[k + 1]),
-                    !isExtendedByGrapheme(bytes, at: k + 1, limit: destEnd)
+                if syntax.isStandaloneByte(at: k, equals: Byte.backslash), k + 1 < destEnd,
+                    syntax.isSingleByteCluster(at: k + 1),
+                    isASCIIPunctuation(bytes[k + 1])
                 {
                     unescaped.append(bytes[k + 1])
                     k += 2
                 } else {
-                    unescaped.append(bytes[k])
-                    k += 1
+                    let end = min(syntax.nextClusterEnd(from: k), destEnd)
+                    unescaped.append(contentsOf: bytes[k..<end])
+                    k = end
                 }
             }
             url = String(decoding: unescaped, as: UTF8.self)
@@ -1435,13 +1460,20 @@ enum BlockNoteMarkdownPaste {
             let n = bounds.upperBound
             var literalStart = i
             let allowLinks = !marks.contains(where: { $0.key == "link" })
+            let clusterEnd = syntax.clusterEnd
+            let isPureASCII = clusterEnd.isEmpty
 
             while i < n {
+                if !isPureASCII && clusterEnd[i] != i + 1 {
+                    i = min(clusterEnd[i] > i ? clusterEnd[i] : i + 1, n)
+                    continue
+                }
                 let b = bytes[i]
 
                 // Backslash escape of Markdown punctuation.
-                if b == Byte.backslash, i + 1 < n, Self.isEscapable(bytes[i + 1]),
-                    !BlockNoteMarkdownPaste.isExtendedByGrapheme(bytes, at: i + 1, limit: n)
+                if b == Byte.backslash, i + 1 < n,
+                    isPureASCII || clusterEnd[i + 1] == i + 2,
+                    Self.isEscapable(bytes[i + 1])
                 {
                     if i > literalStart { emitSlice(literalStart..<i, marks: marks) }
                     emitSlice((i + 1)..<(i + 2), marks: marks)
@@ -1451,12 +1483,11 @@ enum BlockNoteMarkdownPaste {
                 }
 
                 // Inline code span (CommonMark N-backtick runs).
-                if b == Byte.backtick, let backticks = syntax.backticks,
-                    !BlockNoteMarkdownPaste.isExtendedByGrapheme(bytes, at: i, limit: n)
-                {
+                if b == Byte.backtick, let backticks = syntax.backticks {
                     var count = 0
                     while i + count < n,
-                        BlockNoteMarkdownPaste.isStandaloneByte(bytes, at: i + count, equals: Byte.backtick, limit: n)
+                        bytes[i + count] == Byte.backtick,
+                        isPureASCII || clusterEnd[i + count] == i + count + 1
                     {
                         count += 1
                     }
@@ -1465,9 +1496,8 @@ enum BlockNoteMarkdownPaste {
                         var innerStart = i + count
                         var innerEnd = close
                         if innerEnd - innerStart >= 2,
-                            BlockNoteMarkdownPaste.isStandaloneByte(
-                                bytes, at: innerStart, equals: Byte.space, limit: innerEnd),
-                            bytes[innerEnd - 1] == Byte.space,
+                            syntax.isStandaloneByte(at: innerStart, equals: Byte.space),
+                            syntax.isPrecedingStandaloneByte(before: innerEnd, equals: Byte.space),
                             bytes[innerStart..<innerEnd].contains(where: { $0 != Byte.space })
                         {
                             innerStart += 1
@@ -1502,19 +1532,14 @@ enum BlockNoteMarkdownPaste {
                 // Strong emphasis (`**...**`) and emphasis (`*...*`). A run with
                 // no closer stays in the literal slice and advances in one step
                 // so long runs stay linear.
-                if b == Byte.star, syntax.hasStarPair,
-                    !BlockNoteMarkdownPaste.isExtendedByGrapheme(bytes, at: i, limit: n)
-                {
+                if b == Byte.star, syntax.hasStarPair {
                     var runEnd = i
-                    while runEnd < n,
-                        BlockNoteMarkdownPaste.isStandaloneByte(bytes, at: runEnd, equals: Byte.star, limit: n)
-                    {
+                    while runEnd < n, bytes[runEnd] == Byte.star, isPureASCII || clusterEnd[runEnd] == runEnd + 1 {
                         runEnd += 1
                     }
                     let runLen = runEnd - i
                     if runLen >= 2, canOpen(i..<(i + 2)),
-                        let close = matchDelimiter(
-                            open: i, length: 2, byte: Byte.star, limit: n, allowLinks: allowLinks)
+                        let close = matchDelimiter(open: i, length: 2, byte: Byte.star, limit: n)
                     {
                         if i > literalStart { emitSlice(literalStart..<i, marks: marks) }
                         scan((i + 2)..<close, marks: adding("bold", InlineMarkdown.boldValue, to: marks))
@@ -1523,8 +1548,7 @@ enum BlockNoteMarkdownPaste {
                         continue
                     }
                     if runLen == 1, isLone(byte: Byte.star, at: i, bounds: bounds), canOpen(i..<(i + 1)),
-                        let close = matchDelimiter(
-                            open: i, length: 1, byte: Byte.star, limit: n, allowLinks: allowLinks)
+                        let close = matchDelimiter(open: i, length: 1, byte: Byte.star, limit: n)
                     {
                         if i > literalStart { emitSlice(literalStart..<i, marks: marks) }
                         scan((i + 1)..<close, marks: adding("italic", InlineMarkdown.italicValue, to: marks))
@@ -1537,19 +1561,14 @@ enum BlockNoteMarkdownPaste {
                 }
 
                 // Strikethrough: ~~...~~. Unclosed runs advance in one step.
-                if b == Byte.tilde, syntax.hasTildePair,
-                    !BlockNoteMarkdownPaste.isExtendedByGrapheme(bytes, at: i, limit: n)
-                {
+                if b == Byte.tilde, syntax.hasTildePair {
                     var runEnd = i
-                    while runEnd < n,
-                        BlockNoteMarkdownPaste.isStandaloneByte(bytes, at: runEnd, equals: Byte.tilde, limit: n)
-                    {
+                    while runEnd < n, bytes[runEnd] == Byte.tilde, isPureASCII || clusterEnd[runEnd] == runEnd + 1 {
                         runEnd += 1
                     }
                     let runLen = runEnd - i
                     if runLen >= 2, canOpen(i..<(i + 2)),
-                        let close = matchDelimiter(
-                            open: i, length: 2, byte: Byte.tilde, limit: n, allowLinks: allowLinks)
+                        let close = matchDelimiter(open: i, length: 2, byte: Byte.tilde, limit: n)
                     {
                         if i > literalStart { emitSlice(literalStart..<i, marks: marks) }
                         scan((i + 2)..<close, marks: adding("strike", InlineMarkdown.strikeValue, to: marks))
@@ -1562,20 +1581,17 @@ enum BlockNoteMarkdownPaste {
                 }
 
                 // Emphasis: _..._ (lone underscore with flanking). Longer runs advance in one step.
-                if b == Byte.underscore, syntax.hasUnderscorePair,
-                    !BlockNoteMarkdownPaste.isExtendedByGrapheme(bytes, at: i, limit: n)
-                {
+                if b == Byte.underscore, syntax.hasUnderscorePair {
                     var runEnd = i
-                    while runEnd < n,
-                        BlockNoteMarkdownPaste.isStandaloneByte(bytes, at: runEnd, equals: Byte.underscore, limit: n)
+                    while runEnd < n, bytes[runEnd] == Byte.underscore,
+                        isPureASCII || clusterEnd[runEnd] == runEnd + 1
                     {
                         runEnd += 1
                     }
                     let runLen = runEnd - i
                     if runLen == 1, isLone(byte: Byte.underscore, at: i, bounds: 0..<bytes.count),
                         canOpen(i..<(i + 1)),
-                        let close = matchDelimiter(
-                            open: i, length: 1, byte: Byte.underscore, limit: n, allowLinks: allowLinks)
+                        let close = matchDelimiter(open: i, length: 1, byte: Byte.underscore, limit: n)
                     {
                         if i > literalStart { emitSlice(literalStart..<i, marks: marks) }
                         scan((i + 1)..<close, marks: adding("italic", InlineMarkdown.italicValue, to: marks))
@@ -1610,69 +1626,47 @@ enum BlockNoteMarkdownPaste {
             }
         }
 
-        private func classifyByteBefore(_ index: Int) -> NeighborClass {
-            guard index > 0 else { return .none }
-            let last = bytes[index - 1]
-            if last < 0x80 { return Self.classifyASCII(last) }
-            // Walk back past trailing grapheme extenders so the previous grapheme
-            // cluster is classified by its base scalar, matching `Character`.
-            var cursor = index
-            var extended = false
-            while cursor > 0 {
-                let prev = bytes[cursor - 1]
-                if prev < 0x80 {
-                    if extended {
-                        let scalar = Unicode.Scalar(prev)
-                        if scalar.properties.isWhitespace { return .whitespace }
-                        return Character(scalar).isPunctuation ? .punctuation : .other
-                    }
-                    return Self.classifyASCII(prev)
-                }
-                var start = cursor - 1
-                while start > 0, (bytes[start] & 0xC0) == 0x80 { start -= 1 }
-                let (scalar, _) = BlockNoteMarkdownPaste.decodeUTF8Scalar(in: bytes, at: start, limit: cursor)
-                guard let scalar else { return .other }
-                if BlockNoteMarkdownPaste.isGraphemeExtender(scalar) {
-                    extended = true
-                    cursor = start
-                    continue
-                }
-                if scalar.properties.isWhitespace { return .whitespace }
-                return Character(scalar).isPunctuation ? .punctuation : .other
+        private static func classifyCluster(_ bytes: [UInt8], range: Range<Int>) -> NeighborClass {
+            if range.count == 1, bytes[range.lowerBound] < 0x80 {
+                return classifyASCII(bytes[range.lowerBound])
             }
-            return .other
+            let ch = Character(String(decoding: bytes[range], as: UTF8.self))
+            if ch.isWhitespace { return .whitespace }
+            if let ascii = ch.asciiValue {
+                return BlockNoteMarkdownPaste.isASCIIPunctuation(ascii) ? .punctuation : .other
+            }
+            return ch.isPunctuation ? .punctuation : .other
         }
 
-        private func classifyByteAt(_ index: Int) -> NeighborClass {
+        private func classifyCharBefore(_ index: Int) -> NeighborClass {
+            guard index > 0 else { return .none }
+            if syntax.prevClusterStart.isEmpty { return Self.classifyASCII(bytes[index - 1]) }
+            let start = syntax.prevClusterStart[index]
+            guard start >= 0 else { return .other }
+            return Self.classifyCluster(bytes, range: start..<index)
+        }
+
+        private func classifyCharAt(_ index: Int) -> NeighborClass {
             guard index < bytes.count else { return .none }
-            let first = bytes[index]
-            if first < 0x80 {
-                if BlockNoteMarkdownPaste.isExtendedByGrapheme(bytes, at: index, limit: bytes.count) {
-                    let scalar = Unicode.Scalar(first)
-                    if scalar.properties.isWhitespace { return .whitespace }
-                    return Character(scalar).isPunctuation ? .punctuation : .other
-                }
-                return Self.classifyASCII(first)
-            }
-            let (scalar, _) = BlockNoteMarkdownPaste.decodeUTF8Scalar(in: bytes, at: index, limit: bytes.count)
-            guard let scalar else { return .other }
-            if scalar.properties.isWhitespace { return .whitespace }
-            return Character(scalar).isPunctuation ? .punctuation : .other
+            if syntax.clusterEnd.isEmpty { return Self.classifyASCII(bytes[index]) }
+            let end = syntax.clusterEnd[index]
+            guard end > index else { return .other }
+            return Self.classifyCluster(bytes, range: index..<end)
         }
 
         private func isLeftFlanking(_ run: Range<Int>) -> Bool {
-            let next = classifyByteAt(run.upperBound)
+            let next = classifyCharAt(run.upperBound)
             guard next != .none, next != .whitespace else { return false }
             guard next == .punctuation else { return true }
-            let previous = classifyByteBefore(run.lowerBound)
+            let previous = classifyCharBefore(run.lowerBound)
             return previous == .none || previous == .whitespace || previous == .punctuation
         }
 
         private func isRightFlanking(_ run: Range<Int>) -> Bool {
-            let previous = classifyByteBefore(run.lowerBound)
+            let previous = classifyCharBefore(run.lowerBound)
             guard previous != .none, previous != .whitespace else { return false }
             guard previous == .punctuation else { return true }
-            let next = classifyByteAt(run.upperBound)
+            let next = classifyCharAt(run.upperBound)
             return next == .none || next == .whitespace || next == .punctuation
         }
 
@@ -1682,21 +1676,18 @@ enum BlockNoteMarkdownPaste {
         private func canOpen(_ run: Range<Int>) -> Bool {
             guard isLeftFlanking(run) else { return false }
             guard isRightFlanking(run) else { return true }
-            return classifyByteBefore(run.lowerBound) == .punctuation
+            return classifyCharBefore(run.lowerBound) == .punctuation
         }
 
         private func canClose(_ run: Range<Int>) -> Bool {
             guard isRightFlanking(run) else { return false }
             guard isLeftFlanking(run) else { return true }
-            return classifyByteAt(run.upperBound) == .punctuation
+            return classifyCharAt(run.upperBound) == .punctuation
         }
 
         private func isLone(byte: UInt8, at index: Int, bounds: Range<Int>) -> Bool {
-            let prevSame = index > bounds.lowerBound && bytes[index - 1] == byte
-            let nextSame =
-                index + 1 < bounds.upperBound
-                && BlockNoteMarkdownPaste.isStandaloneByte(
-                    bytes, at: index + 1, equals: byte, limit: bounds.upperBound)
+            let prevSame = index > bounds.lowerBound && syntax.isPrecedingStandaloneByte(before: index, equals: byte)
+            let nextSame = index + 1 < bounds.upperBound && syntax.isStandaloneByte(at: index + 1, equals: byte)
             return !prevSame && !nextSame
         }
 
@@ -1711,33 +1702,39 @@ enum BlockNoteMarkdownPaste {
             }
         }
 
-        private mutating func matchDelimiter(
-            open: Int, length: Int, byte: UInt8, limit: Int, allowLinks: Bool
-        ) -> Int? {
+        private mutating func matchDelimiter(open: Int, length: Int, byte: UInt8, limit: Int) -> Int? {
+            let clusterEnd = syntax.clusterEnd
+            let isPureASCII = clusterEnd.isEmpty
             let startsTripleStar =
                 byte == Byte.star && length == 2 && open + 2 < limit
-                && BlockNoteMarkdownPaste.isStandaloneByte(bytes, at: open + 2, equals: Byte.star, limit: limit)
+                && bytes[open + 2] == Byte.star
+                && (isPureASCII || clusterEnd[open + 2] == open + 3)
             let bit = Self.delimiterBit(byte: byte, length: length, startsTripleStar: startsTripleStar)
-            let cacheKey = (limit << 1) | (allowLinks ? 1 : 0)
-            if (noCloserByLimit[cacheKey, default: 0] & bit) != 0 { return nil }
+            if (noCloserByLimit[limit, default: 0] & bit) != 0 { return nil }
+            var jumpedLink = false
             var i = open + length
             while i < limit {
+                if !isPureASCII && clusterEnd[i] != i + 1 {
+                    i = min(clusterEnd[i] > i ? clusterEnd[i] : i + 1, limit)
+                    continue
+                }
                 let b = bytes[i]
-                if b == Byte.backslash, !BlockNoteMarkdownPaste.isExtendedByGrapheme(bytes, at: i, limit: limit) {
+                if b == Byte.backslash {
                     if i + 1 < limit {
-                        i = BlockNoteMarkdownPaste.graphemeClusterEnd(in: bytes, from: i + 1, limit: limit)
+                        let next = i + 1
+                        i = min(
+                            isPureASCII ? (next + 1) : (clusterEnd[next] > next ? clusterEnd[next] : next + 1),
+                            limit)
                     } else {
-                        i += 2
+                        i = limit
                     }
                     continue
                 }
-                if b == Byte.backtick, let backticks = syntax.backticks,
-                    !BlockNoteMarkdownPaste.isExtendedByGrapheme(bytes, at: i, limit: limit)
-                {
+                if b == Byte.backtick, let backticks = syntax.backticks {
                     var count = 0
                     while i + count < limit,
-                        BlockNoteMarkdownPaste.isStandaloneByte(
-                            bytes, at: i + count, equals: Byte.backtick, limit: limit)
+                        bytes[i + count] == Byte.backtick,
+                        isPureASCII || clusterEnd[i + count] == i + count + 1
                     {
                         count += 1
                     }
@@ -1749,17 +1746,14 @@ enum BlockNoteMarkdownPaste {
                     }
                     continue
                 }
-                if b == Byte.openBracket, allowLinks, syntax.hasLinkTokens,
-                    let link = matchLink(from: i, limit: limit)
-                {
+                if b == Byte.openBracket, syntax.hasLinkTokens, let link = matchLink(from: i, limit: limit) {
+                    jumpedLink = true
                     i = link.next
                     continue
                 }
-                if b == byte, !BlockNoteMarkdownPaste.isExtendedByGrapheme(bytes, at: i, limit: limit) {
+                if b == byte {
                     var runEnd = i
-                    while runEnd < limit,
-                        BlockNoteMarkdownPaste.isStandaloneByte(bytes, at: runEnd, equals: byte, limit: limit)
-                    {
+                    while runEnd < limit, bytes[runEnd] == byte, isPureASCII || clusterEnd[runEnd] == runEnd + 1 {
                         runEnd += 1
                     }
                     let runLen = runEnd - i
@@ -1790,7 +1784,12 @@ enum BlockNoteMarkdownPaste {
                 }
                 i += 1
             }
-            noCloserByLimit[cacheKey, default: 0] |= bit
+            // Only cache a miss when the scan did not jump over a nested link:
+            // inside a link label `scan` does not skip nested links, so an inner
+            // opener inside that skipped span can still close before `limit`.
+            if !jumpedLink {
+                noCloserByLimit[limit, default: 0] |= bit
+            }
             return nil
         }
 

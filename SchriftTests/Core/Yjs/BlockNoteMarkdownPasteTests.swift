@@ -770,4 +770,140 @@ final class BlockNoteMarkdownPasteTests: XCTestCase {
             XCTAssertTrue(blocks.first?.block.runs.allSatisfy(\.marks.isEmpty) ?? false, input)
         }
     }
+
+    func testSwiftGraphemeBoundariesAndLinkLabelSkippingMatchOldScanner() throws {
+        // Inputs that must stay literal plain paragraphs under Swift's Character segmentation.
+        let literalInputs = [
+            "![alt](https://example.com/a\u{0001}\u{0301})",
+            "!\u{102C}*a*",
+            "[\u{0E33}a](https://example.com)",
+            "\u{0600}[a](https://example.com)",
+            "\u{1F469}\u{200D}\u{203C}\u{FE0F}*important*",
+        ]
+        for input in literalInputs {
+            let copies = try BlockNoteMarkdownPaste.parse(input)
+            let (doc, blocks) = try project(copies)
+            defer { doc.destroy() }
+            XCTAssertEqual(blocks.map(\.block.node), ["paragraph"], input)
+            XCTAssertEqual(blocks.first?.block.runs.map(\.text), [input], input)
+            XCTAssertTrue(blocks.first?.block.runs.allSatisfy(\.marks.isEmpty) ?? false, input)
+        }
+
+        // GB4 breaks between `\t` (Control) and `\u{0301}`, so the character before `*` is `\u{0301}`.
+        let tabCombinedCopies = try BlockNoteMarkdownPaste.parse("*foo\t\u{0301}*")
+        let (tabDoc, tabBlocks) = try project(tabCombinedCopies)
+        defer { tabDoc.destroy() }
+        XCTAssertEqual(tabBlocks.map(\.block.node), ["paragraph"])
+        XCTAssertEqual(tabBlocks.first?.block.runs.map(\.text), ["foo\t\u{0301}"])
+        XCTAssertEqual(tabBlocks.first?.block.runs.first?.marks.map(\.key), ["italic"])
+
+        // U+102C is not a grapheme extender after `)`, so the link closes before U+102C.
+        let myanmarCopies = try BlockNoteMarkdownPaste.parse("[link](https://example.com)\u{102C}")
+        let (myanmarDoc, myanmarBlocks) = try project(myanmarCopies)
+        defer { myanmarDoc.destroy() }
+        XCTAssertEqual(myanmarBlocks.map(\.block.node), ["paragraph"])
+        let myanmarRuns = myanmarBlocks.first?.block.runs ?? []
+        XCTAssertEqual(myanmarRuns.map(\.text), ["link", "\u{102C}"])
+        if myanmarRuns.count == 2 {
+            XCTAssertEqual(myanmarRuns[0].marks.map(\.key), ["link"])
+            XCTAssertEqual(YBlockProjection.linkHref(from: myanmarRuns[0].marks[0].valueJSON), "https://example.com")
+            XCTAssertTrue(myanmarRuns[1].marks.isEmpty)
+        }
+
+        // Link label containing nested `[b c*](...)`: matchDelimiter skips nested links, so no italic.
+        let skippedLinkCopies = try BlockNoteMarkdownPaste.parse("[*a [b c*](https://x.com)](https://y.com)")
+        let (skippedDoc, skippedBlocks) = try project(skippedLinkCopies)
+        defer { skippedDoc.destroy() }
+        XCTAssertEqual(skippedBlocks.map(\.block.node), ["paragraph"])
+        let skippedRuns = skippedBlocks.first?.block.runs ?? []
+        XCTAssertEqual(skippedRuns.map(\.text), ["*a [b c*](https://x.com)"])
+        if skippedRuns.count == 1 {
+            XCTAssertEqual(skippedRuns[0].marks.map(\.key), ["link"])
+            XCTAssertEqual(YBlockProjection.linkHref(from: skippedRuns[0].marks[0].valueJSON), "https://y.com")
+        }
+    }
+
+    func testUTF8ClusterScannerMatchesReferenceCharacterScannerAcrossTrickyInputs() throws {
+        let inputs = [
+            // Round-1 & round-2 Unicode / grapheme edge cases
+            "![alt](https://example.com/a\u{0001}\u{0301})",
+            "*foo\t\u{0301}*",
+            "[link](https://example.com)\u{102C}",
+            "!\u{102C}*a*",
+            "[\u{0E33}a](https://example.com)",
+            "\u{0600}[a](https://example.com)",
+            "\u{1F469}\u{200D}\u{203C}\u{FE0F}*important*",
+            "‼️*important*",
+            "*foo \u{0301}*",
+            "Press *️⃣* now",
+            "*Press *️⃣*",
+            "hello ![alt](\u{0301}https://example.com/a.png)",
+            "`\u{0301}code`",
+            "[\u{0301}a](https://example.com)",
+            "[a](https://example.com)\u{0301}",
+            "\u{0600}*a*",
+            "**️⃣*a*",
+            "***️⃣**bold**",
+            "` \u{0600} a `",
+            "`a \u{0301} `",
+            "` \u{0301}a `",
+            "\\*️⃣ and \\\u{0301}*a*",
+            "![alt \\]\u{0301}](https://images.example/a.png)",
+            "![alt](<https://images.example/a.png>\u{0301})",
+            "![alt](<\u{0301}https://images.example/a.png>)",
+            "[title](https://example.com \"\u{0301}hi\")",
+            "[title](https://example.com \"hi\"\u{0301})",
+            "[nbsp](https://example.com\u{00A0}tail)",
+            "**café** *naïve*—_über_ ~~résumé~~ [日本語](https://example.com)",
+            "a\u{0301}*b* and .\u{0301}*c* and +\u{0301}*d*",
+            "👨‍👩‍👧*family* and 🏳️‍🌈*flag*",
+            // Nested links & emphasis interactions
+            "[*a [b *c*](https://x.com)](https://y.com)",
+            "[*a [b c*](https://x.com)](https://y.com)",
+            "[*a [b *c*](https://x.com) *d*](https://y.com)",
+            "**[click](https://example.com) [note]**",
+            "*note: see [click](https://example.com) [1]",
+            "***bold italic*** and **a***b***c**",
+            "2*3*4 and 2**3**4 and a~~b~~c and snake_case_var",
+            "``![b](https://images.example/b.png)`` and \\![a](https://images.example/a.png)",
+            // Block & inline combinations
+            "- ![cat](https://images.example/cat.png) **bold**",
+            "> ‼️*quoted* [link](https://example.com)\u{102C}",
+            "# Heading *em* ~~strike~~",
+            "---",
+            "-\u{0301}--",
+            "| A | B |\n| - | - |\n| *foo\t\u{0301}* | ‼️*ok* |",
+        ]
+
+        for input in inputs {
+            let actual = try BlockNoteMarkdownPaste.parseDetailed(input)
+            let expected = try ReferenceCharacterMarkdownPaste.parseDetailed(input)
+            XCTAssertEqual(
+                actual.sawMarkdown, expected.sawMarkdown, "sawMarkdown mismatch for: \(input.debugDescription)")
+            XCTAssertEqual(
+                actual.blocks.isEmpty, expected.blocks.isEmpty,
+                "emptiness mismatch for: \(input.debugDescription)")
+            if actual.blocks.isEmpty || expected.blocks.isEmpty { continue }
+
+            let (actualDoc, actualBlocks) = try project(actual.blocks)
+            defer { actualDoc.destroy() }
+            let (expectedDoc, expectedBlocks) = try project(expected.blocks)
+            defer { expectedDoc.destroy() }
+
+            XCTAssertEqual(
+                actualBlocks.map(\.block.node), expectedBlocks.map(\.block.node),
+                "node mismatch for: \(input.debugDescription)")
+            XCTAssertEqual(
+                actualBlocks.map(\.depth), expectedBlocks.map(\.depth),
+                "depth mismatch for: \(input.debugDescription)")
+            XCTAssertEqual(
+                actualBlocks.map { $0.block.runs }, expectedBlocks.map { $0.block.runs },
+                "runs mismatch for: \(input.debugDescription)")
+            for (lhs, rhs) in zip(actualBlocks, expectedBlocks) {
+                let lhsProps = lhs.block.props.map { "\($0.key)=\($0.value)" }
+                let rhsProps = rhs.block.props.map { "\($0.key)=\($0.value)" }
+                XCTAssertEqual(lhsProps, rhsProps, "props mismatch for: \(input.debugDescription)")
+            }
+        }
+    }
 }
