@@ -256,6 +256,20 @@ jobs:
             sleep 10
             xcrun simctl terminate "$SIM_UDID" "$id" || true
           done
+          # A few minutes after boot iOS runs its post-install background tasks; the wallpaper
+          # pre-render (PosterBoard and every poster extension) starves a hosted runner for
+          # about two minutes, long enough to fail a UI test and its retry. Wait for it to
+          # finish, capped; a timeout never fails the job. See docs/ci.md.
+          deadline=$((SECONDS + 420))
+          until xcrun simctl spawn "$SIM_UDID" log show --last 30m --style compact \
+              --predicate 'eventMessage CONTAINS "PosterBoardUpdate completed"' 2>/dev/null \
+              | grep -q "posterboardupdate.prewarm"; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::notice::Wallpaper pre-render still running after 7 minutes; testing anyway"
+              break
+            fi
+            sleep 15
+          done
 
       # UI shards get a second chance: a UI test fails on a starved hosted
       # simulator for reasons the app does not control, and a unit test that fails
