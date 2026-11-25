@@ -1,0 +1,29 @@
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_ffe8358bf73714::t_d5fa2c07bb0b99 2553-2585
+SchriftTests/Features/Editor/Native/NativeMediaTests.swift
+  s_ffe8358bf73714::t_d467e94691887c 90-170
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_ffe8358bf73714::t_73a219c1d9bc3c 693-731,744,753,792-811
+SchriftUITests/Native/NativeEditorUITests.swift
+  s_ffe8358bf73714::t_516d209c9782ec 326-359
+docs/native-editor-acceptance.md
+  s_ffe8358bf73714::t_06c0a9739536b0 183-185
+docs/standards/document-engine.md
+  s_ffe8358bf73714::t_a5e13f97c85a46 1777-1780
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f36413bba656283b04175c6c438beb7b19097c1f",
+  "prompts": {},
+  "sessions": {
+    "s_ffe8358bf73714": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a11a7824174c8e830",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
