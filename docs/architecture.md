@@ -1240,7 +1240,9 @@ edge pan, trailing `Edit`/`Done` + `Share` + `OptionsSheetView` + `OutlinePresen
 `NativeTextView` remains the **sole vertical `UIScrollView`** so TextKit 2 viewport virtualization
 is preserved: `EditorDocumentHeader` and Reading-mode `ChecklistReadingControls` sit in a measured
 `headerAccessoryView` (`contentInset.top`), and `subpagesSection` sits in `footerAccessoryView`
-(`contentInset.bottom`). Existing native documents open in Reading mode (`textView.isEditable = false`,
+(`contentInset.bottom`). Both scroll with the text, so `NativeTextView.scrollRectToVisible` counts only
+the safe area as covering it: UIKit's caret reveal never scrolls to clear them. Existing native documents
+open in Reading mode (`textView.isEditable = false`,
 formatting bar hidden) over the same `NativeEditorSession` and `NativeTextSurface`, transitioning
 to Editing mode on toolbar `Edit`, tapping writable text, tapping writable cards/sources, or
 consuming a new-document `entryIntent` (focusing the header title once); `Done` or `⌘Return`

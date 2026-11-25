@@ -927,6 +927,35 @@ final class NativeTextView: UITextView {
         return nil
     }
 
+    /// UIKit's caret reveal (typing, a selection change) treats all of
+    /// `adjustedContentInset` as covered, but the document header and the
+    /// subpages footer sit in `contentInset` and scroll with the text. On a
+    /// short page the text between them looked a few lines tall, so each
+    /// keystroke scrolled to fit the caret, then the taller selection rect,
+    /// and back again. Only the safe-area part of the inset covers the text.
+    override func scrollRectToVisible(_ rect: CGRect, animated: Bool) {
+        guard isScrollEnabled, contentInset.top != 0 || contentInset.bottom != 0 else {
+            return super.scrollRectToVisible(rect, animated: animated)
+        }
+        guard let y = Self.revealOffset(for: rect, in: self) else { return }
+        setContentOffset(CGPoint(x: contentOffset.x, y: y), animated: animated)
+    }
+
+    /// The smallest scroll that shows `rect` between the safe areas (its top
+    /// when it is taller than that), clamped to the content; nil when none.
+    private static func revealOffset(for rect: CGRect, in view: UIScrollView) -> CGFloat? {
+        let safeTop = view.adjustedContentInset.top - view.contentInset.top
+        let safeBottom = view.adjustedContentInset.bottom - view.contentInset.bottom
+        let current = view.contentOffset.y
+        var y = current
+        if rect.maxY > y + view.bounds.height - safeBottom { y = rect.maxY - view.bounds.height + safeBottom }
+        if rect.minY < y + safeTop { y = rect.minY - safeTop }
+        let minY = -view.adjustedContentInset.top
+        let maxY = max(minY, view.contentSize.height + view.adjustedContentInset.bottom - view.bounds.height)
+        y = min(max(y, minY), maxY)
+        return abs(y - current) > 0.5 ? y : nil
+    }
+
     override func layoutSubviews() {
         // Attachment paragraphs are sized for this width before TextKit lays out.
         blockControls?.updateAttachmentWidth()
