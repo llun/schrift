@@ -397,7 +397,7 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
             DocumentSaveCoordinator(
                 client: DocsAPIClient(
                     baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
-                draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+                draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop, sleep: neverSleep)
         }
 
         // Process 1: a queued draft, and a conflict detected against it.
@@ -439,7 +439,7 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
             DocumentSaveCoordinator(
                 client: DocsAPIClient(
                     baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
-                draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+                draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop, sleep: neverSleep)
         }
         let divergedBody = Data(
             """
@@ -488,7 +488,7 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
             DocumentSaveCoordinator(
                 client: DocsAPIClient(
                     baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
-                draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+                draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop, sleep: neverSleep)
         }
         let log = RequestRecorder()
         stubSavePipeline(log: log)

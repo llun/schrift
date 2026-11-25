@@ -1367,7 +1367,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
                 deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
                 attachmentStore: attachmentStore,
                 listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children,
-                backgroundTasks: .noop)
+                backgroundTasks: .noop, sleep: neverSleep)
             coordinator.nativeEditorEnabled = { NativeEditorPreference.isEnabled(defaults) }
             coordinator.nativeSessions = nativeSessions
             let availability =

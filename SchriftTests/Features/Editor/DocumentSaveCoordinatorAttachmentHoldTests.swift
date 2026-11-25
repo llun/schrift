@@ -61,7 +61,7 @@ final class DocumentSaveCoordinatorAttachmentHoldTests: XCTestCase {
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
             serverOrigin: origin,
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         return (coordinator, drafts)
     }
 

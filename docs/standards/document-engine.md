@@ -156,7 +156,15 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `NativeReplicaSaveScheduler.schedule()` (classic `autosaveInterval`, 30 s cap), which
   hands the verified outbox to `enqueueReplica` with the content cache's server title
   and baseline. Close and inactive/background flush it; a reopened replica with an
-  outbox and no pending save schedules one. A refused capture freezes authoring and
+  outbox and no pending save schedules one. When a native replica save fails
+  retryably (5xx, timeout, 429, or a title PATCH failing after the body landed)
+  while online and foregrounded (initialized from the scene phase),
+  `DocumentSaveCoordinator` retries that document through its replay path on bounded
+  exponential backoff (2 s doubling to 60 s, floored by 429 `Retry-After`, preserved
+  across sync passes, offline and background, and reset on success, a new edit,
+  sign-out, conflict, terminal failure or delete), skipping held or conflicted saves
+  and cancelling on offline, background, sign-out or document delete. A refused
+  capture freezes authoring and
   calls `noteReplicaCaptureFailure`. The native view shows `SaveStatusIndicator`
   (unsent journal bytes → "Saved on this device"); its tap is
   `NativeEditorOpen.saveNow`, never the classic `saveNow`. Reconnect calls
@@ -177,8 +185,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   over replica data already on disk; classic `restoreLocalContent` never shows a
   native draft or save. Both login flows pass the confirmed id to
   `signIn(serverURL:userID:)` (remembered before the generation moves); a flush while
-  the account is unknown keeps the save pending ("Saved on this device") instead of
-  failing; `signOut` bumps `signInGeneration` too; the confirmation (`confirmSession`)
+  the account is unknown keeps the save pending ("Saved on this device") and re-arms
+  the debounce interval (floored at 1 s) instead of failing; `signOut` bumps `signInGeneration` too; the confirmation (`confirmSession`)
   treats an unparseable id as unknown, never as a failed sign-in.
   `SignedInUserStore.epoch` moves at every clear, and the Home/Profile `/users/me/`
   writers drop answers whose epoch moved. Close cancels `NativeEditorOpen.reopen`/

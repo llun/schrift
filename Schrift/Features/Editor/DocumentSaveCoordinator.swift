@@ -89,6 +89,20 @@ final class DocumentSaveCoordinator {
         let serverUpdatedAt: Date
     }
 
+    /// Backoff schedule for online retries of transiently-failed native replica saves:
+    /// `base` doubled per attempt up to `cap`, floored by any server `Retry-After` on 429.
+    struct NativeSaveRetryBackoff: Sendable {
+        var base: Duration = .seconds(2)
+        var cap: Duration = .seconds(60)
+        var maxRetryAfter: Duration = .seconds(300)
+
+        func delay(attempt: Int, retryAfter: TimeInterval? = nil) -> Duration {
+            let exponential = min(cap, base * (1 << min(max(attempt, 0), 16)))
+            guard let retryAfter, retryAfter.isFinite, retryAfter > 0 else { return exponential }
+            return max(exponential, min(maxRetryAfter, .seconds(retryAfter)))
+        }
+    }
+
     private let client: DocsAPIClient
     private let draftStore: PendingDraftStore
     /// Also carries the durable "native replica owns this document" marker. A
@@ -129,6 +143,13 @@ final class DocumentSaveCoordinator {
     private let mediaCheckRetryInterval: Duration
     private let backgroundTasks: BackgroundTaskProvider
     private let isLiveReplicaHeld: @MainActor (UUID) -> Bool
+    private let isOnline: @MainActor () -> Bool
+    private let nativeSaveRetryBackoff: NativeSaveRetryBackoff
+    private let sleep: @Sendable (Duration) async throws -> Void
+    @ObservationIgnored private var isForegrounded = true
+    @ObservationIgnored private var nativeRetryTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var nativeRetryTokens: [UUID: UUID] = [:]
+    @ObservationIgnored private var nativeRetryAttempts: [UUID: Int] = [:]
 
     private var states: [UUID: DocSaveState] = [:]
     /// The same log the shared client records into; nil in previews and tests that don't need detail.
@@ -474,6 +495,10 @@ final class DocumentSaveCoordinator {
         mediaCheckRetryInterval: Duration = .seconds(1),
         backgroundTasks: BackgroundTaskProvider = .uiApplication,
         isLiveReplicaHeld: @escaping @MainActor (UUID) -> Bool = { _ in false },
+        isOnline: @escaping @MainActor () -> Bool = { true },
+        isForegrounded: Bool = true,
+        nativeSaveRetryBackoff: NativeSaveRetryBackoff = NativeSaveRetryBackoff(),
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         diagnostics: APIDiagnosticsLog? = nil
     ) {
         self.client = client
@@ -503,6 +528,10 @@ final class DocumentSaveCoordinator {
         self.mediaCheckRetryInterval = mediaCheckRetryInterval
         self.backgroundTasks = backgroundTasks
         self.isLiveReplicaHeld = isLiveReplicaHeld
+        self.isOnline = isOnline
+        self.isForegrounded = isForegrounded
+        self.nativeSaveRetryBackoff = nativeSaveRetryBackoff
+        self.sleep = sleep
         createStoreUnreadable = createStore.holdsUnreadableData
         deleteStoreUnreadable = deleteStore.holdsUnreadableData
         // Same reasoning as the conflict rehydration below: the holds these records drive
@@ -671,6 +700,7 @@ final class DocumentSaveCoordinator {
     private func markFailed(
         _ documentID: UUID, reason: String, detail: RequestFailure? = nil, offersRetry: Bool = true
     ) {
+        resetNativeSaveRetry(documentID: documentID)
         states[documentID] = .failed("Couldn't save changes. Please try again.")
         failureReasons[documentID] = reason
         failureDetails[documentID] = detail
@@ -798,6 +828,7 @@ final class DocumentSaveCoordinator {
     /// Removes clean, synced replica folders for the leaving account/origin while keeping every
     /// dirty, provisional, conflicted, active, or unreadable replica untouched.
     func purgeCleanNativeReplicasOnSignOut(ownerUserID: UUID? = nil) {
+        cancelNativeSaveRetries()
         guard let resolvedOwner = ownerUserID ?? signedInUser.userID,
             canSafelyRemoveCleanReplicas
         else { return }
@@ -994,6 +1025,7 @@ final class DocumentSaveCoordinator {
     ///
     /// Idempotent: re-queueing overwrites, keeping the newer request.
     func recordPendingDelete(documentID: UUID, ownerUserID: UUID) {
+        resetNativeSaveRetry(documentID: documentID)
         let tombstone = PendingDocumentDelete(
             documentID: documentID, requestedAt: Date(), serverOrigin: serverOrigin, ownerUserID: ownerUserID)
         deleteStore.save(tombstone)
@@ -3679,7 +3711,9 @@ final class DocumentSaveCoordinator {
     /// their classic owner; only an existing raw generation may be advanced.
     /// The shadow is never the caller's: it is the stored draft's verified one,
     /// or projected from the raw revision when there is none or it is older.
-    func enqueueReplica(adapter: ReplicaSaveAdapter, title: String, baseline: DraftBaseline? = nil) throws {
+    func enqueueReplica(
+        adapter: ReplicaSaveAdapter, title: String, baseline: DraftBaseline? = nil, resetRetryBackoff: Bool = true
+    ) throws {
         let id = adapter.scope.documentID
         guard adapter.scope.serverOrigin == client.serverOrigin, adapter.scope.ownerUserID == signedInUser.userID
         else { throw ReplicaSaveError.otherServerOrAccount }
@@ -3698,6 +3732,7 @@ final class DocumentSaveCoordinator {
         // files. Compaction keeps revision, generation and every outbox segment,
         // so the captured request stays valid.
         adapter.compactIfNeeded()
+        if resetRetryBackoff { resetNativeSaveRetry(documentID: id) }
         enqueue(
             documentID: id,
             save: PendingSave(title: title, markdown: markdown, replicaRequest: request),
@@ -3908,6 +3943,98 @@ final class DocumentSaveCoordinator {
             await runAttachmentPass()
             await runSyncPass()
         } while needsAnotherSyncPass
+    }
+
+    func setForegrounded(_ foregrounded: Bool) {
+        isForegrounded = foregrounded
+        if !foregrounded { cancelNativeSaveRetries(resetBackoff: false) }
+    }
+
+    func cancelNativeSaveRetries(resetBackoff: Bool = true) {
+        for task in nativeRetryTasks.values { task.cancel() }
+        nativeRetryTasks.removeAll()
+        nativeRetryTokens.removeAll()
+        if resetBackoff { nativeRetryAttempts.removeAll() }
+    }
+
+    private func resetNativeSaveRetry(documentID: UUID) {
+        nativeRetryTasks.removeValue(forKey: documentID)?.cancel()
+        nativeRetryTokens[documentID] = nil
+        nativeRetryAttempts[documentID] = nil
+    }
+
+    private func cancelNativeSaveRetryTask(documentID: UUID) {
+        nativeRetryTasks.removeValue(forKey: documentID)?.cancel()
+        nativeRetryTokens[documentID] = nil
+    }
+
+    private func canRetryNativeSave(documentID: UUID) -> Bool {
+        guard isOnline(), isForegrounded, signInIsCurrent?()() ?? true else { return false }
+        guard inFlight[documentID] == nil, queued[documentID] == nil else { return false }
+        guard conflicts[documentID] == nil,
+            !isPendingCreate(documentID: documentID),
+            !isPendingDelete(documentID: documentID),
+            !isLiveReplicaHeld(documentID)
+        else { return false }
+        if case .failed = state(for: documentID) { return false }
+        guard let draft = draftStore.draft(for: documentID),
+            let reference = draft.replica,
+            reference.scope.documentID == documentID,
+            reference.scope.serverOrigin == client.serverOrigin,
+            reference.scope.ownerUserID == signedInUser.userID,
+            !markdownReferencesPendingAttachment(draft.markdown)
+        else { return false }
+        return true
+    }
+
+    /// Schedules a bounded exponential backoff retry for a transiently-failed native replica save
+    /// while online and foregrounded, honouring `Retry-After` on 429 and respecting all holds.
+    private func scheduleNativeSaveRetry(documentID: UUID, error: DocsAPIError) {
+        guard canRetryNativeSave(documentID: documentID) else { return }
+        let attempt = nativeRetryAttempts[documentID] ?? 0
+        let retryAfter: TimeInterval? =
+            if case .rateLimited(let seconds) = error { seconds } else { nil }
+        let delay = nativeSaveRetryBackoff.delay(attempt: attempt, retryAfter: retryAfter)
+        nativeRetryAttempts[documentID] = attempt + 1
+        nativeRetryTasks.removeValue(forKey: documentID)?.cancel()
+        let sleep = self.sleep
+        let isCurrent = signInIsCurrent?()
+        let token = UUID()
+        nativeRetryTokens[documentID] = token
+        nativeRetryTasks[documentID] = Task { [weak self] in
+            defer {
+                if let self, self.nativeRetryTokens[documentID] == token {
+                    self.nativeRetryTasks[documentID] = nil
+                    self.nativeRetryTokens[documentID] = nil
+                }
+            }
+            do { try await sleep(delay) } catch { return }
+            guard !Task.isCancelled, let self, self.nativeRetryTokens[documentID] == token else { return }
+            guard isCurrent?() ?? true else {
+                self.resetNativeSaveRetry(documentID: documentID)
+                return
+            }
+            await self.runNativeSaveRetry(documentID: documentID, token: token)
+        }
+    }
+
+    private func runNativeSaveRetry(documentID: UUID, token: UUID) async {
+        guard canRetryNativeSave(documentID: documentID),
+            let draft = draftStore.draft(for: documentID), draft.replica != nil
+        else {
+            if draftStore.draft(for: documentID)?.replica == nil {
+                nativeRetryAttempts[documentID] = nil
+            }
+            return
+        }
+        if isSyncingDrafts {
+            needsAnotherSyncPass = true
+            return
+        }
+        if let retryError = await replayDraft(draft, isNativeRetry: true) {
+            guard !Task.isCancelled, nativeRetryTokens[documentID] == token else { return }
+            scheduleNativeSaveRetry(documentID: documentID, error: retryError)
+        }
     }
 
     func syncPendingPins() async {
@@ -4506,159 +4633,195 @@ final class DocumentSaveCoordinator {
     }
 
     private func runSyncPass() async {
+        cancelNativeSaveRetries(resetBackoff: false)
         for draft in draftStore.allDrafts() {
-            if let reference = draft.replica {
-                guard reference.scope.documentID == draft.documentID,
-                    reference.scope.serverOrigin == client.serverOrigin,
-                    reference.matches(markdown: draft.markdown),
-                    reference.formatVersion == ReplicaManifest.currentFormat,
-                    !draftStore.holdsUnreadableData
-                else { continue }
-                if queued[draft.documentID]?.replicaRequest != nil, !isLiveReplicaHeld(draft.documentID) {
-                    releaseHeldSave(documentID: draft.documentID)
-                }
-            }
-            // A document the server has never seen cannot be reconciled against it: the GET
-            // below would 404 and mark the draft failed. The create replay owns these.
-            guard !isPendingCreate(documentID: draft.documentID) else { continue }
-            // A document queued for deletion is reconciled with nothing: pushing races our own
-            // DELETE, and a 404/403 would mark the draft failed while the deletion is cancellable.
-            guard !isPendingDelete(documentID: draft.documentID) else { continue }
-            // A draft still naming an un-uploaded photo cannot be reconciled until attachment
-            // replay uploads and rewrites it; reconciling earlier would park or stamp a conflict.
-            guard !markdownReferencesPendingAttachment(draft.markdown) else { continue }
-            guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
-            // A held writable replica sends its own step2 diff, so replaying this markdown could
-            // duplicate those Yjs items. The draft waits; the replica's release triggers a new pass.
-            guard !isLiveReplicaHeld(draft.documentID) else { continue }
-            // A save that FAILED this session is a retry candidate the user may still
-            // be looking at (its draft is their only copy), owned by the reading
-            // surface's "Couldn't save · tap to retry". Reconciling it here would
-            // race or overwrite that state behind the user's back — skip it.
-            if case .failed = state(for: draft.documentID) { continue }
-            // A recorded conflict waits for the user's explicit choice — never push
-            // over it and never discard it here.
-            if conflicts[draft.documentID] != nil { continue }
-            do {
-                if let reference = draft.replica {
-                    guard try await client.currentUser().id == reference.scope.ownerUserID else { continue }
-                    guard !isLiveReplicaHeld(draft.documentID), inFlight[draft.documentID] == nil,
-                        queued[draft.documentID] == nil, draftStore.draft(for: draft.documentID) == draft
-                    else { continue }
-                }
-                let formatted = try await client.formattedContent(documentID: draft.documentID)
-                // The session may have started editing/saving this document
-                // while we awaited — a stale replay would clobber the newer
-                // content and its draft. Re-check before acting.
-                guard inFlight[draft.documentID] == nil,
-                    queued[draft.documentID] == nil,
-                    !isLiveReplicaHeld(draft.documentID),
-                    draftStore.draft(for: draft.documentID) == draft
-                else { continue }
-                let decision = draftSyncDecision(
-                    baseline: draft.baseline,
-                    lastPushedMarkdown: draft.lastPushedMarkdown,
-                    localMarkdown: draft.markdown,
-                    draftTitle: draft.title,
-                    draftUpdatedAt: draft.updatedAt,
-                    serverTitle: formatted.title,
-                    serverUpdatedAt: formatted.updatedAt,
-                    serverMarkdown: formatted.content ?? "")
-                switch decision {
-                case .push(let title, _):
-                    // `title` — never `draft.title`. A save PATCHes the title too, so a replay
-                    // that pushed the draft's own would silently revert a rename made on the web
-                    // while this draft was queued. The decision resolves which title wins
-                    // (adopting the server's when the user never renamed); the baseline advances
-                    // with it, or a *second* remote rename would read as "both renamed" (see
-                    // `adoptedBaseline`).
-                    let baseline = adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: title)
-                    if let reference = draft.replica {
-                        try enqueueReplica(
-                            adapter: ReplicaSaveAdapter(store: replicaStore, scope: reference.scope),
-                            title: title, baseline: baseline)
-                    } else {
-                        enqueue(
-                            documentID: draft.documentID, title: title, markdown: draft.markdown, baseline: baseline)
-                    }
-                    // Marked only if the save actually started: a hold (conflict, pending delete,
-                    // pending attachment) parks it, and a mark left on a parked save would make a
-                    // later unrelated save of this document look like a replay.
-                    // After `.push` this is effectively always true, given `runSyncPass`'s pre-checks
-                    // (no in-flight or queued save, no holds); the check is kept as defence.
-                    if inFlight[draft.documentID] != nil { replayedPushes.insert(draft.documentID) }
-                case .conflict:
-                    // Record it and keep the draft: the pill/sheet asks the user. Through
-                    // `recordConflict`, NOT a direct map write — this is the primary detection
-                    // path for the offline-replay case, and a direct write skipped the on-disk
-                    // mirror, so the hold it established silently died at the next relaunch.
-                    recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
-                case .discardServerWins:
-                    if draft.replica != nil {
-                        recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
-                        continue
-                    }
-                    // Legacy (baseline-less) classic drafts — rule 3's tolerance fallback.
-                    // Skip drafts that may belong to pending creates, checkpointed migrations, or
-                    // pending deletes (and whenever either store is unreadable) so we never
-                    // stamp a conflict onto them.
-                    guard !isPendingCreate(documentID: draft.documentID) else { continue }
-                    guard !createStoreUnreadable else { continue }
-                    guard anyCheckpointedRecord(forServerID: draft.documentID) == nil else { continue }
-                    guard !isPendingDelete(documentID: draft.documentID) else { continue }
-                    guard !deleteStoreUnreadable else { continue }
-                    // Never delete waiting edits automatically: record a conflict so the user
-                    // chooses Keep mine / Keep server, matching native drafts.
-                    recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
-                }
-            } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
-                // The session may have removed, replaced, or started editing/saving this draft
-                // while we awaited — never stamp `.failed` onto a state that has moved on.
-                guard inFlight[draft.documentID] == nil,
-                    queued[draft.documentID] == nil,
-                    !isLiveReplicaHeld(draft.documentID),
-                    draftStore.draft(for: draft.documentID) == draft
-                else { continue }
-                if draft.replica != nil {
-                    markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
-                    continue
-                }
-                // Skip drafts that may belong to pending creates, checkpointed migrations, or
-                // pending deletes (and whenever either store is unreadable) so we never mark
-                // them failed as missing server documents.
-                guard !isPendingCreate(documentID: draft.documentID) else { continue }
-                guard !createStoreUnreadable else { continue }
-                guard anyCheckpointedRecord(forServerID: draft.documentID) == nil else { continue }
-                guard !isPendingDelete(documentID: draft.documentID) else { continue }
-                guard !deleteStoreUnreadable else { continue }
-                // Never delete waiting classic edits here: a 404/403 may be transient or revoked
-                // access while the draft is the user's only copy. Mark failed so the user decides
-                // via Retry or Discard.
-                markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
-            } catch {
-                // Leave the draft for a later sync (offline, expired session, missing route, or
-                // cancellation).
-                if isDeferredReplayFailure(error) {
-                    if draft.replica != nil {
-                        states[draft.documentID] = .pendingSync
-                    }
-                } else if draft.replica != nil {
-                    markFailed(draft.documentID, reason: "Draft sync failed: \(safeErrorSummary(error))")
-                } else {
-                    guard inFlight[draft.documentID] == nil,
-                        queued[draft.documentID] == nil,
-                        !isLiveReplicaHeld(draft.documentID),
-                        draftStore.draft(for: draft.documentID) == draft,
-                        !isPendingCreate(documentID: draft.documentID),
-                        !createStoreUnreadable,
-                        anyCheckpointedRecord(forServerID: draft.documentID) == nil,
-                        !isPendingDelete(documentID: draft.documentID),
-                        !deleteStoreUnreadable
-                    else { continue }
-                    markFailed(draft.documentID, reason: "Draft sync failed: \(safeErrorSummary(error))")
-                }
+            if let retryError = await replayDraft(draft) {
+                scheduleNativeSaveRetry(documentID: draft.documentID, error: retryError)
             }
         }
+    }
+
+    /// Replays one stored draft against the current server copy (shared by `runSyncPass` on
+    /// reconnect/foreground/launch and by the online native-save backoff retry).
+    /// Returns a retryable `DocsAPIError` only when a native draft's replay failed before
+    /// `enqueueReplica` could start a save, so the caller can continue backoff.
+    @discardableResult
+    private func replayDraft(_ draft: PendingDraft, isNativeRetry: Bool = false) async -> DocsAPIError? {
+        if let reference = draft.replica {
+            guard reference.scope.documentID == draft.documentID,
+                reference.scope.serverOrigin == client.serverOrigin,
+                reference.matches(markdown: draft.markdown),
+                reference.formatVersion == ReplicaManifest.currentFormat,
+                !draftStore.holdsUnreadableData
+            else { return nil }
+            if queued[draft.documentID]?.replicaRequest != nil, !isLiveReplicaHeld(draft.documentID) {
+                releaseHeldSave(documentID: draft.documentID)
+            }
+        }
+        // A document the server has never seen cannot be reconciled against it: the GET
+        // below would 404 and mark the draft failed. The create replay owns these.
+        guard !isPendingCreate(documentID: draft.documentID) else { return nil }
+        // A document queued for deletion is reconciled with nothing: pushing races our own
+        // DELETE, and a 404/403 would mark the draft failed while the deletion is cancellable.
+        guard !isPendingDelete(documentID: draft.documentID) else { return nil }
+        // A draft still naming an un-uploaded photo cannot be reconciled until attachment
+        // replay uploads and rewrites it; reconciling earlier would park or stamp a conflict.
+        guard !markdownReferencesPendingAttachment(draft.markdown) else { return nil }
+        guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { return nil }
+        // A held writable replica sends its own step2 diff, so replaying this markdown could
+        // duplicate those Yjs items. The draft waits; the replica's release triggers a new pass.
+        guard !isLiveReplicaHeld(draft.documentID) else { return nil }
+        // A save that FAILED this session is a retry candidate the user may still
+        // be looking at (its draft is their only copy), owned by the reading
+        // surface's "Couldn't save · tap to retry". Reconciling it here would
+        // race or overwrite that state behind the user's back — skip it.
+        if case .failed = state(for: draft.documentID) { return nil }
+        // A recorded conflict waits for the user's explicit choice — never push
+        // over it and never discard it here.
+        if conflicts[draft.documentID] != nil { return nil }
+        do {
+            if let reference = draft.replica {
+                guard try await client.currentUser().id == reference.scope.ownerUserID else { return nil }
+                if isNativeRetry {
+                    guard !Task.isCancelled, canRetryNativeSave(documentID: draft.documentID) else { return nil }
+                }
+                guard !isLiveReplicaHeld(draft.documentID), inFlight[draft.documentID] == nil,
+                    queued[draft.documentID] == nil, draftStore.draft(for: draft.documentID) == draft,
+                    !isPendingCreate(documentID: draft.documentID),
+                    !isPendingDelete(documentID: draft.documentID),
+                    conflicts[draft.documentID] == nil
+                else { return nil }
+            }
+            let formatted = try await client.formattedContent(documentID: draft.documentID)
+            if isNativeRetry {
+                guard !Task.isCancelled, canRetryNativeSave(documentID: draft.documentID) else { return nil }
+            }
+            // The session may have started editing/saving this document
+            // while we awaited — a stale replay would clobber the newer
+            // content and its draft. Re-check before acting.
+            guard inFlight[draft.documentID] == nil,
+                queued[draft.documentID] == nil,
+                !isLiveReplicaHeld(draft.documentID),
+                !isPendingCreate(documentID: draft.documentID),
+                !isPendingDelete(documentID: draft.documentID),
+                conflicts[draft.documentID] == nil,
+                draftStore.draft(for: draft.documentID) == draft
+            else { return nil }
+            let decision = draftSyncDecision(
+                baseline: draft.baseline,
+                lastPushedMarkdown: draft.lastPushedMarkdown,
+                localMarkdown: draft.markdown,
+                draftTitle: draft.title,
+                draftUpdatedAt: draft.updatedAt,
+                serverTitle: formatted.title,
+                serverUpdatedAt: formatted.updatedAt,
+                serverMarkdown: formatted.content ?? "")
+            switch decision {
+            case .push(let title, _):
+                // `title` — never `draft.title`. A save PATCHes the title too, so a replay
+                // that pushed the draft's own would silently revert a rename made on the web
+                // while this draft was queued. The decision resolves which title wins
+                // (adopting the server's when the user never renamed); the baseline advances
+                // with it, or a *second* remote rename would read as "both renamed" (see
+                // `adoptedBaseline`).
+                let baseline = adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: title)
+                if let reference = draft.replica {
+                    try enqueueReplica(
+                        adapter: ReplicaSaveAdapter(store: replicaStore, scope: reference.scope),
+                        title: title, baseline: baseline,
+                        resetRetryBackoff: false)
+                } else {
+                    enqueue(
+                        documentID: draft.documentID, title: title, markdown: draft.markdown, baseline: baseline)
+                }
+                // Marked only if the save actually started: a hold (conflict, pending delete,
+                // pending attachment) parks it, and a mark left on a parked save would make a
+                // later unrelated save of this document look like a replay.
+                // After `.push` this is effectively always true, given `runSyncPass`'s pre-checks
+                // (no in-flight or queued save, no holds); the check is kept as defence.
+                if inFlight[draft.documentID] != nil { replayedPushes.insert(draft.documentID) }
+            case .conflict:
+                // Record it and keep the draft: the pill/sheet asks the user. Through
+                // `recordConflict`, NOT a direct map write — this is the primary detection
+                // path for the offline-replay case, and a direct write skipped the on-disk
+                // mirror, so the hold it established silently died at the next relaunch.
+                recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
+            case .discardServerWins:
+                if draft.replica != nil {
+                    recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
+                    return nil
+                }
+                // Legacy (baseline-less) classic drafts — rule 3's tolerance fallback.
+                // Skip drafts that may belong to pending creates, checkpointed migrations, or
+                // pending deletes (and whenever either store is unreadable) so we never
+                // stamp a conflict onto them.
+                guard !isPendingCreate(documentID: draft.documentID) else { return nil }
+                guard !createStoreUnreadable else { return nil }
+                guard anyCheckpointedRecord(forServerID: draft.documentID) == nil else { return nil }
+                guard !isPendingDelete(documentID: draft.documentID) else { return nil }
+                guard !deleteStoreUnreadable else { return nil }
+                // Never delete waiting edits automatically: record a conflict so the user
+                // chooses Keep mine / Keep server, matching native drafts.
+                recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
+            }
+        } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
+            if isNativeRetry, Task.isCancelled { return nil }
+            // The session may have removed, replaced, or started editing/saving this draft
+            // while we awaited — never stamp `.failed` onto a state that has moved on.
+            guard inFlight[draft.documentID] == nil,
+                queued[draft.documentID] == nil,
+                !isLiveReplicaHeld(draft.documentID),
+                draftStore.draft(for: draft.documentID) == draft
+            else { return nil }
+            if draft.replica != nil {
+                markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
+                return nil
+            }
+            // Skip drafts that may belong to pending creates, checkpointed migrations, or
+            // pending deletes (and whenever either store is unreadable) so we never mark
+            // them failed as missing server documents.
+            guard !isPendingCreate(documentID: draft.documentID) else { return nil }
+            guard !createStoreUnreadable else { return nil }
+            guard anyCheckpointedRecord(forServerID: draft.documentID) == nil else { return nil }
+            guard !isPendingDelete(documentID: draft.documentID) else { return nil }
+            guard !deleteStoreUnreadable else { return nil }
+            // Never delete waiting classic edits here: a 404/403 may be transient or revoked
+            // access while the draft is the user's only copy. Mark failed so the user decides
+            // via Retry or Discard.
+            markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
+        } catch {
+            if isNativeRetry, Task.isCancelled { return nil }
+            // Leave the draft for a later sync (offline, expired session, missing route, or
+            // cancellation).
+            if isDeferredReplayFailure(error) {
+                if draft.replica != nil, draftStore.draft(for: draft.documentID) == draft {
+                    states[draft.documentID] = .pendingSync
+                    if let docsError = error as? DocsAPIError, retryableSaveFailure(docsError) {
+                        return docsError
+                    }
+                }
+            } else if draft.replica != nil {
+                guard inFlight[draft.documentID] == nil,
+                    queued[draft.documentID] == nil,
+                    !isLiveReplicaHeld(draft.documentID),
+                    draftStore.draft(for: draft.documentID) == draft
+                else { return nil }
+                markFailed(draft.documentID, reason: "Draft sync failed: \(safeErrorSummary(error))")
+            } else {
+                guard inFlight[draft.documentID] == nil,
+                    queued[draft.documentID] == nil,
+                    !isLiveReplicaHeld(draft.documentID),
+                    draftStore.draft(for: draft.documentID) == draft,
+                    !isPendingCreate(documentID: draft.documentID),
+                    !createStoreUnreadable,
+                    anyCheckpointedRecord(forServerID: draft.documentID) == nil,
+                    !isPendingDelete(documentID: draft.documentID),
+                    !deleteStoreUnreadable
+                else { return nil }
+                markFailed(draft.documentID, reason: "Draft sync failed: \(safeErrorSummary(error))")
+            }
+        }
+        return nil
     }
 
     /// Errors during a background sync pass that leave the draft waiting for a later pass rather
@@ -4676,6 +4839,7 @@ final class DocumentSaveCoordinator {
     /// branch) detected, so the pill/sheet and the enqueue-hold apply just as they do for a
     /// conflict found by `syncPendingDrafts`.
     func recordConflict(documentID: UUID, serverUpdatedAt: Date) {
+        resetNativeSaveRetry(documentID: documentID)
         conflicts[documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
         updateBackupProtection()
         persistConflictOnDraft(documentID: documentID)
@@ -4953,6 +5117,7 @@ final class DocumentSaveCoordinator {
         // starts whatever the hold was parking, and this is the one resolution where
         // that work must be thrown away, not sent.
         queued[documentID] = nil
+        resetNativeSaveRetry(documentID: documentID)
         removeDraft(documentID: documentID)
         // Both bodies that could have named a queued photo are now gone, so nothing would ever
         // collect its record — and the server body the user chose does not reference it either.
@@ -5156,6 +5321,7 @@ final class DocumentSaveCoordinator {
     /// then write-through the content cache, recreating the entry the delete just
     /// purged. Nothing purges it again. Remembering the id keeps that write out.
     func discardPendingWork(documentID: UUID) {
+        resetNativeSaveRetry(documentID: documentID)
         // A deleted or explicitly discarded document keeps no native replica.
         // Read the draft/marker before the branches below remove either.
         let mayRemoveDraft = discardNativeReplica(documentID: documentID)
@@ -5265,6 +5431,7 @@ final class DocumentSaveCoordinator {
                 // answers false.
                 let mayRemoveLocalDraft = discardNativeReplica(documentID: checkpointed.localID)
                 if mayRemoveLocalDraft { discardPendingAttachments(documentID: checkpointed.localID) }
+                resetNativeSaveRetry(documentID: checkpointed.localID)
                 states[checkpointed.localID] = .idle
                 clearFailure(checkpointed.localID)
                 if mayRemoveLocalDraft { removeDraft(documentID: checkpointed.localID) }
@@ -5290,6 +5457,7 @@ final class DocumentSaveCoordinator {
     /// decides its fate next launch (replay if reachable, mark failed on a real 404/403).
     func suppressLocalWriteThrough(documentID: UUID) {
         queued[documentID] = nil
+        resetNativeSaveRetry(documentID: documentID)
         // Clear any conflict record: on a 404/403 the draft survives (it's the user's
         // only unsaved work), and `syncPendingDrafts` re-detects a conflict after the
         // document becomes reachable again — a stale record must not linger.
@@ -5306,6 +5474,7 @@ final class DocumentSaveCoordinator {
     }
 
     private func start(documentID: UUID, save: PendingSave) {
+        cancelNativeSaveRetryTask(documentID: documentID)
         inFlightContent[documentID] = save
         states[documentID] = .saving
         clearFailure(documentID)
@@ -5438,6 +5607,7 @@ final class DocumentSaveCoordinator {
         // UserDefaults indefinitely.
         if discardedDuringSave.remove(documentID) != nil {
             queued[documentID] = nil
+            resetNativeSaveRetry(documentID: documentID)
             states[documentID] = .idle
             clearFailure(documentID)
             if error == nil, let draft = draftStore.draft(for: documentID),
@@ -5449,7 +5619,9 @@ final class DocumentSaveCoordinator {
             }
             return
         }
+        var retryableNativeError: DocsAPIError?
         if error == nil {
+            resetNativeSaveRetry(documentID: documentID)
             states[documentID] = .saved(Date())
             clearFailure(documentID)
             // **Both** PATCHes landed, so the server now holds this title. An editor still on
@@ -5494,9 +5666,11 @@ final class DocumentSaveCoordinator {
             // scary failure. `.sessionExpired` is NOT retryable — the shared client's
             // hook already raised the re-login sheet — so it lands in `.failed`.
             states[documentID] = .pendingSync
+            if save.replicaRequest != nil { retryableNativeError = docsError }
         } else if error is CancellationError {
             // A sign-in switch refused the request (review X1): nothing was sent under the new
             // cookies, and the draft and journal wait for the next pass of the right account.
+            resetNativeSaveRetry(documentID: documentID)
             states[documentID] = .pendingSync
         } else {
             markFailed(
@@ -5565,6 +5739,10 @@ final class DocumentSaveCoordinator {
                 return
             }
             start(documentID: documentID, save: next)
+            return
+        }
+        if let retryableNativeError {
+            scheduleNativeSaveRetry(documentID: documentID, error: retryableNativeError)
         }
     }
 }

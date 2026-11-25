@@ -136,7 +136,8 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults), attachmentStore: attachments,
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults), serverOrigin: origin,
-            mediaCheckMaxAttempts: 1, mediaCheckRetryInterval: .milliseconds(1), backgroundTasks: .noop)
+            mediaCheckMaxAttempts: 1, mediaCheckRetryInterval: .milliseconds(1), backgroundTasks: .noop,
+            sleep: neverSleep)
         coordinator.nativeEditorEnabled = { true }
         return Environment(
             coordinator: coordinator, drafts: drafts, attachments: attachments, creates: creates,

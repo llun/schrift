@@ -66,7 +66,7 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
                 listCache: DocumentCacheStore(userDefaults: defaults),
                 childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
                 serverOrigin: origin, mediaCheckMaxAttempts: 2,
-                mediaCheckRetryInterval: .milliseconds(1), backgroundTasks: .noop),
+                mediaCheckRetryInterval: .milliseconds(1), backgroundTasks: .noop, sleep: neverSleep),
             drafts: drafts, attachments: attachments, creates: creates, defaults: defaults)
     }
 

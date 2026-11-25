@@ -63,7 +63,8 @@ final class EditorPhotoInsertionTests: XCTestCase {
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop,
+            sleep: neverSleep)
         return EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
             contentCache: contentCache, childrenCache: childrenCache,
@@ -87,7 +88,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
             attachmentStore: attachments,
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let viewModel = EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
             signedInUser: signedInUser, contentCache: contentCache,
@@ -856,7 +857,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
             attachmentStore: attachments,
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         // No `remember` — an unattributable record could never be shown or sent.
         let viewModel = EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,

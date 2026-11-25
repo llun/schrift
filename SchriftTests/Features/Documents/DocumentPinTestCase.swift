@@ -93,7 +93,7 @@ class DocumentPinTestCase: XCTestCase {
             pinStore: PendingDocumentPinStore(userDefaults: defaults),
             attachmentStore: PendingAttachmentStore(userDefaults: defaults), listCache: cache,
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults), serverOrigin: origin,
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         let home = HomeViewModel(
             client: client, cache: cache, saveCoordinator: coordinator, userDefaults: defaults, signedInUser: signedIn)
         let options = OptionsViewModel(

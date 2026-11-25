@@ -930,7 +930,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         }
         XCTAssertTrue(try XCTUnwrap(session.input).replace(range: NSRange(location: 0, length: 0), with: "x"))
         await session.settle()
-        XCTAssertTrue(session.hasPendingSave, "journaled but not handed over: saved on this device")
+        XCTAssertTrue(session.hasPendingSave, "journaled but not handed over: the status offers Save")
         let journaled = try XCTUnwrap(env.replicaStore.outbox(for: scope)).updates
         XCTAssertEqual(server.log.count(ofMethod: "PATCH"), 0, "no request before the debounce fires")
         await waitUntil { self.isSaved(env.model.saveCoordinator.state(for: env.model.documentID)) }
@@ -1163,7 +1163,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         let identity = SignedInUserStore(userDefaults: env.defaults)
         identity.clear()  // a sign-out or cookie handover the view has not reacted to yet
         open.flushPendingSave()
-        XCTAssertTrue(session.hasPendingSave, "nothing was handed over: still \"Saved on this device\"")
+        XCTAssertTrue(session.hasPendingSave, "nothing was handed over: the status still offers Save")
         XCTAssertNil(env.model.saveCoordinator.pendingSave(documentID: env.model.documentID))
         identity.remember(owner)
         open.saveNow(viewModel: env.model)  // the status tap hands it over once the account is known
@@ -1438,7 +1438,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                     deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
                     listCache: env.model.listCache,
                     serverOrigin: env.model.client.serverOrigin,
-                    backgroundTasks: .noop),
+                    backgroundTasks: .noop, sleep: neverSleep),
                 signedInUser: env.model.signedInUser,
                 contentCache: env.model.contentCache,
                 childrenCache: env.model.childrenCache,
@@ -1482,7 +1482,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                 createStore: creates,
                 deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
                 listCache: env.model.listCache,
-                backgroundTasks: .noop)
+                backgroundTasks: .noop, sleep: neverSleep)
             let relaunchedModel = EditorViewModel(
                 client: env.model.client, documentID: env.model.documentID, title: env.model.title,
                 saveCoordinator: relaunchedCoordinator,
@@ -2414,7 +2414,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             serverOrigin: "https://other.example.org",
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         XCTAssertFalse(otherOriginCoordinator.hasCheckpointedCreate(forServerID: env.documentID))
     }
 
@@ -2529,7 +2529,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                 attachmentStore: PendingAttachmentStore(
                     userDefaults: defaults, directory: directory.appendingPathComponent("attachments")),
                 listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children,
-                serverOrigin: serverOrigin, backgroundTasks: .noop, isLiveReplicaHeld: isLiveHeld)
+                serverOrigin: serverOrigin, backgroundTasks: .noop, isLiveReplicaHeld: isLiveHeld, sleep: neverSleep)
             return EditorViewModel(
                 client: client, documentID: documentID, title: "List title", saveCoordinator: coordinator,
                 signedInUser: SignedInUserStore(userDefaults: defaults), contentCache: content,
