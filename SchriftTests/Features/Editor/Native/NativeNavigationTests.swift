@@ -354,4 +354,52 @@ final class NativeNavigationTests: NativeEditingTestCase {
         XCTAssertEqual(navigation.reading?.offersBackToTop, false)
         await harness.close()
     }
+
+    // MARK: - Caret reveal under the shell's header and footer
+
+    /// A short page as the shell lays it out: the header in `contentInset.top`,
+    /// the subpages footer in `contentInset.bottom`, the keyboard already
+    /// taken out of the bounds. The numbers are a measured iPhone run.
+    private func shortShellPage() -> NativeTextView {
+        let view = NativeTextView()
+        view.frame = CGRect(x: 0, y: 0, width: 402, height: 327)
+        view.contentInset = UIEdgeInsets(top: 114, left: 0, bottom: 135, right: 0)
+        view.contentSize = CGSize(width: 402, height: 101)
+        view.contentOffset.y = -114
+        return view
+    }
+
+    /// The header and footer scroll with the text, so a caret on screen
+    /// between them is visible: UIKit's reveal must not move the page (it
+    /// scrolled to fit the selection rect above the footer on every keystroke).
+    func testCaretRevealOnAShortPageLeavesTheHeaderAndFooterInPlace() {
+        let view = shortShellPage()
+        view.scrollRectToVisible(CGRect(x: 16, y: 15, width: 2, height: 22), animated: false)
+        XCTAssertEqual(view.contentOffset.y, -114, accuracy: 0.5, "the caret under the header is on screen")
+        view.scrollRectToVisible(CGRect(x: 16, y: 16, width: 370, height: 84.6), animated: false)
+        XCTAssertEqual(view.contentOffset.y, -114, accuracy: 0.5, "the selection rect above the footer is on screen")
+    }
+
+    /// Below the bounds (or above them) the reveal still scrolls, just far
+    /// enough to show the rect at the edge, never by the header or footer.
+    func testCaretRevealScrollsOnlyAsFarAsTheBoundsEdge() {
+        let view = shortShellPage()
+        view.contentSize = CGSize(width: 402, height: 2_000)
+        view.scrollRectToVisible(CGRect(x: 16, y: 600, width: 2, height: 22), animated: false)
+        XCTAssertEqual(view.contentOffset.y, 622 - 327, accuracy: 0.5, "the caret lands at the bottom edge")
+        view.scrollRectToVisible(CGRect(x: 16, y: 100, width: 2, height: 22), animated: false)
+        XCTAssertEqual(view.contentOffset.y, 100, accuracy: 0.5, "the caret lands at the top edge")
+    }
+
+    /// Typing at the end of a paragraph taller than the visible text: UIKit reveals the caret,
+    /// then the paragraph's rect; the second must not pull the caret back off screen.
+    func testRevealingAParagraphTallerThanTheViewKeepsTheCaretShown() {
+        let view = shortShellPage()
+        view.contentSize = CGSize(width: 402, height: 2_000)
+        view.scrollRectToVisible(CGRect(x: 16, y: 878, width: 2, height: 22), animated: false)
+        let caretShown = view.contentOffset.y
+        XCTAssertEqual(caretShown, 900 - 327, accuracy: 0.5)
+        view.scrollRectToVisible(CGRect(x: 0, y: 400, width: 402, height: 500), animated: false)
+        XCTAssertEqual(view.contentOffset.y, caretShown, accuracy: 0.5, "the paragraph already fills the view")
+    }
 }

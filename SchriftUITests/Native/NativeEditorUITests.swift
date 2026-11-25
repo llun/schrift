@@ -101,6 +101,35 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Empty document"].exists)
     }
 
+    /// A new subpage's short page (title, status row, one paragraph, the subpages section) never
+    /// scrolls while typing: the header and footer scroll with the text inside the text view's content
+    /// inset, and UIKit's caret reveal counted them as covering it, so every keystroke moved the whole
+    /// page a few points and back, and a wrapped line or a Return pushed the title up under the bar.
+    func testTypingOnAShortPageNeverMovesThePage() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-empty"]
+        app.launch()
+        let emptyTitle = app.staticTexts["Empty document"]
+        XCTAssertTrue(emptyTitle.waitForExistence(timeout: 10))
+        XCTAssertTrue(emptyTitle.waitForStableFrame())
+        emptyTitle.tap()
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 10) && keyboard.waitForStableFrame())
+        let title = app.descendants(matching: .any)["editor.header.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5) && title.waitForStableFrame())
+        let top = title.frame.minY
+        // About 60 characters wrap onto a second line on an iPhone, then a Return starts another paragraph.
+        for (index, key) in "The quick brown fox jumps over the lazy dog, again and again.\nOk".enumerated() {
+            editor.typeText(String(key))
+            XCTAssertEqual(
+                title.frame.minY, top, accuracy: 1, "keystroke \(index) (\(key.debugDescription)) moved the page")
+        }
+        XCTAssertTrue(waitForText(of: editor, containing: "again and again."), text(of: editor))
+        XCTAssertTrue(waitForText(of: editor, containing: "Ok"), text(of: editor))
+    }
+
     /// Shift-Right on the hardware keyboard selects from inside the first
     /// paragraph into the second; typing replaces the selection as one durable
     /// range command (the paragraphs join) that a relaunch restores.
