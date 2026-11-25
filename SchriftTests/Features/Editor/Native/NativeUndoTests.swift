@@ -355,7 +355,7 @@ final class NativeUndoTests: NativeEditingTestCase {
             session = nil
         }
         XCTAssertNil(history, "the history is released with the session")
-        // The replica session's isolated deinit runs on its own executor.
+        // The replica session's last reference may still be on its way out (its loop task).
         await waitUntil { replica.doc == nil }
         XCTAssertNil(replica.doc, "nothing keeps the replica alive")
     }

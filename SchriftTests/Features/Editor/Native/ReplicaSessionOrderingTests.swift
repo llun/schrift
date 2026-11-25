@@ -323,6 +323,9 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
             contentsOf: native.appendingPathComponent("DocumentReplicaSession.swift"), encoding: .utf8)
         XCTAssertFalse(session.contains("@unchecked"))
         XCTAssertFalse(session.contains("nonisolated(unsafe)"))
+        XCTAssertFalse(
+            session.contains("isolated deinit"),
+            "an actor's isolated deinit can trap the iOS 27 runtime when its release races a job (rdar://188980139)")
     }
 
     // 9
