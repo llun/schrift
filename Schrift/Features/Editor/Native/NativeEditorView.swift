@@ -90,6 +90,12 @@ struct NativeEditorView: View {
         externalIsEditing ?? (session.input != nil)
     }
 
+    /// The empty card is for pages the user cannot edit; a writable empty page
+    /// mounts the canvas so its first line can take the hint and a tap.
+    var showsEmptyState: Bool {
+        session.hasUnsupportedRoot || (session.surface.blocks.isEmpty && !canEditDocument)
+    }
+
     private var shouldShowReadingChecklistControls: Bool {
         !isEditing && !session.hasUnsupportedRoot && session.surface.checklistSummary.hasChecklists
     }
@@ -135,8 +141,6 @@ struct NativeEditorView: View {
     var body: some View {
         let _ = session.presentationRevision
         let checklistSummary = session.surface.checklistSummary
-        let showsEmptyState =
-            session.hasUnsupportedRoot || (session.surface.blocks.isEmpty && !(isEditing && canEditDocument))
         return Group {
             if showsEmptyState {
                 if headerContent != nil || footerContent != nil {
@@ -211,7 +215,12 @@ struct NativeEditorView: View {
                     footerContent: footerContent,
                     onScrollInteraction: onScrollInteraction,
                     onRequestEdit: {
-                        requestEditIfWritable()
+                        // An empty page's first line is the tap target: enter editing and focus the body.
+                        if session.surface.blocks.isEmpty {
+                            handleEmptyBodyTap()
+                        } else {
+                            requestEditIfWritable()
+                        }
                     },
                     onToggleCheckbox: { blockID in
                         handleCheckboxToggle(blockID: blockID)
@@ -477,23 +486,13 @@ extension NativeEditorView {
 
     @ViewBuilder
     private var emptyDocumentView: some View {
-        let view = ContentUnavailableView(
+        ContentUnavailableView(
             loc[.editor_empty_title], systemImage: "doc.text",
             description: Text(loc[.editor_empty_body]))
-        if canEditDocument && !isEditing {
-            view
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    handleEmptyBodyTap()
-                }
-                .accessibilityAction(named: loc[.editor_start_writing]) {
-                    handleEmptyBodyTap()
-                }
-        } else {
-            view
-        }
     }
 
+    /// A tap on a writable empty page's first line: enter editing, then focus
+    /// the body once it is editable (the seed runs on begin editing).
     func handleEmptyBodyTap() {
         guard !isEditing, canEditDocument else { return }
         if let onRequestEdit {
@@ -878,6 +877,8 @@ extension NativeEditorLabels {
             dragMovedAfter: loc[.native_editor_drag_moved_after],
             dragMovedInside: loc[.native_editor_drag_moved_inside],
             dragNestedCount: loc[.native_editor_drag_nested_count],
+            emptyHint: loc[.native_editor_empty_hint],
+            startWriting: loc[.editor_start_writing],
             divider: loc[.editor_divider_a11y],
             paragraph: loc[.native_editor_block_paragraph],
             heading: loc[.native_editor_block_heading],
@@ -1180,10 +1181,14 @@ private final class NativeCanvasViewController: UIViewController {
         }
 
         let footerHeight: CGFloat
+        var hintOverflow: CGFloat = 0
         if let footerHost {
             let fitted = footerHost.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
             footerHeight = max(0, ceil(fitted.height))
-            let contentHeight = max(0, textView.contentSize.height)
+            let contentHeight = max(textView.emptyHintBottom, textView.contentSize.height)
+            // A wrapped hint can reach below the text: the inset must cover it
+            // or the footer's last lines stay unreachable.
+            hintOverflow = max(0, textView.emptyHintBottom - textView.contentSize.height)
             let frame = CGRect(x: 0, y: contentHeight, width: width, height: footerHeight)
             if footerHost.view.frame != frame {
                 footerHost.view.frame = frame
@@ -1192,7 +1197,7 @@ private final class NativeCanvasViewController: UIViewController {
             footerHeight = 0
         }
 
-        let targetInset = UIEdgeInsets(top: headerHeight, left: 0, bottom: footerHeight, right: 0)
+        let targetInset = UIEdgeInsets(top: headerHeight, left: 0, bottom: footerHeight + hintOverflow, right: 0)
         if textView.contentInset != targetInset {
             let previousAdjustedTop = textView.adjustedContentInset.top
             let wasAtTop =

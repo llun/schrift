@@ -254,16 +254,22 @@ final class NativeEditorSession {
     @ObservationIgnored var release: (() -> Task<Void, Never>)?
     /// A table surface's table (PR11a): its blocks are that table's
     /// paragraphs, one cell shown at a time. Nil for the document.
-    private(set) var table: String?
+    private(set) var table: String? {
+        didSet { updateEmptyHintEligibility() }
+    }
     /// The table's grid, as attached and refreshed after a structure change.
     var grid: TableGrid?
     /// After each delivery is applied (the table editor relays out its grid).
     @ObservationIgnored var onApplied: ((ReplicaDelivery) -> Void)?
     /// A column surface's column and group (PR12a): its blocks are that
     /// column's. Nil for the document.
-    private(set) var column: (group: String, id: String)?
+    private(set) var column: (group: String, id: String)? {
+        didSet { updateEmptyHintEligibility() }
+    }
     /// A scoped source surface's kind (PR14): `mathBlock`, `diagram`, or inline `math`.
-    private(set) var source: NativeSourceKind?
+    private(set) var source: NativeSourceKind? {
+        didSet { updateEmptyHintEligibility() }
+    }
     /// Revision bumped whenever displayed blocks, fold state, or checklist
     /// presentation changes so SwiftUI shells refresh Reading chrome.
     private(set) var presentationRevision: Int = 0
@@ -330,6 +336,12 @@ final class NativeEditorSession {
             view?.blockControls.foldDidChange()
             self?.presentationRevision &+= 1
         }
+    }
+
+    /// Only the root document seeds an empty paragraph, so only it shows the
+    /// empty-page hint; a table, column or source surface never does.
+    private func updateEmptyHintEligibility() {
+        textView.isRootDocumentSurface = table == nil && column == nil && source == nil
     }
 
     func markOpenStarted(_ startNs: UInt64) {
