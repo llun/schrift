@@ -490,6 +490,8 @@ final class NativeTextView: UITextView {
     /// multi-megabyte main-thread copies (PR14).
     override var accessibilityValue: String? {
         get {
+            // The empty page's hint is the text view's value, not a second element.
+            if showsEmptyHint { return blockControls?.labels.emptyHint }
             var visible = ""
             var count = 0
             var truncated = false
@@ -558,6 +560,47 @@ final class NativeTextView: UITextView {
                 + (super.accessibilityCustomActions ?? [])
         }
         set { super.accessibilityCustomActions = newValue }
+    }
+
+    /// The empty page's first line: a writable page with no blocks shows the
+    /// hint until the seed writes the first paragraph (or marked text starts).
+    private(set) var emptyHintLabel = UILabel()
+
+    var showsEmptyHint: Bool {
+        Self.showsEmptyHint(
+            storageLength: textStorage.length, hasMarkedText: markedTextRange != nil,
+            canEdit: isEditable || inputCoordinator != nil)
+    }
+
+    /// The hint's condition, pure so the marked-text case — unreachable through
+    /// focus, which seeds a paragraph first — is still locked by a test.
+    static func showsEmptyHint(storageLength: Int, hasMarkedText: Bool, canEdit: Bool) -> Bool {
+        storageLength == 0 && !hasMarkedText && canEdit
+    }
+
+    /// The hint's bottom in content coordinates: the footer starts below it.
+    var emptyHintBottom: CGFloat { emptyHintLabel.isHidden ? 0 : emptyHintLabel.frame.maxY }
+
+    /// Places the hint on the first line, in the text's own inset and direction.
+    private func layoutEmptyHint() {
+        let shows = showsEmptyHint
+        emptyHintLabel.isHidden = !shows
+        guard shows else { return }
+        emptyHintLabel.text = blockControls?.labels.emptyHint
+        emptyHintLabel.font = UIFontMetrics(forTextStyle: .body).scaledFont(
+            for: UIFont.systemFont(ofSize: DocsTypographySpec.body.size), compatibleWith: traitCollection)
+        emptyHintLabel.textColor = blockControls?.color(\.textSecondary) ?? .secondaryLabel
+        let rightToLeft = effectiveUserInterfaceLayoutDirection == .rightToLeft
+        emptyHintLabel.textAlignment = rightToLeft ? .right : .left
+        let width =
+            bounds.width - textContainerInset.left - textContainerInset.right
+            - 2 * textContainer.lineFragmentPadding
+        let size = emptyHintLabel.sizeThatFits(CGSize(width: max(0, width), height: .greatestFiniteMagnitude))
+        let x =
+            rightToLeft
+            ? bounds.width - textContainerInset.right - textContainer.lineFragmentPadding - size.width
+            : textContainerInset.left + textContainer.lineFragmentPadding
+        emptyHintLabel.frame = CGRect(x: x, y: textContainerInset.top, width: size.width, height: size.height)
     }
 
     /// Single-tap recognizer that hit-tests TextKit 2's laid-out glyph segment
@@ -963,6 +1006,7 @@ final class NativeTextView: UITextView {
         blockControls?.updateAttachmentWidth()
         let anchor = blockControls?.prepareAspectRatioRefresh()
         super.layoutSubviews()
+        layoutEmptyHint()
         blockControls?.completeAspectRatioRefresh(anchor)
         blockControls?.layoutControls()
         blockDragController?.textViewDidLayout()
@@ -1168,6 +1212,10 @@ final class NativeTextView: UITextView {
             top: DocsSpacing.spaceBase, left: DocsSpacing.spaceBase,
             bottom: DocsSpacing.spaceLG, right: DocsSpacing.spaceBase)
         accessibilityIdentifier = "nativeEditor.text"
+        emptyHintLabel.isUserInteractionEnabled = false
+        emptyHintLabel.isAccessibilityElement = false
+        emptyHintLabel.isHidden = true
+        addSubview(emptyHintLabel)
         addSubview(cursorOverlay)
         chipAccessibilityOverlay.textView = self
         addSubview(chipAccessibilityOverlay)

@@ -1247,6 +1247,11 @@ formatting bar hidden) over the same `NativeEditorSession` and `NativeTextSurfac
 to Editing mode on toolbar `Edit`, tapping writable text, tapping writable cards/sources, or
 consuming a new-document `entryIntent` (focusing the header title once); `Done` or `⌘Return`
 commits marked text, flushes pending saves, resigns first responder, and returns to Reading.
+A writable page with no blocks mounts that same canvas in Reading mode, its first line carrying the
+grey hint `native.editor.empty_hint` ("Type '/' for commands") instead of the empty card; the card
+stays for read-only pages and the preserved root. A tap on the line enters Editing and focuses the
+body, which seeds the first empty paragraph, so nothing is written until then. The hint is the text
+view's accessibility value, never a separate element.
 In Reading mode, `NativeTextSurface.setChecklistPresentation(hidesCompleted:settlingIDs:)` extends
 `refreshFolding()`'s presentation-only hiding to conceal checked `checkListItem` blocks and deeper
 descendants (`block.depth > hiddenChecklistDepth`) with zero Yjs writes, using a 450 ms

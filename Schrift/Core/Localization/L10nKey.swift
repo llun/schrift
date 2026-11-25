@@ -491,6 +491,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case native_editor_chip_mention = "native.editor.chip_mention"  // "Mention"
     case native_editor_chip_untitled = "native.editor.chip_untitled"  // "Untitled page"
     case native_editor_open_link = "native.editor.open_link"  // "Open link"
+    case native_editor_empty_hint = "native.editor.empty_hint"  // "Type '/' for commands"
     case profile_native_editor = "profile.native_editor"
     case profile_native_editor_footer = "profile.native_editor_footer"
     case native_editor_preserved_title = "native.editor.preserved_title"

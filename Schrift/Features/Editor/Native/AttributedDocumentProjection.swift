@@ -89,6 +89,8 @@ struct NativeEditorLabels: Equatable {
     var dragMovedAfter = Strings_en.table[.native_editor_drag_moved_after]!
     var dragMovedInside = Strings_en.table[.native_editor_drag_moved_inside]!
     var dragNestedCount = Strings_en.table[.native_editor_drag_nested_count]!
+    /// The empty page's first-line hint, shown while a writable page has no blocks.
+    var emptyHint = Strings_en.table[.native_editor_empty_hint]!
     var divider = Strings_en.table[.editor_divider_a11y]!
     var paragraph = Strings_en.table[.native_editor_block_paragraph]!
     var heading = Strings_en.table[.native_editor_block_heading]!

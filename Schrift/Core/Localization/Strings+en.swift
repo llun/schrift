@@ -446,6 +446,7 @@ enum Strings_en {
         .native_editor_chip_mention: "Mention",
         .native_editor_chip_untitled: "Untitled page",
         .native_editor_open_link: "Open link",
+        .native_editor_empty_hint: "Type '/' for commands",
         .native_editor_input_unavailable: "This input isn't supported in the native editor yet.",
         .native_editor_input_busy: "Still saving earlier typing. Try that key again in a moment.",
         .native_editor_range_unavailable: "This selection includes content the native editor can't change yet.",
