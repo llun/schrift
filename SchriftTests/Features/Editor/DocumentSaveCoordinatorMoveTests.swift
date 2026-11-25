@@ -54,7 +54,7 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
             attachmentStore: PendingAttachmentStore(
                 userDefaults: defaults, directory: cacheDirectory.appendingPathComponent("attachments")),
             listCache: listCache, childrenCache: childrenCache,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         return Environment(
             coordinator: coordinator, creates: creates, listCache: listCache,
             childrenCache: childrenCache, contentCache: contentCache, defaults: defaults)
@@ -114,7 +114,7 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
             contentCache: env.contentCache, createStore: env.creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
             listCache: env.listCache, childrenCache: env.childrenCache,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
 
         XCTAssertFalse(coordinator.moveLocalDocument(documentID: child.id, newParentID: parent.id))
         XCTAssertNil(env.creates.create(for: child.id)?.parentID, "unchanged")
@@ -164,7 +164,7 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
             contentCache: env.contentCache, createStore: env.creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
             listCache: env.listCache, childrenCache: env.childrenCache,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
 
         XCTAssertFalse(
             coordinator.moveLocalDocument(documentID: root.id, newParentID: grandchild.id),
@@ -429,7 +429,7 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
                 userDefaults: env.defaults,
                 directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             listCache: env.listCache, childrenCache: env.childrenCache,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
 
         async let pass: Void = coordinator.syncPendingDrafts()
         await waitUntil { MockURLProtocol.deferredDeliveryCount > 0 }
@@ -498,7 +498,7 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
                 userDefaults: env.defaults,
                 directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             listCache: env.listCache, childrenCache: env.childrenCache,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
 
         async let pass: Void = coordinator.syncPendingDrafts()
         await waitUntil { MockURLProtocol.deferredDeliveryCount > 0 }

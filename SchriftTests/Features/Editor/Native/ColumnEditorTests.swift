@@ -711,7 +711,7 @@ final class ColumnEditorTests: NativeEditingTestCase {
             createStore: PendingDocumentCreateStore(userDefaults: storeDefaults),
             attachmentStore: attachments, listCache: DocumentCacheStore(userDefaults: storeDefaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: storeDefaults), serverOrigin: origin,
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         let uploads = NativeMediaUploads(scope: scope, queue: queue)
 
         let model = ColumnEditorModel(document: harness.session, groupID: "cl")

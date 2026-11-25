@@ -74,7 +74,7 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
                 contentCache: DocumentContentCacheStore(directory: cacheDirectory),
                 createStore: creates, deleteStore: deletes, attachmentStore: attachments,
                 listCache: lists, childrenCache: children,
-                serverOrigin: serverOrigin ?? origin, appBuild: "1", backgroundTasks: .noop),
+                serverOrigin: serverOrigin ?? origin, appBuild: "1", backgroundTasks: .noop, sleep: neverSleep),
             drafts: drafts, creates: creates, deletes: deletes, attachments: attachments,
             lists: lists, children: children, defaults: defaults)
     }

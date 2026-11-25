@@ -35,7 +35,7 @@ final class EditorChecklistFilterTests: XCTestCase {
         coordinator = DocumentSaveCoordinator(
             client: client, draftStore: drafts, contentCache: cache,
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
-            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults), backgroundTasks: .noop)
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults), backgroundTasks: .noop, sleep: neverSleep)
         let model = EditorViewModel(
             client: client, documentID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!,
             title: "Tasks", saveCoordinator: coordinator,

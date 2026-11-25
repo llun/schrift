@@ -187,7 +187,7 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
             listCache: listCache,
             childrenCache: childrenCache,
             serverOrigin: "https://docs.example",
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         let viewModel = EditorViewModel(
             client: client,
             documentID: documentID,

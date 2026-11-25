@@ -1438,7 +1438,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                     deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
                     listCache: env.model.listCache,
                     serverOrigin: env.model.client.serverOrigin,
-                    backgroundTasks: .noop),
+                    backgroundTasks: .noop, sleep: neverSleep),
                 signedInUser: env.model.signedInUser,
                 contentCache: env.model.contentCache,
                 childrenCache: env.model.childrenCache,
@@ -1482,7 +1482,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                 createStore: creates,
                 deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
                 listCache: env.model.listCache,
-                backgroundTasks: .noop)
+                backgroundTasks: .noop, sleep: neverSleep)
             let relaunchedModel = EditorViewModel(
                 client: env.model.client, documentID: env.model.documentID, title: env.model.title,
                 saveCoordinator: relaunchedCoordinator,
@@ -2414,7 +2414,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             serverOrigin: "https://other.example.org",
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         XCTAssertFalse(otherOriginCoordinator.hasCheckpointedCreate(forServerID: env.documentID))
     }
 
@@ -2529,7 +2529,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                 attachmentStore: PendingAttachmentStore(
                     userDefaults: defaults, directory: directory.appendingPathComponent("attachments")),
                 listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children,
-                serverOrigin: serverOrigin, backgroundTasks: .noop, isLiveReplicaHeld: isLiveHeld)
+                serverOrigin: serverOrigin, backgroundTasks: .noop, isLiveReplicaHeld: isLiveHeld, sleep: neverSleep)
             return EditorViewModel(
                 client: client, documentID: documentID, title: "List title", saveCoordinator: coordinator,
                 signedInUser: SignedInUserStore(userDefaults: defaults), contentCache: content,

@@ -449,7 +449,7 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
         draftSuiteNames.append(suiteName)
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!),
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         let viewModel = EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator)
         let parent = EditorBlock(kind: .checklistItem(checked: false), text: "a")

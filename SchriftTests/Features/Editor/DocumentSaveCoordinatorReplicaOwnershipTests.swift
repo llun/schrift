@@ -51,7 +51,7 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: drafts, replicaStore: store,
             contentCache: contentCache, listCache: listCache, backgroundTasks: .noop,
-            isLiveReplicaHeld: { _ in true })
+            isLiveReplicaHeld: { _ in true }, sleep: neverSleep)
         let scope = ReplicaScope(
             serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: documentID)
         return Fixture(
@@ -240,7 +240,7 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
-            listCache: DocumentCacheStore(userDefaults: defaults), backgroundTasks: .noop)
+            listCache: DocumentCacheStore(userDefaults: defaults), backgroundTasks: .noop, sleep: neverSleep)
         XCTAssertTrue(coordinator.isNativeOwned(documentID: documentID), "never UserDefaults.standard")
     }
 
@@ -282,7 +282,7 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
             attachmentStore: attachmentStore,
             listCache: listCache,
             backgroundTasks: .noop,
-            isLiveReplicaHeld: { _ in true }
+            isLiveReplicaHeld: { _ in true }, sleep: neverSleep
         )
         coordinator.nativeEditorEnabled = { true }
 
@@ -382,7 +382,7 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
                 attachmentStore: attachmentStore,
                 listCache: listCache,
                 backgroundTasks: .noop,
-                isLiveReplicaHeld: { _ in true }
+                isLiveReplicaHeld: { _ in true }, sleep: neverSleep
             )
             let scope = ReplicaScope(
                 serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: UUID()
@@ -460,7 +460,7 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
                 userDefaults: defaults, directory: cacheDirectory.appendingPathComponent(UUID().uuidString)),
             listCache: DocumentCacheStore(userDefaults: defaults),
             backgroundTasks: .noop,
-            isLiveReplicaHeld: { _ in false })
+            isLiveReplicaHeld: { _ in false }, sleep: neverSleep)
         coordinator.nativeEditorEnabled = { true }
 
         // 1. Offline local create (`outbox: []`, seedMarkdown in checkpoint): must stay in backups.
@@ -621,7 +621,7 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
                 userDefaults: defaults, directory: cacheDirectory.appendingPathComponent(UUID().uuidString)),
             listCache: DocumentCacheStore(userDefaults: defaults),
             backgroundTasks: .noop,
-            isLiveReplicaHeld: { _ in false })
+            isLiveReplicaHeld: { _ in false }, sleep: neverSleep)
         coordinator.nativeSessions = registry
 
         coordinator.recordReplicaOpened(scope: openClean, at: Date(timeIntervalSince1970: 10))
@@ -672,7 +672,7 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
                     userDefaults: defaults, directory: cacheDirectory.appendingPathComponent(UUID().uuidString)),
                 listCache: DocumentCacheStore(userDefaults: defaults),
                 backgroundTasks: .noop,
-                isLiveReplicaHeld: { _ in false })
+                isLiveReplicaHeld: { _ in false }, sleep: neverSleep)
             let scope = ReplicaScope(
                 serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: UUID())
             _ = try store.create(for: scope, checkpoint: Data([0, 0]))
@@ -727,7 +727,7 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
                 userDefaults: defaults, directory: cacheDirectory.appendingPathComponent(UUID().uuidString)),
             listCache: DocumentCacheStore(userDefaults: defaults),
             backgroundTasks: .noop,
-            isLiveReplicaHeld: { _ in false })
+            isLiveReplicaHeld: { _ in false }, sleep: neverSleep)
         coordinator.recordReplicaOpened(scope: olderClean, at: Date(timeIntervalSince1970: 100))
         coordinator.recordReplicaOpened(scope: savedScope, at: Date(timeIntervalSince1970: 200))
 

@@ -930,7 +930,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
             attachmentStore: PendingAttachmentStore(
                 userDefaults: defaults, directory: directory.appendingPathComponent("attachments")),
             listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children,
-            serverOrigin: client.serverOrigin, backgroundTasks: .noop, isLiveReplicaHeld: isLiveHeld)
+            serverOrigin: client.serverOrigin, backgroundTasks: .noop, isLiveReplicaHeld: isLiveHeld, sleep: neverSleep)
         let model = EditorViewModel(
             client: client, documentID: documentID, title: "Title", saveCoordinator: coordinator,
             signedInUser: SignedInUserStore(userDefaults: defaults), contentCache: content, childrenCache: children,

@@ -313,7 +313,7 @@ final class ChecklistPresentationTests: XCTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: store),
             attachmentStore: PendingAttachmentStore(userDefaults: store, directory: directory),
             listCache: DocumentCacheStore(userDefaults: store), childrenCache: childrenCache,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let model = EditorViewModel(
             client: client, documentID: UUID(), title: "Checklist",
             saveCoordinator: coordinator, signedInUser: SignedInUserStore(userDefaults: store),

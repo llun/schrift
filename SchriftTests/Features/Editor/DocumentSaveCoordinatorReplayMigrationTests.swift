@@ -1040,7 +1040,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
                 childrenCache: children,
                 serverOrigin: client.serverOrigin,
                 mediaCheckRetryInterval: .milliseconds(10),
-                backgroundTasks: .noop)
+                backgroundTasks: .noop, sleep: neverSleep)
             coordinator.nativeEditorEnabled = { true }
             coordinator.nativeSessions = registry
             coordinator.nativeCommitInterval = .milliseconds(10)
@@ -1237,7 +1237,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         coord.nativeEditorEnabled = { true }
 
         let local = coord.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
@@ -1284,7 +1284,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         relaunched.nativeEditorEnabled = { true }
         await relaunched.syncPendingDrafts()
 
@@ -1320,7 +1320,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         coord.nativeEditorEnabled = { true }
 
         let local = coord.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
@@ -1353,7 +1353,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         relaunched.nativeEditorEnabled = { true }
         await relaunched.syncPendingDrafts()
 
@@ -1402,7 +1402,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
                 childrenCache: childrenCache,
                 serverOrigin: client.serverOrigin,
                 mediaCheckRetryInterval: .milliseconds(10),
-                backgroundTasks: .noop)
+                backgroundTasks: .noop, sleep: neverSleep)
             coordinator.nativeEditorEnabled = { true }
             coordinator.nativeSessions = registry
             coordinator.nativeCommitInterval = .milliseconds(10)
@@ -1542,7 +1542,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         coord.nativeEditorEnabled = { true }
 
         // Simulates reviveAsLocalDocument seeding non-empty markdown into checkpoint with outbox: [].
@@ -1625,7 +1625,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         coord.nativeEditorEnabled = { true }
 
         let local = coord.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
@@ -1664,7 +1664,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         relaunched.nativeEditorEnabled = { true }
         await relaunched.syncPendingDrafts()
 
@@ -1717,7 +1717,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
                 childrenCache: childrenCache,
                 serverOrigin: client.serverOrigin,
                 mediaCheckRetryInterval: .milliseconds(10),
-                backgroundTasks: .noop)
+                backgroundTasks: .noop, sleep: neverSleep)
             coordinator.nativeEditorEnabled = { true }
             coordinator.nativeSessions = registry
             coordinator.nativeCommitInterval = .milliseconds(10)
@@ -1903,7 +1903,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
                 childrenCache: childrenCache,
                 serverOrigin: client.serverOrigin,
                 mediaCheckRetryInterval: .milliseconds(10),
-                backgroundTasks: .noop)
+                backgroundTasks: .noop, sleep: neverSleep)
             coordinator.nativeEditorEnabled = { true }
             coordinator.nativeSessions = registry
             coordinator.nativeCommitInterval = .milliseconds(10)
@@ -2095,7 +2095,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         coord.nativeEditorEnabled = { true }
 
         let localDoc = coord.createLocalDocument(
@@ -2152,7 +2152,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         relaunched.nativeEditorEnabled = { true }
         await relaunched.syncPendingDrafts()
 
@@ -2207,7 +2207,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
                 listCache: listCache,
                 childrenCache: childrenCache,
                 serverOrigin: client.serverOrigin,
-                backgroundTasks: .noop)
+                backgroundTasks: .noop, sleep: neverSleep)
             coordinator.nativeEditorEnabled = { true }
             return coordinator
         }
@@ -2336,7 +2336,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
             serverOrigin: client.serverOrigin,
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         failingCoord.nativeEditorEnabled = { true }
 
         let local1 = failingCoord.createLocalDocument(
@@ -2394,7 +2394,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
             serverOrigin: client.serverOrigin,
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         classicCoord.nativeEditorEnabled = { false }
         let local2 = classicCoord.createLocalDocument(
             title: "Revived Classic", parentID: nil, ownerUserID: user, seedMarkdown: "Revived classic body")
@@ -2420,7 +2420,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
             serverOrigin: client.serverOrigin,
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         relaunched.nativeEditorEnabled = { true }
         await relaunched.syncPendingDrafts()
 
@@ -2477,7 +2477,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
             serverOrigin: client.serverOrigin,
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         coord.nativeEditorEnabled = { true }
 
         let localDoc = coord.createLocalDocument(title: "Quarantined", parentID: nil, ownerUserID: user)
@@ -2538,7 +2538,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
             serverOrigin: client.serverOrigin,
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         coord.nativeEditorEnabled = { true }
 
         let localDoc = coord.createLocalDocument(title: "Account A Doc", parentID: nil, ownerUserID: user)
