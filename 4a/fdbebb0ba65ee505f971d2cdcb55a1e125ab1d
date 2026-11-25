@@ -1,0 +1,33 @@
+Schrift/Features/Editor/Native/NativeReplicaSaveScheduler.swift
+  s_f193227df3df34::t_46c0d586030452 19,33,38,53-56,58,60,76-80
+docs/offline-and-sync.md
+  s_f193227df3df34::t_c4a5bf81a04d98 249-257
+docs/standards/document-engine.md
+  s_f193227df3df34::t_f76a3c1c15bcb9 159-165,186-187
+Schrift/App/RootView.swift
+  s_f193227df3df34::t_5d5d86a7d20e26 100,176,249,259,284
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_f193227df3df34::t_f01faf6d09efe4 92-105,146-152,498-500,530-532,701,829,1026,3712-3714,3733,3946-4027,4624,4626-4670,4672-4678,4680-4709,4711-4717,4719-4731,4733-4734,4736,4738-4757,4759-4780,4783-4796,4799,4817,5095,5299,5409,5435,5452,5585,5597,5599,5644,5648,5717-5720
+SchriftTests/Features/Editor/DocumentSaveCoordinatorNativeRetryTests.swift
+  s_f193227df3df34::t_be6d9d7652d6dc 1-383
+SchriftTests/Features/Editor/Native/NativeReplicaSaveSchedulerTests.swift
+  s_f193227df3df34::t_6cea370fe310ec 1-71
+SchriftTests/Support/AsyncTestHelpers.swift
+  s_f193227df3df34::t_0a9424a4696cee 103-171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4afdbebb0ba65ee505f971d2cdcb55a1e125ab1d",
+  "prompts": {},
+  "sessions": {
+    "s_f193227df3df34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dbe81370-1886-4254-8a96-847487f9d822",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
