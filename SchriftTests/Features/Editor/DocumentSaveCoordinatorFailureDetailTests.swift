@@ -14,7 +14,7 @@ final class DocumentSaveCoordinatorFailureDetailTests: DocumentSaveCoordinatorTe
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!),
             contentCache: DocumentContentCacheStore(directory: cacheDirectory), backgroundTasks: .noop,
-            diagnostics: log)
+            sleep: neverSleep, diagnostics: log)
         return (coordinator, log)
     }
 

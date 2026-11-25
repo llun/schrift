@@ -248,13 +248,16 @@ verified outbox to `enqueueReplica`, with the cached server copy as title and
 baseline (a stored draft keeps its own baseline). Close and the app going inactive
 or to the background flush it; if a flush's hand-over returns false (for example,
 before the signed-in user id is known), it keeps the save pending and re-arms one
-normal interval. Reopening a replica whose outbox has no draft (the
-process ended inside the debounce) schedules it. While online and foregrounded, a
-retryable failure on a native replica save (5xx, timeout, 429, or a title failure
-after the body landed) automatically retries through the coordinator's per-document
-replay with bounded exponential backoff (2 s doubling to 60 s, respecting 429
-`Retry-After`, reset on success or a new edit), honouring all holds and conflicts
-and cancelling on offline, background, sign-out or delete. The native view shows the classic
+normal interval (floored at 1 s). Reopening a replica whose outbox has no draft (the
+process ended inside the debounce) schedules it. While online and foregrounded
+(initialized from the scene phase), a retryable failure on a native replica save
+(5xx, timeout, 429, or a title failure after the body landed) automatically retries
+through the coordinator's per-document replay with bounded exponential backoff
+(2 s doubling to 60 s, respecting 429 `Retry-After`, preserved across sync passes,
+offline and background, and reset on success, a new edit, sign-out, conflict,
+terminal failure or delete), honouring all holds and conflicts, coalescing into another
+sync pass when one is running, and cancelling (even mid-replay) on offline, background,
+sign-out or delete. The native view shows the classic
 `SaveStatusIndicator`: unsent journal bytes read "Saved on this device", then the
 coordinator's state (saving, saved, pending sync, retry). A tap retries a raw draft
 through `retryReplicaDraft`, never the classic enqueue. A refused capture freezes

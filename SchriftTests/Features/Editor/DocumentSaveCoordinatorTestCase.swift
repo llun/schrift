@@ -58,7 +58,8 @@ class DocumentSaveCoordinatorTestCase: XCTestCase {
 
     func makeCoordinator(
         backgroundTasks: BackgroundTaskProvider = .noop,
-        isLiveReplicaHeld: @escaping @MainActor (UUID) -> Bool = { _ in false }
+        isLiveReplicaHeld: @escaping @MainActor (UUID) -> Bool = { _ in false },
+        sleep: @escaping @Sendable (Duration) async throws -> Void = neverSleep
     ) -> (DocumentSaveCoordinator, PendingDraftStore, DocumentContentCacheStore) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
@@ -77,7 +78,8 @@ class DocumentSaveCoordinatorTestCase: XCTestCase {
             replicaStore: replicaStore,
             contentCache: contentCache,
             backgroundTasks: backgroundTasks,
-            isLiveReplicaHeld: isLiveReplicaHeld
+            isLiveReplicaHeld: isLiveReplicaHeld,
+            sleep: sleep
         )
         return (coordinator, draftStore, contentCache)
     }

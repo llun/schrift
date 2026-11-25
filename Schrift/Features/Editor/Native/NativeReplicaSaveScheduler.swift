@@ -75,8 +75,9 @@ final class NativeReplicaSaveScheduler {
         do {
             if try !enqueue() {
                 hasPendingSave = true
-                // Re-arm one normal interval so a failed hand-over retries without a keystroke.
-                arm(delay: interval)
+                // Re-arm one normal interval (floored at 1 s so a zero interval never busy-loops)
+                // so a failed hand-over retries without a keystroke.
+                arm(delay: max(interval, .seconds(1)))
             }
         } catch {
             isFrozen = true

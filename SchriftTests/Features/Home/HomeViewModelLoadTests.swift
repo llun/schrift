@@ -564,7 +564,7 @@ final class HomeViewModelLoadTests: HomeViewModelTestCase {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore,
-            contentCache: DocumentContentCacheStore(directory: cacheDir), backgroundTasks: .noop)
+            contentCache: DocumentContentCacheStore(directory: cacheDir), backgroundTasks: .noop, sleep: neverSleep)
         let viewModel = HomeViewModel(
             client: client, cache: makeCache(), saveCoordinator: coordinator, userDefaults: preferences)
 

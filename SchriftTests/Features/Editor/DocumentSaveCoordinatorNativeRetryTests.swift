@@ -19,7 +19,8 @@ final class DocumentSaveCoordinatorNativeRetryTests: DocumentSaveCoordinatorTest
 
     private func fixture(
         isOnline: @escaping @MainActor () -> Bool = { true },
-        isHeld: @escaping @MainActor (UUID) -> Bool = { _ in false }
+        isHeld: @escaping @MainActor (UUID) -> Bool = { _ in false },
+        isForegrounded: Bool = true
     ) throws -> Fixture {
         let gate = SleepGate()
         let scope = ReplicaScope(
@@ -54,7 +55,7 @@ final class DocumentSaveCoordinatorNativeRetryTests: DocumentSaveCoordinatorTest
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: drafts, replicaStore: store, contentCache: contentCache,
             listCache: listCache, serverOrigin: "https://docs.example.org", backgroundTasks: .noop,
-            isLiveReplicaHeld: isHeld, isOnline: isOnline,
+            isLiveReplicaHeld: isHeld, isOnline: isOnline, isForegrounded: isForegrounded,
             sleep: { try await gate.sleep($0) })
         return Fixture(
             coordinator: coordinator, drafts: drafts, store: store, adapter: adapter, scope: scope,
@@ -379,5 +380,373 @@ final class DocumentSaveCoordinatorNativeRetryTests: DocumentSaveCoordinatorTest
         )
         XCTAssertEqual(backoff.delay(attempt: 0, retryAfter: 12), .seconds(12))
         XCTAssertEqual(backoff.delay(attempt: 2, retryAfter: 1), .seconds(8), "never faster than exponential floor")
+    }
+
+    func testRetryFiringDuringSyncPassIsCoalescedNotDropped() async throws {
+        let f = try fixture()
+        defer { f.coordinator.cancelNativeSaveRetries() }
+        let log = RequestRecorder()
+
+        // A second document whose replay GET blocks `syncPendingDrafts()` inside `runSyncPass()`
+        // after `runSyncPass()` has already snapshotted `draftStore.allDrafts()`.
+        f.drafts.save(
+            PendingDraft(
+                documentID: otherDocumentID, title: "Other", markdown: "Other body",
+                updatedAt: Date(timeIntervalSince1970: 2),
+                baseline: DraftBaseline(
+                    serverUpdatedAt: Date(timeIntervalSince1970: 1), markdown: "Other", title: "Other")))
+
+        let otherGetGate = MockURLProtocol.ResponseGate()
+        defer { otherGetGate.open() }
+        let bodyAttempt = Counter()
+        let ownerID = owner.uuidString
+        let docFormatted = Data(
+            """
+            {"id":"\(documentID.uuidString)","title":"Doc","content":"One",
+             "created_at":"1970-01-01T00:00:01Z","updated_at":"1970-01-01T00:00:01Z"}
+            """.utf8)
+        let otherFormatted = Data(
+            """
+            {"id":"\(otherDocumentID.uuidString)","title":"Other","content":"Other",
+             "created_at":"1970-01-01T00:00:01Z","updated_at":"1970-01-01T00:00:01Z"}
+            """.utf8)
+        let docIDLower = documentID.uuidString.lowercased()
+        let otherIDLower = otherDocumentID.uuidString.lowercased()
+
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let path = request.url?.absoluteString ?? ""
+            if path.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if path.hasSuffix("/users/me/") {
+                return .init(statusCode: 200, headers: [:], body: Data("{\"id\":\"\(ownerID)\"}".utf8), error: nil)
+            }
+            if request.httpMethod == "PATCH", path.contains("/collaboration/ydoc/") {
+                return bodyAttempt.next() == 1
+                    ? .init(statusCode: 503, headers: [:], body: Data(), error: nil)
+                    : .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+            }
+            if path.contains("formatted-content") {
+                if path.lowercased().contains(otherIDLower) {
+                    return .init(
+                        statusCode: 200, headers: [:], body: otherFormatted, error: nil, releasedBy: otherGetGate)
+                }
+                if path.lowercased().contains(docIDLower) {
+                    return .init(statusCode: 200, headers: [:], body: docFormatted, error: nil)
+                }
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        // Start a sync pass and pause it on `otherDocumentID`'s GET: `runSyncPass()` has already
+        // snapshotted `draftStore.allDrafts()` without `documentID`.
+        let syncTask = Task { await f.coordinator.syncPendingDrafts() }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+
+        // Enqueue `documentID` while the pass is running; its PATCH hits 503 and schedules a retry.
+        try enqueue(f)
+        await waitUntil { self.isPendingSync(f.coordinator.state(for: self.documentID)) && f.gate.pendingCount == 1 }
+
+        // Fire the retry while `isSyncingDrafts` is still true; it must coalesce rather than drop.
+        f.gate.releaseNext()
+        await waitUntil { f.gate.pendingCount == 0 }
+
+        // Let the slow sync pass finish; the coalesced pass must replay `documentID` to `.saved`.
+        otherGetGate.open()
+        await syncTask.value
+        await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/"), 2)
+    }
+
+    func testBackgroundingDuringReplayGetCancelsRetryAndSendsNoPatch() async throws {
+        let f = try fixture()
+        defer { f.coordinator.cancelNativeSaveRetries() }
+        let log = RequestRecorder()
+        let formattedGate = MockURLProtocol.ResponseGate()
+        defer { formattedGate.open() }
+        let ownerID = owner.uuidString
+        let formatted = Data(
+            """
+            {"id":"\(documentID.uuidString)","title":"Doc","content":"One",
+             "created_at":"1970-01-01T00:00:01Z","updated_at":"1970-01-01T00:00:01Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let path = request.url?.absoluteString ?? ""
+            if path.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if path.hasSuffix("/users/me/") {
+                return .init(statusCode: 200, headers: [:], body: Data("{\"id\":\"\(ownerID)\"}".utf8), error: nil)
+            }
+            if request.httpMethod == "PATCH", path.contains("/collaboration/ydoc/") {
+                return .init(statusCode: 503, headers: [:], body: Data(), error: nil)
+            }
+            if path.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: formatted, error: nil, releasedBy: formattedGate)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        try enqueue(f)
+        await waitUntil { self.isPendingSync(f.coordinator.state(for: self.documentID)) && f.gate.pendingCount == 1 }
+        let patchesBeforeRetry = log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/")
+        XCTAssertEqual(patchesBeforeRetry, 1)
+
+        // Start the retry and pause it inside its `formatted-content` GET.
+        f.gate.releaseNext()
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+
+        // Background the app while the retry's GET is in flight, then let the response finish.
+        f.coordinator.setForegrounded(false)
+        formattedGate.open()
+
+        await waitAndConfirmNever {
+            log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/") > patchesBeforeRetry
+                || f.gate.pendingCount > 0
+        }
+    }
+
+    func testSyncPassPreservesBackoffAcrossSustainedFailures() async throws {
+        let f = try fixture()
+        defer { f.coordinator.cancelNativeSaveRetries() }
+        let log = RequestRecorder()
+        stub(log: log, bodyResponses: { (503, [:]) })
+
+        try enqueue(f)
+        await waitUntil { self.isPendingSync(f.coordinator.state(for: self.documentID)) && f.gate.pendingCount == 1 }
+        XCTAssertEqual(f.gate.durations, [.seconds(2)])
+
+        // An unrelated sync pass (home refresh, editor close, search) replays and fails again:
+        // backoff must advance to 4s instead of restarting at 2s.
+        await f.coordinator.syncPendingDrafts()
+        await waitUntil {
+            log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/") == 2
+                && self.isPendingSync(f.coordinator.state(for: self.documentID))
+                && f.gate.pendingCount == 1
+        }
+        XCTAssertEqual(f.gate.durations, [.seconds(2), .seconds(4)], "sync pass must not reset backoff to 2s")
+
+        // A second sync pass during sustained 503s advances backoff to 8s.
+        await f.coordinator.syncPendingDrafts()
+        await waitUntil {
+            log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/") == 3
+                && self.isPendingSync(f.coordinator.state(for: self.documentID))
+                && f.gate.pendingCount == 1
+        }
+        XCTAssertEqual(f.gate.durations, [.seconds(2), .seconds(4), .seconds(8)])
+    }
+
+    func testTerminal401And403And404ScheduleNoRetry() async throws {
+        for status in [401, 403, 404] {
+            let f = try fixture()
+            defer { f.coordinator.cancelNativeSaveRetries() }
+            let log = RequestRecorder()
+            stub(log: log, bodyResponses: { (status, [:]) })
+
+            try enqueue(f)
+            await waitUntil { self.isFailed(f.coordinator.state(for: self.documentID)) }
+            await waitAndConfirmNever { !f.gate.durations.isEmpty }
+        }
+
+        // Same on the replay's own GET: 401 stays pending without retrying; 403/404 mark failed without retrying.
+        for status in [401, 403, 404] {
+            let f = try fixture()
+            defer { f.coordinator.cancelNativeSaveRetries() }
+            let log = RequestRecorder()
+            let ownerID = owner.uuidString
+            let patchAttempt = Counter()
+            MockURLProtocol.stubHandler = { request in
+                log.record(request)
+                let path = request.url?.absoluteString ?? ""
+                if path.hasSuffix("/config/") {
+                    return .init(
+                        statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+                }
+                if path.hasSuffix("/users/me/") {
+                    return .init(
+                        statusCode: 200, headers: [:], body: Data("{\"id\":\"\(ownerID)\"}".utf8), error: nil)
+                }
+                if request.httpMethod == "PATCH", path.contains("/collaboration/ydoc/") {
+                    _ = patchAttempt.next()
+                    return .init(statusCode: 503, headers: [:], body: Data(), error: nil)
+                }
+                if path.contains("formatted-content") {
+                    return .init(statusCode: status, headers: [:], body: Data(), error: nil)
+                }
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+
+            try enqueue(f)
+            await waitUntil {
+                self.isPendingSync(f.coordinator.state(for: self.documentID)) && f.gate.pendingCount == 1
+            }
+            let sleepsBefore = f.gate.durations.count
+            f.gate.releaseNext()
+            if status == 401 {
+                await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+                await waitAndConfirmNever {
+                    f.gate.durations.count > sleepsBefore || self.isFailed(f.coordinator.state(for: self.documentID))
+                }
+                XCTAssertTrue(isPendingSync(f.coordinator.state(for: documentID)))
+            } else {
+                await waitUntil { self.isFailed(f.coordinator.state(for: self.documentID)) }
+                await waitAndConfirmNever { f.gate.durations.count > sleepsBefore }
+            }
+        }
+    }
+
+    func testReplayGet503SchedulesNextBackoffRetry() async throws {
+        let f = try fixture()
+        defer { f.coordinator.cancelNativeSaveRetries() }
+        let log = RequestRecorder()
+        let ownerID = owner.uuidString
+        let bodyAttempt = Counter()
+        let getAttempt = Counter()
+        let formatted = Data(
+            """
+            {"id":"\(documentID.uuidString)","title":"Doc","content":"One",
+             "created_at":"1970-01-01T00:00:01Z","updated_at":"1970-01-01T00:00:01Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let path = request.url?.absoluteString ?? ""
+            if path.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if path.hasSuffix("/users/me/") {
+                return .init(statusCode: 200, headers: [:], body: Data("{\"id\":\"\(ownerID)\"}".utf8), error: nil)
+            }
+            if request.httpMethod == "PATCH", path.contains("/collaboration/ydoc/") {
+                return bodyAttempt.next() == 1
+                    ? .init(statusCode: 503, headers: [:], body: Data(), error: nil)
+                    : .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+            }
+            if path.contains("formatted-content") {
+                return getAttempt.next() == 1
+                    ? .init(statusCode: 503, headers: [:], body: Data(), error: nil)
+                    : .init(statusCode: 200, headers: [:], body: formatted, error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        try enqueue(f)
+        await waitUntil { self.isPendingSync(f.coordinator.state(for: self.documentID)) && f.gate.pendingCount == 1 }
+        XCTAssertEqual(f.gate.durations, [.seconds(2)])
+
+        // First retry's `formatted-content` GET returns 503 -> must schedule next backoff step (4s).
+        f.gate.releaseNext()
+        await waitUntil {
+            log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 && f.gate.durations.count == 2
+                && f.gate.pendingCount == 1
+        }
+        XCTAssertEqual(f.gate.durations, [.seconds(2), .seconds(4)])
+        XCTAssertTrue(isPendingSync(f.coordinator.state(for: documentID)))
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/"), 1)
+
+        // Second retry's GET and PATCH succeed -> reaches `.saved`.
+        f.gate.releaseNext()
+        await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/"), 2)
+    }
+
+    func testRunSyncPassSchedulesRetryWhenReplayGetReturns503() async throws {
+        var online = false
+        let f = try fixture(isOnline: { online })
+        defer { f.coordinator.cancelNativeSaveRetries() }
+        let log = RequestRecorder()
+        let ownerID = owner.uuidString
+        let bodyAttempt = Counter()
+        let getAttempt = Counter()
+        let formatted = Data(
+            """
+            {"id":"\(documentID.uuidString)","title":"Doc","content":"One",
+             "created_at":"1970-01-01T00:00:01Z","updated_at":"1970-01-01T00:00:01Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let path = request.url?.absoluteString ?? ""
+            if path.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if path.hasSuffix("/users/me/") {
+                return .init(statusCode: 200, headers: [:], body: Data("{\"id\":\"\(ownerID)\"}".utf8), error: nil)
+            }
+            if request.httpMethod == "PATCH", path.contains("/collaboration/ydoc/") {
+                return bodyAttempt.next() == 1
+                    ? .init(statusCode: 503, headers: [:], body: Data(), error: nil)
+                    : .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+            }
+            if path.contains("formatted-content") {
+                return getAttempt.next() == 1
+                    ? .init(statusCode: 503, headers: [:], body: Data(), error: nil)
+                    : .init(statusCode: 200, headers: [:], body: formatted, error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        // Fail while offline so no retry is scheduled yet.
+        try enqueue(f)
+        await waitUntil { self.isPendingSync(f.coordinator.state(for: self.documentID)) }
+        XCTAssertTrue(f.gate.durations.isEmpty)
+
+        // Come online and run a sync pass: `runSyncPass`'s GET hits 503 and schedules a retry.
+        online = true
+        await f.coordinator.syncPendingDrafts()
+        await waitUntil { f.gate.pendingCount == 1 }
+        XCTAssertEqual(f.gate.durations, [.seconds(2)])
+
+        // Releasing that scheduled retry succeeds.
+        f.gate.releaseNext()
+        await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
+    }
+
+    func testColdLaunchInBackgroundSchedulesNoRetryUntilForegrounded() async throws {
+        let f = try fixture(isForegrounded: false)
+        defer { f.coordinator.cancelNativeSaveRetries() }
+        let log = RequestRecorder()
+        let bodyAttempt = Counter()
+        stub(
+            log: log,
+            bodyResponses: { bodyAttempt.next() <= 2 ? (503, [:]) : (200, [:]) })
+
+        // Cold launch in background (`isForegrounded: false`): a 503 stays pending and schedules no retry.
+        try enqueue(f)
+        await waitUntil {
+            log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/") == 1
+                && self.isPendingSync(f.coordinator.state(for: self.documentID))
+        }
+        await waitAndConfirmNever { !f.gate.durations.isEmpty }
+
+        // Even a background sync pass schedules no retry while still not foregrounded.
+        await f.coordinator.syncPendingDrafts()
+        await waitUntil {
+            log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/") == 2
+                && self.isPendingSync(f.coordinator.state(for: self.documentID))
+        }
+        await waitAndConfirmNever { !f.gate.durations.isEmpty }
+
+        // Returning to foreground enables retries on the next sync pass failure, then recovers to `.saved`.
+        let nextAttempt = Counter()
+        stub(
+            log: log,
+            bodyResponses: { nextAttempt.next() == 1 ? (503, [:]) : (200, [:]) })
+        f.coordinator.setForegrounded(true)
+        await f.coordinator.syncPendingDrafts()
+        await waitUntil {
+            log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/") == 3
+                && self.isPendingSync(f.coordinator.state(for: self.documentID))
+                && f.gate.pendingCount == 1
+        }
+        XCTAssertEqual(f.gate.durations, [.seconds(2)])
+
+        f.gate.releaseNext()
+        await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/"), 4)
     }
 }

@@ -100,7 +100,7 @@ class HomeViewModelTestCase: XCTestCase {
             // describes for drafts and creates.
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         // Pinned off: the default reads `UserDefaults.standard`, so a simulator with the native
         // editor on would refuse every local mint these tests expect.
         coordinator.nativeEditorEnabled = { false }

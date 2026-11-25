@@ -103,7 +103,8 @@ final class NativeEditorInlinePickerViewTests: NativeEditingTestCase {
             deleteStore: deleteStore,
             attachmentStore: PendingAttachmentStore(
                 userDefaults: defaults, directory: directory.appendingPathComponent("attachments")),
-            listCache: listCache, childrenCache: children, serverOrigin: origin, backgroundTasks: .noop)
+            listCache: listCache, childrenCache: children, serverOrigin: origin, backgroundTasks: .noop,
+            sleep: neverSleep)
         let signedIn = SignedInUserStore(userDefaults: defaults)
         if let userID { signedIn.remember(userID) }
         var effectiveDocumentID = documentID

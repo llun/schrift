@@ -52,7 +52,7 @@ final class ThemeRenderingTests: XCTestCase {
         let client = DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!)
         let model = EditorViewModel(
             client: client, documentID: UUID(), title: "Doc",
-            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop))
+            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop, sleep: neverSleep))
         let block = EditorBlock(
             kind: .attachment(name: "Report.pdf", url: "https://other.example.org/report.pdf"), text: "")
         model.blocks = [block]

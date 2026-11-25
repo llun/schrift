@@ -886,7 +886,7 @@ final class BlockTextFocusTests: XCTestCase {
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: PendingDraftStore(userDefaults: defaults), contentCache: cache,
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
-            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults), backgroundTasks: .noop)
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults), backgroundTasks: .noop, sleep: neverSleep)
         let vm = EditorViewModel(
             client: client, documentID: UUID(), title: "Disposable", saveCoordinator: coordinator,
             signedInUser: SignedInUserStore(userDefaults: defaults), contentCache: cache,

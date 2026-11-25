@@ -70,7 +70,8 @@ final class EditorAttachmentInsertionTests: XCTestCase {
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop,
+            sleep: neverSleep)
         return EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
             serverOrigin: serverOrigin, contentCache: contentCache, childrenCache: childrenCache,
@@ -308,7 +309,8 @@ final class EditorAttachmentInsertionTests: XCTestCase {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: PendingDraftStore(userDefaults: UserDefaults(suiteName: draftSuiteName)!),
-            contentCache: DocumentContentCacheStore(directory: cacheDirectory), backgroundTasks: .noop)
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory), backgroundTasks: .noop,
+            sleep: neverSleep)
         let viewModel = EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),

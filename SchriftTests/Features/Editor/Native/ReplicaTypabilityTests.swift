@@ -45,7 +45,7 @@ final class ReplicaTypabilityTests: NativeEditingTestCase {
         return DocumentSaveCoordinator(
             client: client, draftStore: PendingDraftStore(userDefaults: defaults),
             replicaStore: harness.store, contentCache: DocumentContentCacheStore(directory: cacheDirectory),
-            listCache: DocumentCacheStore(userDefaults: defaults), backgroundTasks: .noop)
+            listCache: DocumentCacheStore(userDefaults: defaults), backgroundTasks: .noop, sleep: neverSleep)
     }
 
     /// The Docs 6 save pipeline: config, identity, then the body PATCH.

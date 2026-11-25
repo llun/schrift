@@ -68,4 +68,33 @@ final class NativeReplicaSaveSchedulerTests: XCTestCase {
         gate.releaseAll()
         XCTAssertEqual(attempts, 1)
     }
+
+    func testZeroIntervalFailedHandoverRearmsAtOneSecondFloor() async {
+        let gate = SleepGate()
+        var attempts = 0
+        let scheduler = NativeReplicaSaveScheduler(
+            interval: .zero,
+            sleep: { try await gate.sleep($0) },
+            enqueue: {
+                attempts += 1
+                return attempts >= 2
+            },
+            onFailure: { XCTFail("unexpected failure: \($0)") }
+        )
+        defer { scheduler.cancel() }
+
+        scheduler.schedule()
+        await waitUntil { gate.pendingCount == 1 }
+        XCTAssertEqual(gate.durations, [.zero])
+
+        // Failed hand-over with .zero interval must floor the re-arm at 1 s instead of busy-looping.
+        gate.releaseNext()
+        await waitUntil { attempts == 1 && gate.pendingCount == 1 }
+        XCTAssertEqual(gate.durations, [.zero, .seconds(1)])
+        XCTAssertTrue(scheduler.hasPendingSave)
+
+        gate.releaseNext()
+        await waitUntil { attempts == 2 && !scheduler.hasPendingSave }
+        XCTAssertEqual(gate.pendingCount, 0)
+    }
 }

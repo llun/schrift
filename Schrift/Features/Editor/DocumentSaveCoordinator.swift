@@ -496,6 +496,7 @@ final class DocumentSaveCoordinator {
         backgroundTasks: BackgroundTaskProvider = .uiApplication,
         isLiveReplicaHeld: @escaping @MainActor (UUID) -> Bool = { _ in false },
         isOnline: @escaping @MainActor () -> Bool = { true },
+        isForegrounded: Bool = true,
         nativeSaveRetryBackoff: NativeSaveRetryBackoff = NativeSaveRetryBackoff(),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         diagnostics: APIDiagnosticsLog? = nil
@@ -528,6 +529,7 @@ final class DocumentSaveCoordinator {
         self.backgroundTasks = backgroundTasks
         self.isLiveReplicaHeld = isLiveReplicaHeld
         self.isOnline = isOnline
+        self.isForegrounded = isForegrounded
         self.nativeSaveRetryBackoff = nativeSaveRetryBackoff
         self.sleep = sleep
         createStoreUnreadable = createStore.holdsUnreadableData
@@ -3945,14 +3947,14 @@ final class DocumentSaveCoordinator {
 
     func setForegrounded(_ foregrounded: Bool) {
         isForegrounded = foregrounded
-        if !foregrounded { cancelNativeSaveRetries() }
+        if !foregrounded { cancelNativeSaveRetries(resetBackoff: false) }
     }
 
-    func cancelNativeSaveRetries() {
+    func cancelNativeSaveRetries(resetBackoff: Bool = true) {
         for task in nativeRetryTasks.values { task.cancel() }
         nativeRetryTasks.removeAll()
         nativeRetryTokens.removeAll()
-        nativeRetryAttempts.removeAll()
+        if resetBackoff { nativeRetryAttempts.removeAll() }
     }
 
     private func resetNativeSaveRetry(documentID: UUID) {
@@ -4000,27 +4002,37 @@ final class DocumentSaveCoordinator {
         let token = UUID()
         nativeRetryTokens[documentID] = token
         nativeRetryTasks[documentID] = Task { [weak self] in
+            defer {
+                if let self, self.nativeRetryTokens[documentID] == token {
+                    self.nativeRetryTasks[documentID] = nil
+                    self.nativeRetryTokens[documentID] = nil
+                }
+            }
             do { try await sleep(delay) } catch { return }
             guard !Task.isCancelled, let self, self.nativeRetryTokens[documentID] == token else { return }
-            self.nativeRetryTasks[documentID] = nil
-            self.nativeRetryTokens[documentID] = nil
             guard isCurrent?() ?? true else {
                 self.resetNativeSaveRetry(documentID: documentID)
                 return
             }
-            await self.runNativeSaveRetry(documentID: documentID)
+            await self.runNativeSaveRetry(documentID: documentID, token: token)
         }
     }
 
-    private func runNativeSaveRetry(documentID: UUID) async {
+    private func runNativeSaveRetry(documentID: UUID, token: UUID) async {
         guard canRetryNativeSave(documentID: documentID),
             let draft = draftStore.draft(for: documentID), draft.replica != nil
         else {
-            resetNativeSaveRetry(documentID: documentID)
+            if draftStore.draft(for: documentID)?.replica == nil {
+                nativeRetryAttempts[documentID] = nil
+            }
             return
         }
-        guard !isSyncingDrafts else { return }
-        if let retryError = await replayDraft(draft, preserveNativeRetryBackoff: true) {
+        if isSyncingDrafts {
+            needsAnotherSyncPass = true
+            return
+        }
+        if let retryError = await replayDraft(draft, isNativeRetry: true) {
+            guard !Task.isCancelled, nativeRetryTokens[documentID] == token else { return }
             scheduleNativeSaveRetry(documentID: documentID, error: retryError)
         }
     }
@@ -4621,7 +4633,7 @@ final class DocumentSaveCoordinator {
     }
 
     private func runSyncPass() async {
-        cancelNativeSaveRetries()
+        cancelNativeSaveRetries(resetBackoff: false)
         for draft in draftStore.allDrafts() {
             if let retryError = await replayDraft(draft) {
                 scheduleNativeSaveRetry(documentID: draft.documentID, error: retryError)
@@ -4634,7 +4646,7 @@ final class DocumentSaveCoordinator {
     /// Returns a retryable `DocsAPIError` only when a native draft's replay failed before
     /// `enqueueReplica` could start a save, so the caller can continue backoff.
     @discardableResult
-    private func replayDraft(_ draft: PendingDraft, preserveNativeRetryBackoff: Bool = false) async -> DocsAPIError? {
+    private func replayDraft(_ draft: PendingDraft, isNativeRetry: Bool = false) async -> DocsAPIError? {
         if let reference = draft.replica {
             guard reference.scope.documentID == draft.documentID,
                 reference.scope.serverOrigin == client.serverOrigin,
@@ -4670,6 +4682,9 @@ final class DocumentSaveCoordinator {
         do {
             if let reference = draft.replica {
                 guard try await client.currentUser().id == reference.scope.ownerUserID else { return nil }
+                if isNativeRetry {
+                    guard !Task.isCancelled, canRetryNativeSave(documentID: draft.documentID) else { return nil }
+                }
                 guard !isLiveReplicaHeld(draft.documentID), inFlight[draft.documentID] == nil,
                     queued[draft.documentID] == nil, draftStore.draft(for: draft.documentID) == draft,
                     !isPendingCreate(documentID: draft.documentID),
@@ -4678,6 +4693,9 @@ final class DocumentSaveCoordinator {
                 else { return nil }
             }
             let formatted = try await client.formattedContent(documentID: draft.documentID)
+            if isNativeRetry {
+                guard !Task.isCancelled, canRetryNativeSave(documentID: draft.documentID) else { return nil }
+            }
             // The session may have started editing/saving this document
             // while we awaited — a stale replay would clobber the newer
             // content and its draft. Re-check before acting.
@@ -4711,7 +4729,7 @@ final class DocumentSaveCoordinator {
                     try enqueueReplica(
                         adapter: ReplicaSaveAdapter(store: replicaStore, scope: reference.scope),
                         title: title, baseline: baseline,
-                        resetRetryBackoff: !preserveNativeRetryBackoff)
+                        resetRetryBackoff: false)
                 } else {
                     enqueue(
                         documentID: draft.documentID, title: title, markdown: draft.markdown, baseline: baseline)
@@ -4747,6 +4765,7 @@ final class DocumentSaveCoordinator {
                 recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
             }
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
+            if isNativeRetry, Task.isCancelled { return nil }
             // The session may have removed, replaced, or started editing/saving this draft
             // while we awaited — never stamp `.failed` onto a state that has moved on.
             guard inFlight[draft.documentID] == nil,
@@ -4771,16 +4790,22 @@ final class DocumentSaveCoordinator {
             // via Retry or Discard.
             markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
         } catch {
+            if isNativeRetry, Task.isCancelled { return nil }
             // Leave the draft for a later sync (offline, expired session, missing route, or
             // cancellation).
             if isDeferredReplayFailure(error) {
-                if draft.replica != nil {
+                if draft.replica != nil, draftStore.draft(for: draft.documentID) == draft {
                     states[draft.documentID] = .pendingSync
                     if let docsError = error as? DocsAPIError, retryableSaveFailure(docsError) {
                         return docsError
                     }
                 }
             } else if draft.replica != nil {
+                guard inFlight[draft.documentID] == nil,
+                    queued[draft.documentID] == nil,
+                    !isLiveReplicaHeld(draft.documentID),
+                    draftStore.draft(for: draft.documentID) == draft
+                else { return nil }
                 markFailed(draft.documentID, reason: "Draft sync failed: \(safeErrorSummary(error))")
             } else {
                 guard inFlight[draft.documentID] == nil,

@@ -169,3 +169,34 @@ final class SleepGate: @unchecked Sendable {
         pending.forEach { $0.continuation.resume() }
     }
 }
+
+/// A `sleep` that suspends until cancelled without arming a real timer, so tests
+/// that do not opt in to background retries never send stray requests through `MockURLProtocol`.
+@Sendable
+func neverSleep(_: Duration) async throws {
+    final class Box: @unchecked Sendable {
+        let lock = NSLock()
+        var continuation: CheckedContinuation<Void, Error>?
+        var cancelled = false
+    }
+    let box = Box()
+    try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            box.lock.lock()
+            if box.cancelled {
+                box.lock.unlock()
+                continuation.resume(throwing: CancellationError())
+            } else {
+                box.continuation = continuation
+                box.lock.unlock()
+            }
+        }
+    } onCancel: {
+        box.lock.lock()
+        box.cancelled = true
+        let continuation = box.continuation
+        box.continuation = nil
+        box.lock.unlock()
+        continuation?.resume(throwing: CancellationError())
+    }
+}

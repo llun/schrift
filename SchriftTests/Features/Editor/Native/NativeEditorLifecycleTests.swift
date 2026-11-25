@@ -773,7 +773,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             attachmentStore: PendingAttachmentStore(
                 userDefaults: defaults, directory: directory.appendingPathComponent("attachments")),
-            listCache: listCache, childrenCache: children, backgroundTasks: .noop)
+            listCache: listCache, childrenCache: children, backgroundTasks: .noop, sleep: neverSleep)
         coordinator.nativeEditorEnabled = { true }
 
         let localDoc = coordinator.createLocalDocument(title: "", parentID: nil, ownerUserID: owner)
@@ -1005,7 +1005,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             attachmentStore: PendingAttachmentStore(
                 userDefaults: defaults, directory: directory.appendingPathComponent("attachments")),
-            listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children, backgroundTasks: .noop)
+            listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children, backgroundTasks: .noop,
+            sleep: neverSleep)
         coordinator.nativeEditorEnabled = nativeEditorEnabled ?? { false }
         let model = EditorViewModel(
             client: client, documentID: UUID(), title: "Fixture", saveCoordinator: coordinator,

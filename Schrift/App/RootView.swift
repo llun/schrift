@@ -98,6 +98,9 @@ private struct AuthenticatedHomeContainer: View {
                 collaborationManager?.hasHeldLiveReplica(for: documentID) ?? false
             },
             isOnline: { [weak connectivity] in connectivity?.isReachable ?? true },
+            // Not foregrounded until `.onAppear` reads the real scene phase, so a cold launch
+            // in the background never arms a save retry.
+            isForegrounded: false,
             diagnostics: diagnostics)
         // Native media uploads commit through a headless lease of the app's replicas (PR13b),
         // bound to the sign-in generation they started in.
@@ -246,9 +249,12 @@ private struct AuthenticatedHomeContainer: View {
         // The live sockets follow the real path edge only: transport evidence says nothing
         // about whether a socket should be rebuilt.
         .onChange(of: connectivity.isReachable) { wasReachable, isReachable in
-            if !isReachable { viewModel.saveCoordinator.cancelNativeSaveRetries() }
+            if !isReachable { viewModel.saveCoordinator.cancelNativeSaveRetries(resetBackoff: false) }
             guard shouldSyncOnReachabilityChange(wasReachable: wasReachable, isReachable: isReachable) else { return }
             collaboration.reconnect()
+        }
+        .onAppear {
+            viewModel.saveCoordinator.setForegrounded(scenePhase == .active)
         }
         .onChange(of: connectivity.appearsOffline) { wasOffline, isOffline in
             guard shouldSyncOnReachabilityChange(wasReachable: !wasOffline, isReachable: !isOffline) else { return }

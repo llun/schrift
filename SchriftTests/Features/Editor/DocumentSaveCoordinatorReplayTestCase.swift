@@ -45,7 +45,10 @@ class DocumentSaveCoordinatorReplayTestCase: XCTestCase {
         let defaults: UserDefaults
     }
 
-    func makeEnvironment(sharing defaults: UserDefaults? = nil, appBuild: String = "1") -> Environment {
+    func makeEnvironment(
+        sharing defaults: UserDefaults? = nil, appBuild: String = "1",
+        sleep: @escaping @Sendable (Duration) async throws -> Void = neverSleep
+    ) -> Environment {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let defaults =
             defaults
@@ -63,7 +66,7 @@ class DocumentSaveCoordinatorReplayTestCase: XCTestCase {
                 client: client, draftStore: drafts,
                 contentCache: DocumentContentCacheStore(directory: cacheDirectory),
                 createStore: creates, listCache: lists, childrenCache: children,
-                serverOrigin: origin, appBuild: appBuild, backgroundTasks: .noop),
+                serverOrigin: origin, appBuild: appBuild, backgroundTasks: .noop, sleep: sleep),
             drafts: drafts, creates: creates, lists: lists, children: children, defaults: defaults)
     }
 

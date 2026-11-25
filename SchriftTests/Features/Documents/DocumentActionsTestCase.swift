@@ -56,7 +56,7 @@ class DocumentActionsTestCase: XCTestCase {
             createStore: creates, deleteStore: deletes,
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let signedIn = SignedInUserStore(userDefaults: defaults)
         signedIn.remember(signedInUserID ?? ownerID)
         return Environment(

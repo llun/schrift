@@ -53,7 +53,7 @@ final class EditorViewModelChildrenTests: XCTestCase {
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            childrenCache: childrenCache, backgroundTasks: .noop)
+            childrenCache: childrenCache, backgroundTasks: .noop, sleep: neverSleep)
         // Pinned off: the default reads `UserDefaults.standard`, so a simulator with the native
         // editor on would refuse every local mint these tests expect.
         coordinator.nativeEditorEnabled = { false }

@@ -429,7 +429,7 @@ final class VideoPosterTests: NativeEditingTestCase {
             serverOrigin: Self.origin,
             mediaCheckMaxAttempts: 1,
             mediaCheckRetryInterval: .milliseconds(1),
-            backgroundTasks: .noop
+            backgroundTasks: .noop, sleep: neverSleep
         )
         let registry = NativeSessionRegistry()
         coordinator.nativeSessions = registry

@@ -36,7 +36,8 @@ final class EditorViewModelLinkTests: XCTestCase {
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop,
+            sleep: neverSleep)
         return EditorViewModel(
             client: client, documentID: documentID, title: "Q3 Planning", saveCoordinator: coordinator,
             contentCache: contentCache, childrenCache: childrenCache)

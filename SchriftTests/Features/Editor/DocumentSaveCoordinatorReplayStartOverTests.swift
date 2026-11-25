@@ -697,7 +697,8 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
             attachmentStore: attachments, listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
             serverOrigin: origin, appBuild: "1",
-            mediaCheckMaxAttempts: 1, mediaCheckRetryInterval: .milliseconds(1), backgroundTasks: .noop)
+            mediaCheckMaxAttempts: 1, mediaCheckRetryInterval: .milliseconds(1), backgroundTasks: .noop,
+            sleep: neverSleep)
         coordinator.nativeEditorEnabled = { true }
         let registry = NativeSessionRegistry()
         coordinator.nativeSessions = registry

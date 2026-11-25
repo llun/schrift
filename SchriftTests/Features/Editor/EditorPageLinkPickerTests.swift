@@ -68,7 +68,7 @@ final class EditorPageLinkPickerTests: XCTestCase {
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: listCache, childrenCache: childrenCache,
-            serverOrigin: self.serverOrigin, backgroundTasks: .noop)
+            serverOrigin: self.serverOrigin, backgroundTasks: .noop, sleep: neverSleep)
         let viewModel = EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
             serverOrigin: serverOrigin ?? self.serverOrigin, signedInUser: signedInUser, contentCache: contentCache,

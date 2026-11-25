@@ -803,7 +803,7 @@ final class EditorSurfaceParityTests: XCTestCase {
             attachmentStore: PendingAttachmentStore(userDefaults: store, directory: directory),
             listCache: DocumentCacheStore(userDefaults: store),
             childrenCache: childrenCache,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let viewModel = EditorViewModel(
             client: client, documentID: UUID(), title: "Parity", saveCoordinator: coordinator,
             signedInUser: SignedInUserStore(userDefaults: store),
