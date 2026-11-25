@@ -18,11 +18,15 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   moved) leaves the route to the newer open instead of selecting classic. Never replace a
   focused editor when the toggle changes.
   After selecting native, `NativeEditorOpen` runs `refreshOfflineCacheForNativeReader` off the
-  critical path (in an owned task cancelled on close or supersede) to fetch the server's Markdown
-  export, reuse leaf-nesting recovery and `cacheServerCopy`, and preserve its title/server
-  timestamp for the classic offline fallback. First-open header metadata (`title`, `lastSyncedAt`,
-  and initial `nativeServerBaseline` timestamp) is seeded at activation from the already-fetched
-  state/detail responses so first paint never waits on the cache refresh.
+  critical path (in an owned task cancelled on close, supersede, or reconnect refresh) to fetch
+  the server's Markdown export, reuse leaf-nesting recovery and `cacheServerCopy`, and preserve
+  its title/server timestamp for the classic offline fallback. First-open header metadata (`title`,
+  `lastSyncedAt`, and a timestamp-only `nativeServerBaseline` when no cached baseline exists) is
+  seeded at activation from the already-fetched state/detail responses so first paint never waits
+  on the cache refresh. The deferred refresh skips cache writes while a save is in flight or
+  pending, never advances baseline/`lastSyncedAt`/`title` while native edits are pending, never
+  regresses `nativeServerBaseline.serverUpdatedAt`, and never replaces `title` while the title
+  field is focused.
   This refresh covers content only; it does not populate the children cache.
   It never installs classic display state or changes the classic load route, and its
   failure never blocks the native session.

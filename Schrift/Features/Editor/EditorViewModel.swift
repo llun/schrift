@@ -129,6 +129,8 @@ final class EditorViewModel {
     /// hiccup is indistinguishable from a deletion without this.
     var errorDetail: String?
     var focusedBlockID: UUID?
+    /// True while the editable header title field currently holds focus.
+    var isTitleFocused = false
     var cursorRequest: CursorRequest?
     var selection: NSRange?
     /// Native keyboard identity can continue in another model block after a split/merge.
@@ -1418,7 +1420,9 @@ final class EditorViewModel {
     /// This refresh covers content only, not the children cache. `isCurrent`
     /// is the native open's own check (generation and account), so a response
     /// for a closed open, a sign-out or a deletion never re-caches the body.
-    func refreshOfflineCacheForNativeReader(isCurrent: () -> Bool) async throws -> Bool {
+    func refreshOfflineCacheForNativeReader(
+        isCurrent: () -> Bool, hasUnsavedNativeWork: () -> Bool = { false }
+    ) async throws -> Bool {
         guard !Task.isCancelled, !availability.isOffline, !isLocalDocument, !isDocumentPendingDelete,
             !isDocumentDiscarded
         else { return false }
@@ -1427,10 +1431,13 @@ final class EditorViewModel {
         let fetched = try await client.formattedContent(documentID: documentID)
         let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: token)
         guard !Task.isCancelled, availability.permitsResponse(for: token), !isDocumentPendingDelete,
-            !isDocumentDiscarded, isCurrent(), !saveCoordinator.mayPredateSave(marker)
+            !isDocumentDiscarded, isCurrent(), !saveCoordinator.mayPredateSave(marker),
+            !saveCoordinator.hasSaveInFlight(documentID: documentID),
+            saveCoordinator.pendingSave(documentID: documentID) == nil
         else { return false }
         cacheServerCopy(formatted, leafNesting: leafNesting)
-        applyNativeServerContent(formatted: formatted, leafNesting: leafNesting)
+        applyNativeServerContent(
+            formatted: formatted, leafNesting: leafNesting, hasUnsavedNativeWork: hasUnsavedNativeWork())
         return true
     }
 
@@ -4056,14 +4063,11 @@ final class EditorViewModel {
             syncConflict == nil
         else { return }
         lastSyncedAt = Date()
-        if let serverTitle, serverTitle != title {
+        if !isTitleFocused, let serverTitle, serverTitle != title {
             title = serverTitle
             savedTitle = serverTitle
         }
-        if let serverUpdatedAt,
-            nativeServerBaseline == nil
-                || nativeServerBaseline?.serverUpdatedAt.map({ serverUpdatedAt > $0 }) == true
-        {
+        if let serverUpdatedAt, nativeServerBaseline == nil {
             nativeServerBaseline = DraftBaseline(
                 serverUpdatedAt: serverUpdatedAt, markdown: "", title: serverTitle, markdownIsLocal: true)
         }
@@ -4071,7 +4075,9 @@ final class EditorViewModel {
 
     /// Updates coordinator title tracking, baseline, and clean on-screen title after a fresh
     /// native-reader fetch past `mayPredateSave`.
-    func applyNativeServerContent(formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
+    func applyNativeServerContent(
+        formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay, hasUnsavedNativeWork: Bool = false
+    ) {
         if let serverTitle = formatted.title {
             saveCoordinator.noteServerTitle(documentID: documentID, title: serverTitle)
         }
@@ -4081,14 +4087,19 @@ final class EditorViewModel {
         // Only advance the native baseline and clean title when no local work protects an
         // earlier ancestor.
         guard !hasPendingNativeTitleEdit,
+            !hasUnsavedNativeWork,
+            !saveCoordinator.hasSaveInFlight(documentID: documentID),
             saveCoordinator.pendingSave(documentID: documentID) == nil,
             saveCoordinator.storedDraft(documentID: documentID) == nil,
             syncConflict == nil
         else { return }
+        let baselineRegresses =
+            nativeServerBaseline?.serverUpdatedAt.map { formatted.updatedAt < $0 } ?? false
+        guard !baselineRegresses else { return }
         nativeServerBaseline = DraftBaseline(
             serverUpdatedAt: formatted.updatedAt, markdown: serverCopy, title: formatted.title)
         lastSyncedAt = Date()
-        if let fetchedTitle = formatted.title, fetchedTitle != title {
+        if !isTitleFocused, let fetchedTitle = formatted.title, fetchedTitle != title {
             title = fetchedTitle
             savedTitle = fetchedTitle
         }

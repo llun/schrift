@@ -20,12 +20,14 @@ import Foundation
 /// as nil, and a nil title simply means "unknown", which keeps the title rule inert and the
 /// legacy behavior exactly as it was.
 ///
-/// `markdownIsLocal` is `true` when `markdown` is not a server copy at all but the user's own
-/// body, stamped by a "keep mine" resolution that had no baseline to carry forward. The
-/// conflict rules only need *some* body there, but the Docs 6 save's block preservation reads
-/// `markdown` as what the user started from, and must not treat the user's own edits as
-/// untouched (`DocumentSaveCoordinator.start`). `nil` (every other baseline, and every one
-/// decoded from before the field existed) means a server copy.
+/// `markdownIsLocal` is `true` when `markdown` is not a server copy at all — either the user's
+/// own body (stamped by a "keep mine" resolution that had no baseline to carry forward) or an
+/// empty placeholder for a timestamp-only baseline seeded before a server body was fetched.
+/// Both rule 2's body-equality tiebreak (`draftSyncBodyDecision`) and the Docs 6 save's block
+/// preservation (`DocumentSaveCoordinator.start`) read `serverMarkdown` (which is `nil` when
+/// `markdownIsLocal == true`) so a local or placeholder body can never masquerade as a server
+/// copy. `nil` (every other baseline, and every one decoded from before the field existed) means
+/// a server copy.
 struct DraftBaseline: Codable, Equatable, Sendable {
     let serverUpdatedAt: Date?
     let markdown: String
@@ -275,7 +277,9 @@ private func draftSyncBodyDecision(
         if let baselineDate = baseline.serverUpdatedAt, serverUpdatedAt <= baselineDate {
             return .push(.descendsFromBaseline)
         }
-        if syncCanonicalMarkdown(baseline.markdown) == serverCanonical {
+        if let baselineServerMarkdown = baseline.serverMarkdown,
+            syncCanonicalMarkdown(baselineServerMarkdown) == serverCanonical
+        {
             return .push(.descendsFromBaseline)
         }
         return .conflict

@@ -1164,7 +1164,8 @@ private struct ClassicEditorView: View {
             // and its height never changes under the user mid-keystroke.
             EditorDocumentHeader(
                 title: viewModel.title, onEditTitle: { viewModel.updateTitle($0) }, reach: reach,
-                peers: headerPeers, onConsumeInitialTitleFocus: viewModel.consumeInitialTitleFocus
+                peers: headerPeers, onConsumeInitialTitleFocus: viewModel.consumeInitialTitleFocus,
+                onTitleFocusChange: { viewModel.isTitleFocused = $0 }
             ) {
                 editingStatus
             }

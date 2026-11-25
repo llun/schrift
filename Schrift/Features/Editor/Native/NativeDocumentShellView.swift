@@ -769,7 +769,8 @@ struct NativeDocumentShellView: View {
                 onConsumeInitialTitleFocus: {
                     viewModel.consumeNativeInitialTitleFocus(
                         isEditing: effectiveNativeEditing, canEdit: canEditNative)
-                }
+                },
+                onTitleFocusChange: { viewModel.isTitleFocused = $0 }
             ) {
                 nativeHeaderStatus(session: session)
             }

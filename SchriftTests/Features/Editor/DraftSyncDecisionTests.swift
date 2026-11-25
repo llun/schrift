@@ -710,6 +710,64 @@ final class DraftSyncDecisionTests: XCTestCase {
         XCTAssertNil(baseline?.title)
     }
 
+    // MARK: - Local / timestamp-only baselines (`markdownIsLocal == true`)
+
+    /// A baseline with `markdownIsLocal: true` carries no server body. Its empty placeholder
+    /// `markdown: ""` must never satisfy rule 2's body-equality tiebreak when a co-author
+    /// empties the document on the server.
+    func testMarkdownIsLocalEmptyBaselineDoesNotMatchEmptiedServerDocument() {
+        let decision = draftSyncDecision(
+            baseline: DraftBaseline(
+                serverUpdatedAt: base, markdown: "", title: "Doc", markdownIsLocal: true),
+            lastPushedMarkdown: nil,
+            localMarkdown: "# My edit",
+            draftTitle: "Doc",
+            draftUpdatedAt: base.addingTimeInterval(60),
+            serverTitle: "Doc",
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: ""
+        )
+
+        XCTAssertEqual(
+            decision, .conflict,
+            "a markdownIsLocal baseline has no server body and must conflict when a newer server is empty")
+    }
+
+    /// With a `markdownIsLocal` (timestamp-only) baseline, a newer server timestamp cannot prove
+    /// the body stayed unchanged, so a newer web title-only rename falls through to `.conflict`
+    /// — the same conservative outcome as any timestamp-only baseline without a server body.
+    func testMarkdownIsLocalBaselineWithNewerTitleOnlyChangeConflictsConservatively() {
+        let timestampOnlyBaseline = DraftBaseline(
+            serverUpdatedAt: base, markdown: "", title: "Old Title", markdownIsLocal: true)
+        let decision = draftSyncDecision(
+            baseline: timestampOnlyBaseline,
+            lastPushedMarkdown: nil,
+            localMarkdown: "# My edit",
+            draftTitle: "Old Title",
+            draftUpdatedAt: base.addingTimeInterval(60),
+            serverTitle: "Web Renamed",
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: "# Original body"
+        )
+        XCTAssertEqual(decision, .conflict)
+
+        // Contrast: a baseline that *does* carry the server body proves the body is unchanged
+        // and merges the one-sided web rename cleanly.
+        let withServerBody = DraftBaseline(
+            serverUpdatedAt: base, markdown: "# Original body", title: "Old Title")
+        let merged = draftSyncDecision(
+            baseline: withServerBody,
+            lastPushedMarkdown: nil,
+            localMarkdown: "# My edit",
+            draftTitle: "Old Title",
+            draftUpdatedAt: base.addingTimeInterval(60),
+            serverTitle: "Web Renamed",
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: "# Original body"
+        )
+        XCTAssertEqual(merged, .push(title: "Web Renamed", evidence: .descendsFromBaseline))
+    }
+
     // MARK: - retryableSaveFailure
 
     func testRetryableFailures() {

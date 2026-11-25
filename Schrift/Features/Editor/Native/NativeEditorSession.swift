@@ -1579,7 +1579,7 @@ final class NativeEditorOpen {
         let sessionSeq = session.sessionSeq
         offlineCacheRefreshTask = Task { @MainActor [weak self, weak viewModel, weak session] in
             defer {
-                if let self, self.generation == request {
+                if let self, !Task.isCancelled, self.generation == request {
                     self.offlineCacheRefreshTask = nil
                 }
             }
@@ -1588,11 +1588,17 @@ final class NativeEditorOpen {
             else { return }
             let cacheStartNs =
                 NativeEditorDiagnosticsStore.shared.isCollecting ? DispatchTime.now().uptimeNanoseconds : nil
-            _ = try? await viewModel.refreshOfflineCacheForNativeReader(isCurrent: {
-                [weak self, weak viewModel, weak session] in
-                guard let self, let viewModel, let session, !Task.isCancelled, !session.isClosed else { return false }
-                return self.isCurrent(request: request, viewModel: viewModel, account: account)
-            })
+            _ = try? await viewModel.refreshOfflineCacheForNativeReader(
+                isCurrent: { [weak self, weak viewModel, weak session] in
+                    guard let self, let viewModel, let session, !Task.isCancelled, !session.isClosed else {
+                        return false
+                    }
+                    return self.isCurrent(request: request, viewModel: viewModel, account: account)
+                },
+                hasUnsavedNativeWork: { [weak self, weak viewModel, weak session] in
+                    guard let self, let viewModel, let session else { return true }
+                    return self.hasUnsavedNativeWork(session: session, viewModel: viewModel)
+                })
             guard !Task.isCancelled, !session.isClosed,
                 self.isCurrent(request: request, viewModel: viewModel, account: account)
             else { return }
@@ -1602,6 +1608,12 @@ final class NativeEditorOpen {
                     .openOfflineCacheRefresh, durationMs: durationMs, sessionSeq: sessionSeq)
             }
         }
+    }
+
+    private func hasUnsavedNativeWork(session: NativeEditorSession, viewModel: EditorViewModel) -> Bool {
+        if session.hasPendingSave { return true }
+        guard let scope = session.scope else { return false }
+        return (try? viewModel.saveCoordinator.replicaStore.manifest(for: scope))?.outbox.isEmpty != true
     }
 
     /// Reconnect: merge the fetched raw state into the open durable owner.
@@ -1635,6 +1647,8 @@ final class NativeEditorOpen {
 
     /// Reconnect, in a task close cancels; a newer reconnect replaces it.
     func refreshInBackground(viewModel: EditorViewModel, isOffline: Bool) {
+        offlineCacheRefreshTask?.cancel()
+        offlineCacheRefreshTask = nil
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in await self?.refresh(viewModel: viewModel, isOffline: isOffline) }
     }
@@ -1927,6 +1941,8 @@ final class NativeEditorOpen {
         into session: NativeEditorSession, scope: ReplicaScope, viewModel: EditorViewModel, request: Int,
         isOffline: Bool
     ) async {
+        offlineCacheRefreshTask?.cancel()
+        offlineCacheRefreshTask = nil
         let isCurrent = { [weak self] in
             !Task.isCancelled && self?.generation == request && !session.isClosed
                 && viewModel.signedInUser.userID == scope.ownerUserID
@@ -1977,7 +1993,12 @@ final class NativeEditorOpen {
             recomputeUnavailableReason(for: session, viewModel: viewModel, hasEditAccess: verifiedEditAccess)
             startLive(session, scope: scope, config: config, viewModel: viewModel)
             // Refreshes the server title native saves send.
-            _ = try await viewModel.refreshOfflineCacheForNativeReader(isCurrent: isCurrent)
+            _ = try await viewModel.refreshOfflineCacheForNativeReader(
+                isCurrent: isCurrent,
+                hasUnsavedNativeWork: { [weak self] in
+                    guard let self else { return true }
+                    return self.hasUnsavedNativeWork(session: session, viewModel: viewModel)
+                })
         } catch {
             // Offline-first: the restored replica stays on screen. A disk
             // failure inside the integration has already frozen authoring.
