@@ -82,14 +82,22 @@ actor DocumentReplicaSession {
     static let deliveryBound = 256
 
     nonisolated let mailbox = ReplicaCommandMailbox()
+    /// The graph, its history and whether `close()` destroyed them.
+    private let live: LiveReplica
     /// Replaced only when a remote update fails to integrate: the graph is
     /// rebuilt from the journal (`recoverFromRemoteFault`).
-    private var doc: YDoc
+    private var doc: YDoc {
+        get { live.doc }
+        set { live.doc = newValue }
+    }
     private var engine: DocumentEngine
     private var sink: ReplicaPatchSink
     /// Remote entries journaled since the last compaction (PR09a).
     private var remoteAppends = 0
-    private var history: ReplicaHistory?
+    private var history: ReplicaHistory? {
+        get { live.history }
+        set { live.history = newValue }
+    }
     private let store: ReplicaStore?
     private let scope: ReplicaScope?
     private let interlinkingOrigin: String?
@@ -108,7 +116,10 @@ actor DocumentReplicaSession {
     private var pendingTypability: ReplicaDelivery.Typability?
     private var surfaces: [UUID: SurfaceState] = [:]
     private var loop: Task<Void, Never>?
-    private var isClosed = false
+    private var isClosed: Bool {
+        get { live.isClosed }
+        set { live.isClosed = newValue }
+    }
     private var closeWaiters: [CheckedContinuation<Void, Never>] = []
     /// The surface whose predicted command is being applied: its echo is not
     /// an unseen change for it.
@@ -168,7 +179,7 @@ actor DocumentReplicaSession {
             hasUnsupportedRoot = graph.hasUnsupportedRoot
             canType = graph.canType
             unfamiliarContent = graph.unfamiliarContent
-            self.doc = graph.doc
+            self.live = LiveReplica(doc: graph.doc)
             self.sink = graph.sink
             self.engine = graph.engine
             self.store = store
@@ -1278,8 +1289,21 @@ actor DocumentReplicaSession {
         guard let anchor = map(selection.anchor), let head = map(selection.head) else { return nil }
         return EditorSelection(anchor: anchor, head: head)
     }
+}
 
-    isolated deinit {
+/// A session released without `close()` (never attached, so no loop kept it)
+/// destroys its graph here, since the graph's cycles would leak. A class's
+/// deinit, not the actor's: the iOS 27 runtime can trap ("deallocated with
+/// non-zero retain count") when an actor's isolated one is queued behind a
+/// lower-priority job and escalates it (rdar://188980139).
+private final class LiveReplica {
+    var doc: YDoc
+    var history: ReplicaHistory?
+    var isClosed = false
+
+    init(doc: YDoc) { self.doc = doc }
+
+    deinit {
         if !isClosed {
             history?.destroy()
             doc.destroy()
