@@ -1251,7 +1251,10 @@ A writable page with no blocks mounts that same canvas in Reading mode, its firs
 grey hint `native.editor.empty_hint` ("Type '/' for commands") instead of the empty card; the card
 stays for read-only pages and the preserved root. A tap on the line enters Editing and focuses the
 body, which seeds the first empty paragraph, so nothing is written until then. The hint is the text
-view's accessibility value, never a separate element.
+view's accessibility value, never a separate element, and VoiceOver's "Start writing" action on the
+text view does what the tap does. Only the root document surface shows it — a table, column or source
+surface never seeds a page. A hint that wraps (large Dynamic Type, a narrow page) pushes the footer
+down, and the bottom inset grows by the overflow so the footer stays reachable.
 In Reading mode, `NativeTextSurface.setChecklistPresentation(hidesCompleted:settlingIDs:)` extends
 `refreshFolding()`'s presentation-only hiding to conceal checked `checkListItem` blocks and deeper
 descendants (`block.depth > hiddenChecklistDepth`) with zero Yjs writes, using a 450 ms

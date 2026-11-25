@@ -85,8 +85,7 @@ final class NativeEditorUITests: XCTestCase {
             "reading mode shows the empty line's hint: \(text(of: editor))")
         XCTAssertFalse(app.staticTexts["nativeEditor.editUnavailableNotice"].exists, "the empty document is writable")
         XCTAssertTrue(editor.waitForStableFrame())
-        // The page's text area, below the subpages footer: the same tap-to-edit path as the hint's line.
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)).tap()
+        tapEmptyPageHintLine(in: app)
 
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 10) && keyboard.waitForStableFrame())
@@ -119,8 +118,7 @@ final class NativeEditorUITests: XCTestCase {
         let editor = app.textViews["nativeEditor.text"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         XCTAssertTrue(editor.waitForStableFrame())
-        // The page's text area, below the subpages footer: the same tap-to-edit path as the hint's line.
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)).tap()
+        tapEmptyPageHintLine(in: app)
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 10) && keyboard.waitForStableFrame())
         let title = app.descendants(matching: .any)["editor.header.title"].firstMatch
@@ -1802,6 +1800,15 @@ final class NativeEditorUITests: XCTestCase {
     }
 
     private func text(of element: XCUIElement) -> String { element.value as? String ?? "" }
+
+    /// Taps the empty page's hint line, anchored to the subpages title below it: the footer starts
+    /// about 33 pt above that title (padding, rule, padding) and the line sits 32–54 pt above the
+    /// footer, with only text view around it, so a few points of drift still land on the page.
+    private func tapEmptyPageHintLine(in app: XCUIApplication) {
+        let subpages = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Subpages")).firstMatch
+        XCTAssertTrue(subpages.waitForExistence(timeout: 10) && subpages.waitForStableFrame())
+        subpages.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: -70)).tap()
+    }
 
     private func topParagraphY(in app: XCUIApplication) -> CGFloat {
         app.buttons["Options"].exists ? 140 : 26

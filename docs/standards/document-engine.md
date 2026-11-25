@@ -2107,8 +2107,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   after committing marked text and flushing pending saves. A writable page with no blocks mounts the
   canvas in Reading mode too, its first line carrying the grey hint `native.editor.empty_hint`
   (the text view's accessibility value, never a separate element) instead of the empty card; the card
-  stays for read-only pages and the preserved root. A tap on the line enters Editing and focuses the
-  body, which seeds the first empty paragraph — nothing is written before that. Authoritative `title`
+  stays for read-only pages and the preserved root. A tap on the line, or VoiceOver's "Start writing"
+  action, enters Editing and focuses the body, which seeds the first empty paragraph — nothing is
+  written before that. Only the root document surface (`NativeTextView.isRootDocumentSurface`) shows
+  the hint, never a table, column or source surface. Authoritative `title`
   on `EditorViewModel`
   drives native header title saves (`NativeReplicaSaveScheduler` → `enqueueReplica`, `ReplicaSaveAdapter.prepare`
   `batch == nil` title-only path); native conflict resolution wires "Keep my version"

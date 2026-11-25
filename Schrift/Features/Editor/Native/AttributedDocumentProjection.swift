@@ -91,6 +91,8 @@ struct NativeEditorLabels: Equatable {
     var dragNestedCount = Strings_en.table[.native_editor_drag_nested_count]!
     /// The empty page's first-line hint, shown while a writable page has no blocks.
     var emptyHint = Strings_en.table[.native_editor_empty_hint]!
+    /// VoiceOver's action on that line: the card's "Start writing".
+    var startWriting = Strings_en.table[.editor_start_writing]!
     var divider = Strings_en.table[.editor_divider_a11y]!
     var paragraph = Strings_en.table[.native_editor_block_paragraph]!
     var heading = Strings_en.table[.native_editor_block_heading]!

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import UIKit
 import XCTest
 
@@ -86,11 +87,119 @@ final class NativeEmptyPageHintTests: NativeEditingTestCase {
 
     /// Marked text needs focus, and focus seeds a paragraph, so the clause is
     /// locked here rather than through a state the app cannot reach.
-    func testHintHidesForContentMarkedTextAndReadOnlyPages() {
-        XCTAssertTrue(NativeTextView.showsEmptyHint(storageLength: 0, hasMarkedText: false, canEdit: true))
-        XCTAssertFalse(NativeTextView.showsEmptyHint(storageLength: 1, hasMarkedText: false, canEdit: true))
-        XCTAssertFalse(NativeTextView.showsEmptyHint(storageLength: 0, hasMarkedText: true, canEdit: true))
-        XCTAssertFalse(NativeTextView.showsEmptyHint(storageLength: 0, hasMarkedText: false, canEdit: false))
+    func testHintHidesForContentMarkedTextReadOnlyPagesAndScopedSurfaces() {
+        func shows(_ length: Int, marked: Bool = false, canEdit: Bool = true, root: Bool = true) -> Bool {
+            NativeTextView.showsEmptyHint(
+                storageLength: length, hasMarkedText: marked, canEdit: canEdit, isRootDocumentSurface: root)
+        }
+        XCTAssertTrue(shows(0))
+        XCTAssertFalse(shows(1))
+        XCTAssertFalse(shows(0, marked: true))
+        XCTAssertFalse(shows(0, canEdit: false))
+        XCTAssertFalse(shows(0, root: false), "a table, column or source surface never shows the hint")
+    }
+
+    /// The card's "Start writing" went with the card: VoiceOver gets it on the
+    /// text view instead, since a double-tap on its centre hits the footer.
+    func testVoiceOverCanStartWritingOnAWritableEmptyPage() async throws {
+        let harness = try await makeHarness(state: Self.emptyUpdate)
+        addTeardownBlock { await harness.close() }
+        harness.session.setEditing(false)
+        await harness.settle()
+        let view = harness.view
+        let unmount = mountInWindow(view)
+        defer { unmount() }
+        var editRequests = 0
+        view.onRequestEdit = { editRequests += 1 }
+
+        let action = try XCTUnwrap(startWriting(view), "a writable empty page offers Start writing")
+        XCTAssertTrue(action.actionHandler?(action) == true)
+        XCTAssertEqual(editRequests, 1, "the action requests editing like a tap on the line")
+    }
+
+    func testStartWritingIsOnlyOfferedOnAnEmptyPageTheUserCanEdit() async throws {
+        let harness = try await makeHarness([paragraph("p", "Text")])
+        addTeardownBlock { await harness.close() }
+        harness.session.setEditing(false)
+        await harness.settle()
+        harness.view.onRequestEdit = {}
+        XCTAssertNil(startWriting(harness.view), "a page with content has no Start writing")
+
+        let reader = try await NativeEditorSession.inspect(state: Self.emptyUpdate)
+        addTeardownBlock { await reader.close().value }
+        reader.textView.onRequestEdit = {}
+        XCTAssertNil(startWriting(reader.textView), "a page the user cannot edit has no Start writing")
+    }
+
+    func testStartWritingIsLocalized() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let loc = LocalizationStore(userDefaults: defaults)
+        loc.language = .german
+        XCTAssertEqual(NativeEditorLabels.document(loc).startWriting, Strings_de.table[.editor_start_writing])
+    }
+
+    /// Only the root document seeds an empty paragraph, so a source, table or
+    /// column surface is never marked as one (the predicate then hides the hint).
+    func testOnlyTheRootDocumentSurfaceShowsTheHint() async throws {
+        let math = BlockNoteBlock(node: SourceBlock.mathBlock, props: [], runs: [], id: "mx")
+        let harness = try await makeHarness([paragraph("p", "Text"), math])
+        addTeardownBlock { await harness.close() }
+        XCTAssertTrue(harness.view.isRootDocumentSurface)
+        let source = try unwrapped(await harness.session.openSource(.block(blockID: "mx")), "the source opens")
+        addTeardownBlock { await source.close().value }
+        XCTAssertFalse(source.textView.isRootDocumentSurface)
+
+        let tables = try await makeHarness(
+            state: try decoded(BlockNoteTableCaptures.fixtures.first { $0.name == "styled" }?.update))
+        addTeardownBlock { await tables.close() }
+        let table = try unwrapped(await tables.session.openTable("tbl"), "the table opens")
+        addTeardownBlock { await table.close().value }
+        XCTAssertFalse(table.textView.isRootDocumentSurface)
+
+        let columns = try await makeHarness(
+            state: try decoded(BlockNoteColumnCaptures.fixtures.first { $0.name == "two" }?.update))
+        addTeardownBlock { await columns.close() }
+        let column = try unwrapped(await columns.session.openColumn(group: "cl", column: "c1"), "the column opens")
+        addTeardownBlock { await column.close().value }
+        XCTAssertFalse(column.textView.isRootDocumentSurface)
+    }
+
+    /// A hint wrapped past the text's height (a narrow page, large Dynamic
+    /// Type) pushes the footer down: the inset must still reach its bottom.
+    func testTheFooterStaysReachableBelowAWrappedHint() async throws {
+        let harness = try await makeHarness(state: Self.emptyUpdate)
+        addTeardownBlock { await harness.close() }
+        harness.session.setEditing(false)
+        await harness.settle()
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let editor = NativeEditorView(
+            session: harness.session, title: "Empty", serverOrigin: "https://example.test",
+            showsStandaloneChrome: false, footerContent: { AnyView(Color.clear.frame(height: 120)) },
+            externalIsEditing: false, onRequestEdit: {})
+        let host = UIHostingController(rootView: editor.environment(LocalizationStore(userDefaults: defaults)))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 120, height: 700))
+        window.rootViewController = host
+        window.isHidden = false
+        defer { window.isHidden = true }
+        let view = harness.view
+        await waitUntil(timeout: 5) {
+            host.view.layoutIfNeeded()
+            return view.footerAccessoryView != nil && !view.emptyHintLabel.isHidden
+        }
+        let footer = try XCTUnwrap(view.footerAccessoryView)
+        XCTAssertGreaterThan(view.emptyHintBottom, view.contentSize.height, "the narrow page wraps the hint")
+        XCTAssertEqual(footer.frame.minY, view.emptyHintBottom, accuracy: 0.5, "the footer starts below the hint")
+        XCTAssertGreaterThanOrEqual(
+            view.contentSize.height + view.contentInset.bottom, footer.frame.maxY - 0.5,
+            "the furthest scroll shows the footer's last line")
+    }
+
+    private func startWriting(_ view: NativeTextView) -> UIAccessibilityCustomAction? {
+        view.accessibilityCustomActions?.first { $0.name == NativeEditorLabels().startWriting }
+    }
+
+    private func decoded(_ base64: String?) throws -> Data {
+        try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(base64)))
     }
 
     func testHintFollowsTheTextDirection() async throws {

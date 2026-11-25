@@ -555,7 +555,8 @@ final class NativeTextView: UITextView {
     /// link chip touched by the caret/selection (PR13c1).
     override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
         get {
-            inlineChipAccessibilityActions()
+            emptyPageAccessibilityActions()
+                + inlineChipAccessibilityActions()
                 + (inputCoordinator?.blockAccessibilityActions() ?? [])
                 + (super.accessibilityCustomActions ?? [])
         }
@@ -566,16 +567,22 @@ final class NativeTextView: UITextView {
     /// hint until the seed writes the first paragraph (or marked text starts).
     private(set) var emptyHintLabel = UILabel()
 
+    /// Only the root document seeds an empty paragraph, so only it shows the
+    /// hint; a column, table cell or source surface leaves this false.
+    var isRootDocumentSurface = true
+
     var showsEmptyHint: Bool {
         Self.showsEmptyHint(
             storageLength: textStorage.length, hasMarkedText: markedTextRange != nil,
-            canEdit: isEditable || inputCoordinator != nil)
+            canEdit: isEditable || inputCoordinator != nil, isRootDocumentSurface: isRootDocumentSurface)
     }
 
     /// The hint's condition, pure so the marked-text case — unreachable through
     /// focus, which seeds a paragraph first — is still locked by a test.
-    static func showsEmptyHint(storageLength: Int, hasMarkedText: Bool, canEdit: Bool) -> Bool {
-        storageLength == 0 && !hasMarkedText && canEdit
+    static func showsEmptyHint(
+        storageLength: Int, hasMarkedText: Bool, canEdit: Bool, isRootDocumentSurface: Bool
+    ) -> Bool {
+        isRootDocumentSurface && storageLength == 0 && !hasMarkedText && canEdit
     }
 
     /// The hint's bottom in content coordinates: the footer starts below it.
@@ -902,6 +909,20 @@ final class NativeTextView: UITextView {
         return false
     }
 
+    /// VoiceOver's way into an empty page: the card's "Start writing" action.
+    /// A double-tap on the text view's centre lands on the subpages footer,
+    /// which refuses the edit tap.
+    private func emptyPageAccessibilityActions() -> [UIAccessibilityCustomAction] {
+        guard showsEmptyHint, !isEditable, let onRequestEdit else { return [] }
+        let name = blockControls?.labels.startWriting ?? NativeEditorLabels().startWriting
+        return [
+            UIAccessibilityCustomAction(name: name) { _ in
+                onRequestEdit()
+                return true
+            }
+        ]
+    }
+
     private func inlineChipAccessibilityActions() -> [UIAccessibilityCustomAction] {
         var actions: [UIAccessibilityCustomAction] = []
         if let onOpenDocument = blockControls?.onOpenDocument, let target = selectedNavigableInterlink() {
@@ -1215,6 +1236,8 @@ final class NativeTextView: UITextView {
         emptyHintLabel.isUserInteractionEnabled = false
         emptyHintLabel.isAccessibilityElement = false
         emptyHintLabel.isHidden = true
+        // Wraps at large Dynamic Type or a narrow page instead of clipping.
+        emptyHintLabel.numberOfLines = 0
         addSubview(emptyHintLabel)
         addSubview(cursorOverlay)
         chipAccessibilityOverlay.textView = self

@@ -878,6 +878,7 @@ extension NativeEditorLabels {
             dragMovedInside: loc[.native_editor_drag_moved_inside],
             dragNestedCount: loc[.native_editor_drag_nested_count],
             emptyHint: loc[.native_editor_empty_hint],
+            startWriting: loc[.editor_start_writing],
             divider: loc[.editor_divider_a11y],
             paragraph: loc[.native_editor_block_paragraph],
             heading: loc[.native_editor_block_heading],
@@ -1180,10 +1181,14 @@ private final class NativeCanvasViewController: UIViewController {
         }
 
         let footerHeight: CGFloat
+        var hintOverflow: CGFloat = 0
         if let footerHost {
             let fitted = footerHost.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
             footerHeight = max(0, ceil(fitted.height))
             let contentHeight = max(textView.emptyHintBottom, textView.contentSize.height)
+            // A wrapped hint can reach below the text: the inset must cover it
+            // or the footer's last lines stay unreachable.
+            hintOverflow = max(0, textView.emptyHintBottom - textView.contentSize.height)
             let frame = CGRect(x: 0, y: contentHeight, width: width, height: footerHeight)
             if footerHost.view.frame != frame {
                 footerHost.view.frame = frame
@@ -1192,7 +1197,7 @@ private final class NativeCanvasViewController: UIViewController {
             footerHeight = 0
         }
 
-        let targetInset = UIEdgeInsets(top: headerHeight, left: 0, bottom: footerHeight, right: 0)
+        let targetInset = UIEdgeInsets(top: headerHeight, left: 0, bottom: footerHeight + hintOverflow, right: 0)
         if textView.contentInset != targetInset {
             let previousAdjustedTop = textView.adjustedContentInset.top
             let wasAtTop =
