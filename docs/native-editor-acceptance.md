@@ -53,7 +53,7 @@ events) across all thirteen instrumented stages:
 
 1. `openServerConfig` (`NativeEditorOpen.open` first-open `serverConfig()` fetch)
 2. `openDocumentState` (`NativeEditorOpen.open` first-open `collaborationYDocState` + `serverAbility` fetch)
-3. `openOfflineCacheRefresh` (`NativeEditorOpen.open` first-open `refreshOfflineCacheForNativeReader` fetch)
+3. `openOfflineCacheRefresh` (`NativeEditorOpen.open` first-open background `refreshOfflineCacheForNativeReader` fetch, recorded under the session when it finishes)
 4. `diskRestore` (`ReplicaStore.restore` checkpoint + journal segment read)
 5. `decodeIntegrate` (`DocumentReplicaSession` decode + `YDoc.applyUpdate`)
 6. `projection` (`NativeBlockProjection` / `AttributedDocumentProjection`)

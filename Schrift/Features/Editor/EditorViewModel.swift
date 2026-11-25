@@ -129,6 +129,8 @@ final class EditorViewModel {
     /// hiccup is indistinguishable from a deletion without this.
     var errorDetail: String?
     var focusedBlockID: UUID?
+    /// True while the editable header title field currently holds focus.
+    var isTitleFocused = false
     var cursorRequest: CursorRequest?
     var selection: NSRange?
     /// Native keyboard identity can continue in another model block after a split/merge.
@@ -1418,7 +1420,9 @@ final class EditorViewModel {
     /// This refresh covers content only, not the children cache. `isCurrent`
     /// is the native open's own check (generation and account), so a response
     /// for a closed open, a sign-out or a deletion never re-caches the body.
-    func refreshOfflineCacheForNativeReader(isCurrent: () -> Bool) async throws -> Bool {
+    func refreshOfflineCacheForNativeReader(
+        isCurrent: () -> Bool, hasUnsavedNativeWork: () -> Bool = { false }
+    ) async throws -> Bool {
         guard !Task.isCancelled, !availability.isOffline, !isLocalDocument, !isDocumentPendingDelete,
             !isDocumentDiscarded
         else { return false }
@@ -1427,10 +1431,13 @@ final class EditorViewModel {
         let fetched = try await client.formattedContent(documentID: documentID)
         let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: token)
         guard !Task.isCancelled, availability.permitsResponse(for: token), !isDocumentPendingDelete,
-            !isDocumentDiscarded, isCurrent(), !saveCoordinator.mayPredateSave(marker)
+            !isDocumentDiscarded, isCurrent(), !saveCoordinator.mayPredateSave(marker),
+            !saveCoordinator.hasSaveInFlight(documentID: documentID),
+            saveCoordinator.pendingSave(documentID: documentID) == nil
         else { return false }
         cacheServerCopy(formatted, leafNesting: leafNesting)
-        applyNativeServerContent(formatted: formatted, leafNesting: leafNesting)
+        applyNativeServerContent(
+            formatted: formatted, leafNesting: leafNesting, hasUnsavedNativeWork: hasUnsavedNativeWork())
         return true
     }
 
@@ -4040,29 +4047,71 @@ final class EditorViewModel {
         guard let existing else { return }
         nativeServerBaseline = DraftBaseline(
             serverUpdatedAt: serverUpdatedAt, markdown: existing.markdown, title: existing.title,
-            markdownIsLocal: existing.markdownIsLocal)
+            markdownIsLocal: existing.markdownIsLocal, bodyIsUnknown: existing.bodyIsUnknown)
+    }
+
+    /// Seeds header and baseline metadata from the server responses already fetched
+    /// during a first native open (`collaborationYDocState` and optional document detail),
+    /// before the deferred classic offline-cache refresh completes.
+    func applyNativeOpenMetadata(serverTitle: String?, serverUpdatedAt: Date?) {
+        if let serverTitle {
+            saveCoordinator.noteServerTitle(documentID: documentID, title: serverTitle)
+        }
+        guard !hasPendingNativeTitleEdit,
+            saveCoordinator.pendingSave(documentID: documentID) == nil,
+            saveCoordinator.storedDraft(documentID: documentID) == nil,
+            syncConflict == nil
+        else { return }
+        lastSyncedAt = Date()
+        if !isTitleFocused, let serverTitle, serverTitle != title {
+            title = serverTitle
+            savedTitle = serverTitle
+        }
+        if let serverUpdatedAt, nativeServerBaseline == nil {
+            nativeServerBaseline = DraftBaseline(
+                serverUpdatedAt: serverUpdatedAt, markdown: "", title: serverTitle, bodyIsUnknown: true)
+        }
     }
 
     /// Updates coordinator title tracking, baseline, and clean on-screen title after a fresh
     /// native-reader fetch past `mayPredateSave`.
-    func applyNativeServerContent(formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
+    func applyNativeServerContent(
+        formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay, hasUnsavedNativeWork: Bool = false
+    ) {
         if let serverTitle = formatted.title {
             saveCoordinator.noteServerTitle(documentID: documentID, title: serverTitle)
         }
         let serverCopy = serverCopyKeepingLeafNesting(
             fetched: formatted.content ?? "", overlay: leafNesting,
             known: contentCache.content(for: documentID)?.markdown)
+        // If we only hold the first-open timestamp-only seed and the server has not moved past
+        // it (`formatted.updatedAt == seededDate`), this fetch is provably the ancestor of any
+        // edits made since open: fill in its body and title (clearing `bodyIsUnknown`) without
+        // moving the timestamp, even while local native work is pending.
+        if let existing = nativeServerBaseline,
+            existing.bodyIsUnknown == true,
+            let seededDate = existing.serverUpdatedAt,
+            formatted.updatedAt == seededDate
+        {
+            nativeServerBaseline = DraftBaseline(
+                serverUpdatedAt: seededDate, markdown: serverCopy, title: formatted.title ?? existing.title)
+        }
         // Only advance the native baseline and clean title when no local work protects an
         // earlier ancestor.
         guard !hasPendingNativeTitleEdit,
+            !hasUnsavedNativeWork,
+            !saveCoordinator.hasSaveInFlight(documentID: documentID),
             saveCoordinator.pendingSave(documentID: documentID) == nil,
             saveCoordinator.storedDraft(documentID: documentID) == nil,
             syncConflict == nil
         else { return }
+        let baselineRegresses =
+            nativeServerBaseline?.serverUpdatedAt.map { formatted.updatedAt < $0 } ?? false
+        guard !baselineRegresses else { return }
         nativeServerBaseline = DraftBaseline(
             serverUpdatedAt: formatted.updatedAt, markdown: serverCopy, title: formatted.title)
         lastSyncedAt = Date()
-        if let fetchedTitle = formatted.title, fetchedTitle != title {
+        if !isTitleFocused, let fetchedTitle = formatted.title, fetchedTitle != title {
             title = fetchedTitle
             savedTitle = fetchedTitle
         }
@@ -4289,7 +4338,8 @@ final class EditorViewModel {
         // block preservation must never read as the server copy.
         serverBaseline = DraftBaseline(
             serverUpdatedAt: conflict.serverUpdatedAt, markdown: serverBaseline?.markdown ?? currentMarkdown(),
-            title: serverBaseline?.title, markdownIsLocal: serverBaseline.map { $0.markdownIsLocal } ?? true)
+            title: serverBaseline?.title, markdownIsLocal: serverBaseline.map { $0.markdownIsLocal } ?? true,
+            bodyIsUnknown: serverBaseline?.bodyIsUnknown)
         flushPendingChanges()
         // **Re-check after the flush.** `isDirty` is not proof there is anything to push:
         // `flushPendingChanges` enqueues nothing when the content serializes back to

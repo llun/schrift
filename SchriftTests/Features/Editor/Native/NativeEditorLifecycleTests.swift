@@ -448,6 +448,9 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             let open = NativeEditorOpen(preference: { true })
             await open.open(viewModel: fixture.model, isOffline: false)
             guard case .native = open.route else { return XCTFail("expected native reader") }
+            await waitUntil {
+                cache.content(for: fixture.model.documentID)?.markdown == "Fresh server-exported offline text"
+            }
             let cached = cache.content(for: fixture.model.documentID)
             XCTAssertEqual(cached?.markdown, "Fresh server-exported offline text")
             XCTAssertEqual(cached?.title, "Fresh server title")
@@ -468,7 +471,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         }
     }
 
-    func testDeleteDuringFormattedRefreshPreservesCacheAndFallsBackToClassic() async {
+    func testDeleteDuringFormattedRefreshPreservesCacheAndReopenFallsBackToClassic() async {
         let fixture = makeFixture()
         defer {
             fixture.clean()
@@ -480,12 +483,20 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             syncedAt: Date(timeIntervalSince1970: 1), serverUpdatedAt: Date(timeIntervalSince1970: 2))
         cache.save(original)
         let response = MockURLProtocol.ResponseGate()
+        let settled = Counter()
         stub(
             version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID),
+            onGatedCompletion: { _ = settled.next() },
             markdown: "New server body that must not replace the cache", formattedGate: response)
         let open = NativeEditorOpen(preference: { true })
-        defer { open.close() }
-        let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
+        defer {
+            response.open()
+            open.close()
+        }
+        await open.open(viewModel: fixture.model, isOffline: false)
+        guard case .native = open.route else {
+            return XCTFail("first open must select .native before the deferred formatted-content refresh completes")
+        }
         await waitUntil {
             MockURLProtocol.deferredDeliveryCount == 1
                 && MockURLProtocol.lastRequest?.url?.path.contains("formatted-content") == true
@@ -494,12 +505,18 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         // after both the opener's and the refresh method's pre-fetch checks.
         fixture.model.saveCoordinator.recordPendingDelete(documentID: fixture.model.documentID, ownerUserID: UUID())
         response.open()
-        await loading.value
+        await waitUntil { settled.current == 1 }
+        await waitAndConfirmNever {
+            cache.content(for: fixture.model.documentID) != original
+        }
         XCTAssertEqual(
             cache.content(for: fixture.model.documentID), original,
             "the refresh method's post-fetch guards must prevent this late cache write")
+        // Reopening with the pending delete recorded routes back to classic.
+        open.close()
+        await open.open(viewModel: fixture.model, isOffline: false)
         guard case .classic = open.route else {
-            return XCTFail("a delete queued mid-fetch keeps the classic owner until stage 2")
+            return XCTFail("reopening a pending-delete document keeps the classic owner")
         }
     }
 
@@ -932,7 +949,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
                 return .init(
                     statusCode: 200, headers: ["Content-Type": "application/json"],
                     body: try! JSONSerialization.data(withJSONObject: object), error: nil,
-                    releasedBy: formattedGate)
+                    releasedBy: formattedGate, onCompletion: formattedGate == nil ? nil : onGatedCompletion)
             }
             if request.url?.path.contains("children") == true {
                 return .init(statusCode: 200, headers: [:], body: Data("{\"count\":0,\"results\":[]}".utf8), error: nil)

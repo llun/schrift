@@ -54,6 +54,11 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         }
         XCTAssertNotNil(firstSession.scope)
         XCTAssertGreaterThan(firstSession.sessionSeq, 0)
+        await waitUntil {
+            NativeEditorDiagnosticsStore.shared
+                .sessionSummary(for: firstSession.sessionSeq)?
+                .stages[NativeEditorStage.openOfflineCacheRefresh.rawValue]?.count == 1
+        }
         let firstSummary = try XCTUnwrap(
             NativeEditorDiagnosticsStore.shared.sessionSummary(for: firstSession.sessionSeq))
         for stage in firstOpenStages {
@@ -104,6 +109,11 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         }
         XCTAssertNil(inspectSession.scope)
         XCTAssertGreaterThan(inspectSession.sessionSeq, 0)
+        await waitUntil {
+            NativeEditorDiagnosticsStore.shared
+                .sessionSummary(for: inspectSession.sessionSeq)?
+                .stages[NativeEditorStage.openOfflineCacheRefresh.rawValue]?.count == 1
+        }
         let inspectSummary = try XCTUnwrap(
             NativeEditorDiagnosticsStore.shared.sessionSummary(for: inspectSession.sessionSeq))
         for stage in firstOpenStages {
@@ -125,12 +135,475 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             return XCTFail("expected a native session when collection is disabled")
         }
         XCTAssertEqual(offSession.sessionSeq, 0)
+        await waitUntil { offEnv.model.contentCache.content(for: offEnv.documentID) != nil }
         let offSnapshot = NativeEditorDiagnosticsStore.shared.snapshot()
         XCTAssertEqual(offSnapshot.totalSampleCount, 0)
         XCTAssertTrue(offSnapshot.sessions.isEmpty)
         for stage in firstOpenStages {
             XCTAssertNil(offSnapshot.stageDistributions[stage.rawValue])
         }
+    }
+
+    func testFirstOpenShowsNativeWithoutWaitingForOfflineCacheRefresh() async throws {
+        NativeEditorDiagnosticsStore.shared.reset()
+        defer {
+            NativeEditorDiagnosticsStore.shared.setForcedCollection(nil)
+            NativeEditorDiagnosticsStore.shared.reset()
+        }
+        NativeEditorDiagnosticsStore.shared.setForcedCollection(true)
+
+        // 1. First open reaches `.native` while formatted-content is still held on a gate,
+        //    then updates the classic cache and records `openOfflineCacheRefresh` once released.
+        let state = seedState()
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: state)
+        server.serverTitle = "Fresh server title"
+        server.serverContent = "Fresh server-exported offline text"
+        let gate = MockURLProtocol.ResponseGate()
+        server.contentGate = gate
+        server.install()
+
+        let open = NativeEditorOpen(preference: { true })
+        defer {
+            gate.open()
+            open.close()
+        }
+        let openTask = Task { await open.open(viewModel: env.model, isOffline: false, canUpdate: true) }
+        await waitUntil(timeout: 2) {
+            if case .native = open.route { return true }
+            return false
+        }
+        guard case .native(let session) = open.route else {
+            return XCTFail("first open must reach .native before formatted-content completes")
+        }
+        await openTask.value
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && server.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
+        XCTAssertNotNil(session.scope)
+        XCTAssertNotNil(session.input)
+        XCTAssertEqual(env.model.title, "Fresh server title")
+        XCTAssertNotNil(env.model.lastSyncedAt)
+        XCTAssertNil(
+            env.model.contentCache.content(for: env.documentID),
+            "classic cache must still be empty while formatted-content is pending")
+        let pendingSummary = try XCTUnwrap(
+            NativeEditorDiagnosticsStore.shared.sessionSummary(for: session.sessionSeq))
+        XCTAssertEqual(pendingSummary.stages[NativeEditorStage.openServerConfig.rawValue]?.count, 1)
+        XCTAssertEqual(pendingSummary.stages[NativeEditorStage.openDocumentState.rawValue]?.count, 1)
+        XCTAssertNil(
+            pendingSummary.stages[NativeEditorStage.openOfflineCacheRefresh.rawValue],
+            "openOfflineCacheRefresh must not be recorded before the background refresh finishes")
+
+        gate.open()
+        await waitUntil {
+            env.model.contentCache.content(for: env.documentID)?.markdown == "Fresh server-exported offline text"
+        }
+        await waitUntil {
+            NativeEditorDiagnosticsStore.shared
+                .sessionSummary(for: session.sessionSeq)?
+                .stages[NativeEditorStage.openOfflineCacheRefresh.rawValue]?.count == 1
+        }
+        let cached = try XCTUnwrap(env.model.contentCache.content(for: env.documentID))
+        XCTAssertEqual(cached.title, "Fresh server title")
+        let refreshSamples = NativeEditorDiagnosticsStore.shared.snapshot().recentSamples.filter {
+            $0.stage == .openOfflineCacheRefresh
+        }
+        XCTAssertEqual(refreshSamples.count, 1)
+        XCTAssertEqual(refreshSamples.first?.sessionSeq, session.sessionSeq)
+        open.close()
+
+        // 2. Closing while the deferred refresh is in flight cancels it and never writes the cache or records a stage.
+        NativeEditorDiagnosticsStore.shared.reset()
+        let closedEnv = makeEnvironment()
+        defer { closedEnv.clean() }
+        let closedServer = ServerStub(owner: owner, state: state)
+        closedServer.serverContent = "Closed-open body that must not cache"
+        let closedGate = MockURLProtocol.ResponseGate()
+        let closedSettled = Counter()
+        closedServer.contentGate = closedGate
+        closedServer.onContentCompletion = { _ = closedSettled.next() }
+        closedServer.install()
+
+        let closedOpen = NativeEditorOpen(preference: { true })
+        defer {
+            closedGate.open()
+            closedOpen.close()
+        }
+        await closedOpen.open(viewModel: closedEnv.model, isOffline: false, canUpdate: true)
+        guard case .native(let closedSession) = closedOpen.route else {
+            return XCTFail("expected .native before formatted-content completes")
+        }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && closedServer.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
+        closedOpen.close()
+        closedGate.open()
+        await waitUntil { closedSettled.current == 1 }
+        await waitAndConfirmNever {
+            closedEnv.model.contentCache.content(for: closedEnv.documentID) != nil
+                || NativeEditorDiagnosticsStore.shared
+                    .sessionSummary(for: closedSession.sessionSeq)?
+                    .stages[NativeEditorStage.openOfflineCacheRefresh.rawValue] != nil
+        }
+
+        // 3. Superseding via reopen cancels the previous refresh so its late response never writes the cache.
+        NativeEditorDiagnosticsStore.shared.reset()
+        let supersededEnv = makeEnvironment()
+        defer { supersededEnv.clean() }
+        let supersededServer = ServerStub(owner: owner, state: state)
+        supersededServer.serverContent = "Superseded body that must not cache"
+        let supersededGate = MockURLProtocol.ResponseGate()
+        let supersededSettled = Counter()
+        supersededServer.contentGate = supersededGate
+        supersededServer.onContentCompletion = { _ = supersededSettled.next() }
+        supersededServer.install()
+
+        let supersededOpen = NativeEditorOpen(preference: { true })
+        defer {
+            supersededGate.open()
+            supersededOpen.close()
+        }
+        await supersededOpen.open(viewModel: supersededEnv.model, isOffline: false, canUpdate: true)
+        guard case .native(let supersededSession) = supersededOpen.route else {
+            return XCTFail("expected .native before formatted-content completes")
+        }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && supersededServer.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
+        supersededOpen.reopen(viewModel: supersededEnv.model, isOffline: true, canUpdate: true)
+        await waitUntil {
+            if case .native(let reopened) = supersededOpen.route {
+                return reopened.sessionSeq != supersededSession.sessionSeq
+            }
+            return false
+        }
+        supersededGate.open()
+        await waitUntil { supersededSettled.current == 1 }
+        await waitAndConfirmNever {
+            supersededEnv.model.contentCache.content(for: supersededEnv.documentID) != nil
+                || NativeEditorDiagnosticsStore.shared
+                    .sessionSummary(for: supersededSession.sessionSeq)?
+                    .stages[NativeEditorStage.openOfflineCacheRefresh.rawValue] != nil
+        }
+    }
+
+    func testLateFirstOpenRefreshDoesNotAdvanceBaselineOrClobberTitleWhenNativeEditsPending() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Base Title"
+        server.serverUpdatedAt = "2026-11-07T10:00:00Z"
+        // Simulate a concurrent web edit arriving before formatted-content answers.
+        server.formattedTitle = "Web Edit Title"
+        server.formattedUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverContent = "Web edit body"
+        let gate = MockURLProtocol.ResponseGate()
+        let settled = Counter()
+        server.contentGate = gate
+        server.onContentCompletion = { _ = settled.next() }
+        server.install()
+
+        let open = NativeEditorOpen(preference: { true })
+        defer {
+            gate.open()
+            open.close()
+        }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else {
+            return XCTFail("expected .native before formatted-content completes")
+        }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && server.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
+        XCTAssertEqual(env.model.title, "Base Title")
+        let syncedBefore = try XCTUnwrap(env.model.lastSyncedAt)
+
+        // User types body text inside the 10 s debounce window (journaled, not yet handed to coordinator).
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Local ")
+        await session.settle()
+        XCTAssertTrue(session.hasPendingSave)
+        XCTAssertNil(env.model.saveCoordinator.pendingSave(documentID: env.documentID))
+        XCTAssertNil(env.model.saveCoordinator.storedDraft(documentID: env.documentID))
+
+        // Late formatted-content lands with the newer web edit.
+        gate.open()
+        await waitUntil { settled.current == 1 }
+        await waitUntil {
+            env.model.contentCache.content(for: env.documentID)?.markdown == "Web edit body"
+        }
+        XCTAssertEqual(env.model.title, "Base Title", "late refresh must not replace title while native edits pending")
+        XCTAssertEqual(
+            env.model.lastSyncedAt, syncedBefore,
+            "late refresh must not advance lastSyncedAt while native edits pending")
+
+        // Flush offline and replay against the newer server: baseline was not advanced, so conflict is detected.
+        server.isOffline = true
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        server.serverTitle = "Web Edit Title"
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        server.contentGate = nil
+        server.isOffline = false
+        await env.model.saveCoordinator.syncPendingDrafts()
+        XCTAssertNotNil(
+            env.model.syncConflict,
+            "baseline must stay at the open timestamp so replay detects the concurrent web edit")
+        XCTAssertTrue(server.patchedUpdates.isEmpty, "conflict hold must prevent pushing over the web edit")
+    }
+
+    func testDeferredRefreshSkipsCacheWriteWhileSaveIsInFlight() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverContent = "Pre-save body that must not be cached"
+        let contentGate = MockURLProtocol.ResponseGate()
+        let patchGate = MockURLProtocol.ResponseGate()
+        let contentSettled = Counter()
+        server.contentGate = contentGate
+        server.patchGate = patchGate
+        server.onContentCompletion = { _ = contentSettled.next() }
+        server.install()
+
+        let open = NativeEditorOpen(preference: { true })
+        defer {
+            contentGate.open()
+            patchGate.open()
+            open.close()
+        }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else {
+            return XCTFail("expected .native before formatted-content completes")
+        }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && server.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
+
+        // Start a save that stays in flight on patchGate while formatted-content is still pending.
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("In-flight ")
+        await session.settle()
+        open.flushPendingSave()
+        await waitUntil {
+            env.model.saveCoordinator.hasSaveInFlight(documentID: env.documentID)
+                && server.log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/") == 1
+        }
+
+        // Release formatted-content while the save is still in flight: cache write must be skipped.
+        contentGate.open()
+        await waitUntil { contentSettled.current == 1 }
+        await waitAndConfirmNever {
+            env.model.contentCache.content(for: env.documentID) != nil
+        }
+
+        patchGate.open()
+        await waitUntil { self.isSaved(env.model.saveCoordinator.state(for: env.documentID)) }
+    }
+
+    func testIntegrateServerStateCancelsInFlightFirstOpenRefresh() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Initial Title"
+        server.serverContent = "Stale first-open body"
+        let firstGate = MockURLProtocol.ResponseGate()
+        let firstSettled = Counter()
+        server.contentGate = firstGate
+        server.onContentCompletion = { _ = firstSettled.next() }
+        server.install()
+
+        let open = NativeEditorOpen(preference: { true })
+        defer {
+            firstGate.open()
+            open.close()
+        }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native = open.route else {
+            return XCTFail("expected .native before formatted-content completes")
+        }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && server.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
+
+        // Newer reconnect refresh runs via integrateServerState with newer content and no gate.
+        server.contentGate = nil
+        server.onContentCompletion = nil
+        server.serverTitle = "Newer Reconnect Title"
+        server.serverContent = "Newer reconnect body"
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        await open.refresh(viewModel: env.model, isOffline: false)
+        XCTAssertEqual(env.model.contentCache.content(for: env.documentID)?.markdown, "Newer reconnect body")
+        XCTAssertEqual(env.model.title, "Newer Reconnect Title")
+
+        // Release the older first-open refresh: it must have been cancelled and never overwrite the newer cache/title.
+        firstGate.open()
+        await waitUntil { firstSettled.current == 1 }
+        await waitAndConfirmNever {
+            env.model.contentCache.content(for: env.documentID)?.markdown != "Newer reconnect body"
+                || env.model.title != "Newer Reconnect Title"
+        }
+    }
+
+    func testLateRefreshDoesNotReplaceTitleWhileTitleFieldIsFocused() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Base Title"
+        server.serverUpdatedAt = "2026-11-07T10:00:00Z"
+        server.formattedTitle = "Web Renamed Title"
+        server.formattedUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverContent = "Updated body"
+        let gate = MockURLProtocol.ResponseGate()
+        let settled = Counter()
+        server.contentGate = gate
+        server.onContentCompletion = { _ = settled.next() }
+        server.install()
+
+        let open = NativeEditorOpen(preference: { true })
+        defer {
+            gate.open()
+            open.close()
+        }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native = open.route else {
+            return XCTFail("expected .native before formatted-content completes")
+        }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && server.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
+        XCTAssertEqual(env.model.title, "Base Title")
+
+        // User focuses the title field before typing (hasPendingNativeTitleEdit is still false).
+        env.model.isTitleFocused = true
+        gate.open()
+        await waitUntil { settled.current == 1 }
+        await waitUntil { env.model.contentCache.content(for: env.documentID)?.markdown == "Updated body" }
+        XCTAssertEqual(
+            env.model.title, "Base Title",
+            "late refresh must not replace the on-screen title while the title field is focused")
+    }
+
+    func testApplyNativeOpenMetadataPreservesCachedBaselineAndRefreshNeverRegressesTimestamp() throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let nov6 = ISO8601DateFormatter().date(from: "2026-11-06T10:00:00Z")!
+        let nov7 = ISO8601DateFormatter().date(from: "2026-11-07T10:00:00Z")!
+        let nov8 = ISO8601DateFormatter().date(from: "2026-11-08T10:00:00Z")!
+
+        // 1. Existing cached baseline: applyNativeOpenMetadata keeps the cached body and advances nothing.
+        env.model.contentCache.save(
+            CachedDocumentContent(
+                documentID: env.documentID, title: "Cached Title", markdown: "# Cached Body",
+                syncedAt: nov7, serverUpdatedAt: nov7))
+        env.model.seedNativeMetadataIfNeeded()
+        env.model.applyNativeOpenMetadata(serverTitle: "Fresh Title", serverUpdatedAt: nov8)
+        let afterOpen = try XCTUnwrap(
+            env.model.nativeEnqueueInputs(cached: nil, draft: nil, fallbackTitle: "Fallback").baseline)
+        XCTAssertEqual(afterOpen.markdown, "# Cached Body", "cached baseline body must be preserved")
+        XCTAssertEqual(afterOpen.serverUpdatedAt, nov7, "cached baseline timestamp must not be advanced")
+        XCTAssertNil(afterOpen.markdownIsLocal)
+        XCTAssertNil(afterOpen.bodyIsUnknown)
+
+        // 2. Newer refresh advances baseline to Nov 8; an older Nov 6 response must never regress it.
+        env.model.applyNativeServerContent(
+            formatted: FormattedDocumentContent(
+                id: env.documentID, title: "Nov 8 Title", content: "# Nov 8 Body",
+                createdAt: nov6, updatedAt: nov8),
+            leafNesting: .unknown)
+        env.model.applyNativeServerContent(
+            formatted: FormattedDocumentContent(
+                id: env.documentID, title: "Stale Nov 6 Title", content: "# Stale Body",
+                createdAt: nov6, updatedAt: nov6),
+            leafNesting: .unknown)
+        let afterStale = try XCTUnwrap(
+            env.model.nativeEnqueueInputs(cached: nil, draft: nil, fallbackTitle: "Fallback").baseline)
+        XCTAssertEqual(afterStale.serverUpdatedAt, nov8, "baseline timestamp must never regress to an older fetch")
+        XCTAssertEqual(afterStale.markdown, "# Nov 8 Body")
+    }
+
+    func testUnchangedDeferredRefreshFillsSeededBaselineBodyWhileEditsPendingSoLaterWebRenameMerges() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let nov7 = ISO8601DateFormatter().date(from: "2026-11-07T10:00:00Z")!
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Base Title"
+        server.serverUpdatedAt = "2026-11-07T10:00:00Z"
+        server.serverContent = "First paragraph."
+        let gate = MockURLProtocol.ResponseGate()
+        let settled = Counter()
+        server.contentGate = gate
+        server.onContentCompletion = { _ = settled.next() }
+        server.install()
+
+        let open = NativeEditorOpen(preference: { true })
+        defer {
+            gate.open()
+            open.close()
+        }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else {
+            return XCTFail("expected .native before formatted-content completes")
+        }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && server.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
+        let syncedBefore = try XCTUnwrap(env.model.lastSyncedAt)
+
+        // User types body text while the deferred refresh is still pending.
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Local ")
+        await session.settle()
+        XCTAssertTrue(session.hasPendingSave)
+
+        // Deferred refresh returns with the exact same Nov 7 timestamp (provably the ancestor).
+        gate.open()
+        await waitUntil { settled.current == 1 }
+        await waitUntil { env.model.contentCache.content(for: env.documentID)?.markdown == "First paragraph." }
+        XCTAssertEqual(
+            env.model.lastSyncedAt, syncedBefore,
+            "lastSyncedAt must still respect the unsaved-work guard")
+        XCTAssertEqual(env.model.title, "Base Title")
+
+        let upgraded = try XCTUnwrap(
+            env.model.nativeEnqueueInputs(cached: nil, draft: nil, fallbackTitle: "Fallback").baseline)
+        XCTAssertEqual(
+            upgraded.markdown, "First paragraph.",
+            "an unchanged deferred refresh must fill the seeded timestamp-only baseline body")
+        XCTAssertEqual(upgraded.serverUpdatedAt, nov7)
+        XCTAssertNil(upgraded.bodyIsUnknown)
+
+        // Flush offline, then a co-author renames only the title at a newer timestamp on the server.
+        server.isOffline = true
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        server.serverTitle = "Web Renamed Title"
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverContent = "First paragraph."
+        server.contentGate = nil
+        server.onContentCompletion = nil
+        server.isOffline = false
+        await env.model.saveCoordinator.syncPendingDrafts()
+        await waitUntil { self.isSaved(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        // Body matches the filled-in ancestor baseline, and draftTitleOutcome adopts the web rename.
+        XCTAssertNil(env.model.syncConflict, "a web title-only rename must not raise a body conflict")
+        XCTAssertEqual(server.patchedUpdates.count, 1)
+        XCTAssertEqual(server.titles, ["Web Renamed Title"])
     }
 
     /// A page created on this device before the switch was on is still a classic draft. Opening
@@ -2169,8 +2642,10 @@ private final class ServerStub: @unchecked Sendable {
     private let owner: UUID
     private var _state: Data
     private var _serverTitle = "Fresh server title"
+    private var _formattedTitle: String?
     private var _serverContent = "First paragraph."
     private var _serverUpdatedAt = "2026-11-07T10:00:00Z"
+    private var _formattedUpdatedAt: String?
     private var _children: [[String: Any]] = []
     private var _isOffline = false
     private var _releaseVersion = "6.0.0"
@@ -2182,8 +2657,10 @@ private final class ServerStub: @unchecked Sendable {
     private var _detailFailure: DetailFailure?
     private var _patched: [Data] = []
     private var _titles: [String] = []
-    var stateGate: MockURLProtocol.ResponseGate?
-    var contentGate: MockURLProtocol.ResponseGate?
+    private var _stateGate: MockURLProtocol.ResponseGate?
+    private var _contentGate: MockURLProtocol.ResponseGate?
+    private var _patchGate: MockURLProtocol.ResponseGate?
+    private var _onContentCompletion: (@Sendable () -> Void)?
 
     init(owner: UUID, state: Data) {
         self.owner = owner
@@ -2198,6 +2675,10 @@ private final class ServerStub: @unchecked Sendable {
         get { locked { _serverTitle } }
         set { locked { _serverTitle = newValue } }
     }
+    var formattedTitle: String? {
+        get { locked { _formattedTitle } }
+        set { locked { _formattedTitle = newValue } }
+    }
     var serverContent: String {
         get { locked { _serverContent } }
         set { locked { _serverContent = newValue } }
@@ -2205,6 +2686,26 @@ private final class ServerStub: @unchecked Sendable {
     var serverUpdatedAt: String {
         get { locked { _serverUpdatedAt } }
         set { locked { _serverUpdatedAt = newValue } }
+    }
+    var formattedUpdatedAt: String? {
+        get { locked { _formattedUpdatedAt } }
+        set { locked { _formattedUpdatedAt = newValue } }
+    }
+    var stateGate: MockURLProtocol.ResponseGate? {
+        get { locked { _stateGate } }
+        set { locked { _stateGate = newValue } }
+    }
+    var contentGate: MockURLProtocol.ResponseGate? {
+        get { locked { _contentGate } }
+        set { locked { _contentGate = newValue } }
+    }
+    var patchGate: MockURLProtocol.ResponseGate? {
+        get { locked { _patchGate } }
+        set { locked { _patchGate = newValue } }
+    }
+    var onContentCompletion: (@Sendable () -> Void)? {
+        get { locked { _onContentCompletion } }
+        set { locked { _onContentCompletion = newValue } }
     }
     var children: [[String: Any]] {
         get { locked { _children } }
@@ -2292,7 +2793,7 @@ private final class ServerStub: @unchecked Sendable {
                     if let update = body?["update"].flatMap({ Data(base64Encoded: $0) }) {
                         locked { _patched.append(update) }
                     }
-                    return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+                    return .init(statusCode: 204, headers: [:], body: Data(), error: nil, releasedBy: patchGate)
                 }
                 let body = try! JSONSerialization.data(withJSONObject: ["doc": mutableState.base64EncodedString()])
                 return .init(statusCode: 200, headers: json, body: body, error: nil, releasedBy: stateGate)
@@ -2300,12 +2801,12 @@ private final class ServerStub: @unchecked Sendable {
             if url.contains("formatted-content") {
                 let id = request.url!.path.split(separator: "/").first { UUID(uuidString: String($0)) != nil }!
                 let object: [String: Any] = [
-                    "id": String(id), "title": serverTitle, "content": serverContent,
-                    "created_at": "2026-11-07T10:00:00Z", "updated_at": serverUpdatedAt,
+                    "id": String(id), "title": formattedTitle ?? serverTitle, "content": serverContent,
+                    "created_at": "2026-11-07T10:00:00Z", "updated_at": formattedUpdatedAt ?? serverUpdatedAt,
                 ]
                 return .init(
                     statusCode: 200, headers: json, body: try! JSONSerialization.data(withJSONObject: object),
-                    error: nil, releasedBy: contentGate)
+                    error: nil, releasedBy: contentGate, onCompletion: onContentCompletion)
             }
             if url.contains("/children/") {
                 if request.httpMethod == "POST" {

@@ -515,6 +515,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         defer { open.close() }
         await open.open(viewModel: onlineEnv.model, isOffline: false, canUpdate: true)
         guard case .native = open.route else { return XCTFail("expected native session") }
+        await waitUntil { onlineEnv.model.contentCache.content(for: onlineEnv.documentID) != nil }
         open.updateTitle("Fresh Native Title", viewModel: onlineEnv.model)
         onlineEnv.model.rawMarkdown = "Initial native shadow"
         let formattedCountBefore = server.log.count(ofMethod: "GET", urlContaining: "formatted-content")

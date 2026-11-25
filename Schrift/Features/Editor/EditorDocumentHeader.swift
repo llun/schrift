@@ -160,6 +160,7 @@ struct EditorDocumentHeader<Status: View>: View {
     let reach: LinkReach
     let peers: [CollaborationPeer]
     var onConsumeInitialTitleFocus: (() -> Bool)? = nil
+    var onTitleFocusChange: ((Bool) -> Void)? = nil
     @ViewBuilder var status: () -> Status
 
     @Environment(LocalizationStore.self) private var loc
@@ -214,6 +215,12 @@ struct EditorDocumentHeader<Status: View>: View {
             .accessibilityIdentifier("editor.header.title")
             .foregroundStyle(theme.colors.textPrimary)
             .focused($isTitleFocused)
+            .onChange(of: isTitleFocused) { _, focused in
+                onTitleFocusChange?(focused)
+            }
+            .onDisappear {
+                onTitleFocusChange?(false)
+            }
             .task {
                 guard onConsumeInitialTitleFocus?() == true else { return }
                 // Select the creation title without clearing it or marking a draft dirty.

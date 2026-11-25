@@ -1130,12 +1130,13 @@ final class NativeEditorOpen {
     private struct ServerAbilityAnswer: Sendable {
         let writer: Bool?
         let mention: Bool?
+        let title: String?
+        let updatedAt: Date?
     }
     private struct FirstOpenStepTimings: Sendable {
         var serverConfigMs: Double?
         var documentStateMs: Double?
         var documentStateBytes: Int = 0
-        var offlineCacheRefreshMs: Double?
 
         func record(sessionSeq: UInt64) {
             let store = NativeEditorDiagnosticsStore.shared
@@ -1148,10 +1149,6 @@ final class NativeEditorOpen {
                     .openDocumentState, durationMs: documentStateMs, sessionSeq: sessionSeq,
                     byteCount: documentStateBytes)
             }
-            if let offlineCacheRefreshMs {
-                store.recordDuration(
-                    .openOfflineCacheRefresh, durationMs: offlineCacheRefreshMs, sessionSeq: sessionSeq)
-            }
         }
     }
     private enum OpenResult: Sendable {
@@ -1162,13 +1159,16 @@ final class NativeEditorOpen {
         case waitingClassicEdits
         case unavailable(NativeOpenUnavailable)
         /// `ability`: the server's `abilities.update` and `abilities.mention` (nil: not asked, or no answer).
-        case state(Data, config: ServerConfig, ability: ServerAbilityAnswer?, timings: FirstOpenStepTimings)
+        case state(
+            Data, config: ServerConfig, ability: ServerAbilityAnswer?, timings: FirstOpenStepTimings,
+            saveMarker: DocumentSaveCoordinator.SaveMarker)
     }
     private var pendingOpen: AsyncStream<OpenResult>.Continuation?
-    /// The reopen and reconnect work `EditorView` starts outside its `.task`;
-    /// close cancels both.
+    /// The reopen, reconnect and deferred offline-cache refresh work `NativeEditorOpen`
+    /// starts outside its `.task`; close cancels all of them.
     private var reopenTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    private var offlineCacheRefreshTask: Task<Void, Never>?
     private var waitingDrainTask: Task<Void, Never>?
     private var waitingWorkTask: Task<Void, Never>?
     /// The last native session's close: the next open waits for it (the
@@ -1229,6 +1229,8 @@ final class NativeEditorOpen {
         case .classic:
             viewModel.setNativeRouteActive(false)
         }
+        offlineCacheRefreshTask?.cancel()
+        offlineCacheRefreshTask = nil
         pendingOpen?.finish()
         generation += 1
         let request = generation
@@ -1387,6 +1389,7 @@ final class NativeEditorOpen {
                     return
                 }
                 // Asked beside the state, inside the same fetch.
+                let saveMarker = viewModel.saveCoordinator.saveMarker(documentID: viewModel.documentID)
                 let stateStartNs =
                     NativeEditorDiagnosticsStore.shared.isCollecting ? DispatchTime.now().uptimeNanoseconds : nil
                 async let ability = Self.serverAbility(viewModel, asking: canUpdate)
@@ -1407,27 +1410,8 @@ final class NativeEditorOpen {
                     continuation.yield(self.hasWaitingClassicEdits(viewModel) ? .waitingClassicEdits : .classic)
                     return
                 }
-                // The cache refresh only feeds the classic offline fallback: its
-                // failure or refusal never blocks the native session.
-                let cacheStartNs =
-                    NativeEditorDiagnosticsStore.shared.isCollecting ? DispatchTime.now().uptimeNanoseconds : nil
-                _ = try? await viewModel.refreshOfflineCacheForNativeReader(isCurrent: {
-                    self.isCurrent(request: request, viewModel: viewModel, account: account)
-                })
-                if let cacheStartNs, NativeEditorDiagnosticsStore.shared.isCollecting {
-                    timings.offlineCacheRefreshMs =
-                        Double(DispatchTime.now().uptimeNanoseconds &- cacheStartNs) / 1_000_000.0
-                }
-                guard !Task.isCancelled,
-                    self.isCurrent(request: request, viewModel: viewModel, account: account)
-                else { return }
-                guard !self.availabilityMoved(viewModel, isOffline: isOffline) else { return }
-                // Pending local work arrived while the fetch was in flight.
-                guard self.canOpen(viewModel, isOffline: isOffline) else {
-                    continuation.yield(self.hasWaitingClassicEdits(viewModel) ? .waitingClassicEdits : .classic)
-                    return
-                }
-                continuation.yield(.state(state, config: config, ability: answer, timings: timings))
+                continuation.yield(
+                    .state(state, config: config, ability: answer, timings: timings, saveMarker: saveMarker))
             } catch {
                 // Pending local work that arrived mid-fetch never gets hidden behind an open error.
                 if let self, self.hasWaitingClassicEdits(viewModel) {
@@ -1453,7 +1437,7 @@ final class NativeEditorOpen {
             return
         }
         switch result {
-        case .state(let state, let config, let ability, let timings):
+        case .state(let state, let config, let ability, let timings, let saveMarker):
             // A superseded open (generation, account or availability moved)
             // leaves the route to the newer open; it never selects classic.
             guard isCurrent(request: request, viewModel: viewModel, account: account) else { return }
@@ -1475,8 +1459,13 @@ final class NativeEditorOpen {
                 return
             }
             await activateFetchedState(
-                state: state, config: config, ability: ability, timings: timings, viewModel: viewModel,
-                request: request, account: account, canUpdate: canUpdate)
+                state: state, config: config, ability: ability, timings: timings, saveMarker: saveMarker,
+                viewModel: viewModel, request: request, account: account, canUpdate: canUpdate)
+            if isCurrent(request: request, viewModel: viewModel, account: account),
+                case .native(let session) = route
+            {
+                startOfflineCacheRefresh(viewModel: viewModel, request: request, account: account, session: session)
+            }
         case .waitingClassicEdits:
             guard isCurrent(request: request, viewModel: viewModel, account: account) else { return }
             showWaitingClassicEdits(viewModel: viewModel, isOffline: isOffline, request: request)
@@ -1500,7 +1489,7 @@ final class NativeEditorOpen {
 
     private func activateFetchedState(
         state: Data, config: ServerConfig, ability: ServerAbilityAnswer?,
-        timings: FirstOpenStepTimings? = nil,
+        timings: FirstOpenStepTimings? = nil, saveMarker: DocumentSaveCoordinator.SaveMarker? = nil,
         viewModel: EditorViewModel, request: Int, account: UUID?, canUpdate: Bool
     ) async {
         let session: NativeEditorSession
@@ -1535,6 +1524,9 @@ final class NativeEditorOpen {
             editUnavailableReason = unavailableReason(
                 for: session, viewModel: viewModel, hasEditAccess: verified, hasAccount: account != nil)
             viewModel.seedNativeMetadataIfNeeded()
+            if let saveMarker, !viewModel.saveCoordinator.mayPredateSave(saveMarker) {
+                viewModel.applyNativeOpenMetadata(serverTitle: ability?.title, serverUpdatedAt: ability?.updatedAt)
+            }
             viewModel.setOpenEditorWritable(true)
             viewModel.setNativeRouteActive(true)
             if let openStart = pendingOpenStartNs { session.markOpenStarted(openStart) }
@@ -1549,6 +1541,9 @@ final class NativeEditorOpen {
             writable: writable)
         guard let seeded else { return }
         viewModel.seedNativeMetadataIfNeeded()
+        if case .native = seeded, let saveMarker, !viewModel.saveCoordinator.mayPredateSave(saveMarker) {
+            viewModel.applyNativeOpenMetadata(serverTitle: ability?.title, serverUpdatedAt: ability?.updatedAt)
+        }
         viewModel.setOpenEditorWritable(true)
         viewModel.setNativeRouteActive(seeded.isNativeActive)
         switch seeded {
@@ -1572,6 +1567,53 @@ final class NativeEditorOpen {
         } else {
             self.canMention = false
         }
+    }
+
+    /// Refreshes the classic offline cache off the first-open critical path. Owned by
+    /// `NativeEditorOpen` and cancelled on close or supersede; records `openOfflineCacheRefresh`
+    /// under the opened session once it finishes while collecting.
+    private func startOfflineCacheRefresh(
+        viewModel: EditorViewModel, request: Int, account: UUID?, session: NativeEditorSession
+    ) {
+        offlineCacheRefreshTask?.cancel()
+        let sessionSeq = session.sessionSeq
+        offlineCacheRefreshTask = Task { @MainActor [weak self, weak viewModel, weak session] in
+            defer {
+                if let self, !Task.isCancelled, self.generation == request {
+                    self.offlineCacheRefreshTask = nil
+                }
+            }
+            guard let self, let viewModel, let session, !Task.isCancelled, !session.isClosed,
+                self.isCurrent(request: request, viewModel: viewModel, account: account)
+            else { return }
+            let cacheStartNs =
+                NativeEditorDiagnosticsStore.shared.isCollecting ? DispatchTime.now().uptimeNanoseconds : nil
+            _ = try? await viewModel.refreshOfflineCacheForNativeReader(
+                isCurrent: { [weak self, weak viewModel, weak session] in
+                    guard let self, let viewModel, let session, !Task.isCancelled, !session.isClosed else {
+                        return false
+                    }
+                    return self.isCurrent(request: request, viewModel: viewModel, account: account)
+                },
+                hasUnsavedNativeWork: { [weak self, weak viewModel, weak session] in
+                    guard let self, let viewModel, let session else { return true }
+                    return self.hasUnsavedNativeWork(session: session, viewModel: viewModel)
+                })
+            guard !Task.isCancelled, !session.isClosed,
+                self.isCurrent(request: request, viewModel: viewModel, account: account)
+            else { return }
+            if let cacheStartNs, sessionSeq != 0, NativeEditorDiagnosticsStore.shared.isCollecting {
+                let durationMs = Double(DispatchTime.now().uptimeNanoseconds &- cacheStartNs) / 1_000_000.0
+                NativeEditorDiagnosticsStore.shared.recordDuration(
+                    .openOfflineCacheRefresh, durationMs: durationMs, sessionSeq: sessionSeq)
+            }
+        }
+    }
+
+    private func hasUnsavedNativeWork(session: NativeEditorSession, viewModel: EditorViewModel) -> Bool {
+        if session.hasPendingSave { return true }
+        guard let scope = session.scope else { return false }
+        return (try? viewModel.saveCoordinator.replicaStore.manifest(for: scope))?.outbox.isEmpty != true
     }
 
     /// Reconnect: merge the fetched raw state into the open durable owner.
@@ -1605,6 +1647,8 @@ final class NativeEditorOpen {
 
     /// Reconnect, in a task close cancels; a newer reconnect replaces it.
     func refreshInBackground(viewModel: EditorViewModel, isOffline: Bool) {
+        offlineCacheRefreshTask?.cancel()
+        offlineCacheRefreshTask = nil
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in await self?.refresh(viewModel: viewModel, isOffline: isOffline) }
     }
@@ -1897,6 +1941,8 @@ final class NativeEditorOpen {
         into session: NativeEditorSession, scope: ReplicaScope, viewModel: EditorViewModel, request: Int,
         isOffline: Bool
     ) async {
+        offlineCacheRefreshTask?.cancel()
+        offlineCacheRefreshTask = nil
         let isCurrent = { [weak self] in
             !Task.isCancelled && self?.generation == request && !session.isClosed
                 && viewModel.signedInUser.userID == scope.ownerUserID
@@ -1947,7 +1993,12 @@ final class NativeEditorOpen {
             recomputeUnavailableReason(for: session, viewModel: viewModel, hasEditAccess: verifiedEditAccess)
             startLive(session, scope: scope, config: config, viewModel: viewModel)
             // Refreshes the server title native saves send.
-            _ = try await viewModel.refreshOfflineCacheForNativeReader(isCurrent: isCurrent)
+            _ = try await viewModel.refreshOfflineCacheForNativeReader(
+                isCurrent: isCurrent,
+                hasUnsavedNativeWork: { [weak self] in
+                    guard let self else { return true }
+                    return self.hasUnsavedNativeWork(session: session, viewModel: viewModel)
+                })
         } catch {
             // Offline-first: the restored replica stays on screen. A disk
             // failure inside the integration has already frozen authoring.
@@ -1981,15 +2032,20 @@ final class NativeEditorOpen {
     private static func serverAbility(_ viewModel: EditorViewModel) async -> ServerAbilityAnswer {
         do {
             let document = try await viewModel.client.document(documentID: viewModel.documentID)
+            let matchesDocument = document.id == viewModel.documentID
             let writer = DocumentAbilityAnswer.classify(document, asked: viewModel.documentID).writer == true
             return ServerAbilityAnswer(
                 writer: writer,
-                mention: writer ? document.abilities.mention : false)
+                mention: writer ? document.abilities.mention : false,
+                title: matchesDocument ? document.title : nil,
+                updatedAt: matchesDocument ? document.updatedAt : nil)
         } catch {
             let reader = DocumentAbilityAnswer.classify(error) == .reader
             return ServerAbilityAnswer(
                 writer: reader ? false : nil,
-                mention: reader ? false : nil)
+                mention: reader ? false : nil,
+                title: nil,
+                updatedAt: nil)
         }
     }
 
@@ -2393,6 +2449,8 @@ final class NativeEditorOpen {
         reopenTask = nil
         refreshTask?.cancel()
         refreshTask = nil
+        offlineCacheRefreshTask?.cancel()
+        offlineCacheRefreshTask = nil
         waitingDrainTask?.cancel()
         waitingDrainTask = nil
         waitingWorkTask?.cancel()
