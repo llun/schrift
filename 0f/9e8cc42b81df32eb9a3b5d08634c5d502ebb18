@@ -1,0 +1,173 @@
+docs/offline-and-sync.md
+  s_4fb28ab57323fe::t_ed5212ef57f140 258-260
+  s_4fb28ab57323fe::t_0774ecc3e6f85d 251-257
+Schrift/Features/Editor/Native/NativeReplicaSaveScheduler.swift
+  s_4fb28ab57323fe::t_84272bd484a0cd 80
+  s_4fb28ab57323fe::t_6ebf2d4f2463a3 78-79
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_4fb28ab57323fe::t_84272bd484a0cd 4030-4035,4636
+  s_4fb28ab57323fe::t_8d706dea425634 499,532,3950,3953,3957,4005-4010,4017,4021,4025-4027,4649,4685-4687,4696-4698,4732,4768,4793,4797,4804-4808
+Schrift/App/RootView.swift
+  s_4fb28ab57323fe::t_84ed8ab1c009bf 101-103
+  s_4fb28ab57323fe::t_cb8dd8771ace6e 252,256-258
+SchriftTests/Core/Networking/OfflineAvailabilityTests.swift
+  s_f193227df3df34::t_88f6b3c8bb3eb7 47
+SchriftTests/DesignSystem/Tokens/ThemeRenderingTests.swift
+  s_f193227df3df34::t_2c47ae1a75f1b7 55
+SchriftTests/Features/Documents/DocumentActionsDeleteTests.swift
+  s_f193227df3df34::t_98f3e990524efa 101,141,175,206,261,290,317
+SchriftTests/Features/Documents/DocumentActionsMoveTests.swift
+  s_f193227df3df34::t_1db2df7dfa31e9 155
+SchriftTests/Features/Documents/DocumentActionsTestCase.swift
+  s_f193227df3df34::t_ec327f53d5bffb 59
+SchriftTests/Features/Documents/DocumentPinTestCase.swift
+  s_f193227df3df34::t_a257d9870f78af 96
+SchriftTests/Features/Documents/MoveDocumentViewModelTests.swift
+  s_f193227df3df34::t_6aa367a11e38dd 51
+SchriftTests/Features/Editor/BlockTextFocusTests.swift
+  s_f193227df3df34::t_79b116d0c70180 889
+SchriftTests/Features/Editor/ChecklistPresentationTests.swift
+  s_f193227df3df34::t_a0ccca9470a4fc 316
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAttachmentHoldTests.swift
+  s_f193227df3df34::t_7c2d7ed7dac227 64
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAttachmentReplayTests.swift
+  s_f193227df3df34::t_76ab69337ba9d7 69
+SchriftTests/Features/Editor/DocumentSaveCoordinatorConflictTests.swift
+  s_f193227df3df34::t_f1fefe56130290 400,442,491
+SchriftTests/Features/Editor/DocumentSaveCoordinatorCreateTests.swift
+  s_f193227df3df34::t_2569a51118d167 48,67,472,480,538,577,980
+SchriftTests/Features/Editor/DocumentSaveCoordinatorDeleteTests.swift
+  s_f193227df3df34::t_ae81589bf2b6af 77
+SchriftTests/Features/Editor/DocumentSaveCoordinatorFailureDetailTests.swift
+  s_f193227df3df34::t_a9fb908304573c 17
+SchriftTests/Features/Editor/DocumentSaveCoordinatorMoveTests.swift
+  s_f193227df3df34::t_5c4f1519a5fcf4 57,117,167,432,501
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayMigrationTests.swift
+  s_f193227df3df34::t_ce4c3849fa7669 1043,1240,1287,1323,1356,1405,1545,1628,1667,1720,1906,2098,2155,2210,2339,2397,2423,2480,2541
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayTestCase.swift
+  s_f193227df3df34::t_54b9c13c36e2bc 48-51,69
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplicaOwnershipTests.swift
+  s_f193227df3df34::t_68d816b027b80e 54,243,285,385,463,624,675,730
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTestCase.swift
+  s_f193227df3df34::t_9ea49d7e8f38b7 61-62,81-82
+SchriftTests/Features/Editor/EditorChecklistFilterTests.swift
+  s_f193227df3df34::t_fb51791b57cd46 38
+SchriftTests/Features/Editor/EditorFormattingBarTests.swift
+  s_f193227df3df34::t_935753f8e8ac83 19
+SchriftTests/Features/Editor/EditorPageLinkPickerTests.swift
+  s_f193227df3df34::t_18dff24a9e208a 71
+SchriftTests/Features/Editor/EditorSurfaceParityTests.swift
+  s_f193227df3df34::t_2d54fcddda655b 806
+SchriftTests/Features/Editor/EditorViewModelChildrenTests.swift
+  s_f193227df3df34::t_7e47123053194c 56
+SchriftTests/Features/Editor/EditorViewModelCompositionTests.swift
+  s_f193227df3df34::t_8e2450edf65184 452
+SchriftTests/Features/Editor/EditorViewModelTestCase.swift
+  s_f193227df3df34::t_67e19ce22adbfe 67,118
+SchriftTests/Features/Editor/Native/ColumnEditorTests.swift
+  s_f193227df3df34::t_5a3d4dfb4220ff 714
+SchriftTests/Features/Editor/Native/NativeEditUnavailableReasonTests.swift
+  s_f193227df3df34::t_ac6160c112b6cb 933
+SchriftTests/Features/Editor/Native/NativeEditorAcceptanceTests.swift
+  s_f193227df3df34::t_6150ea43a88822 1370
+SchriftTests/Features/Editor/Native/NativeEditorActivationTests.swift
+  s_f193227df3df34::t_67332162bc7c22 1441,1485,2417,2532
+SchriftTests/Features/Editor/Native/NativeEditorWaitingClassicTests.swift
+  s_f193227df3df34::t_cce7c13f8fb101 1214,1272
+SchriftTests/Features/Editor/Native/NativeInlineObjectTests.swift
+  s_f193227df3df34::t_a109dd6cd6c548 190
+SchriftTests/Features/Editor/Native/NativeLossyBlockTests.swift
+  s_f193227df3df34::t_d23343fb4625b5 101
+SchriftTests/Features/Editor/Native/NativeMediaDropPasteTests.swift
+  s_f193227df3df34::t_46b3d65170ca9c 154,848
+SchriftTests/Features/Editor/Native/ReplicaSaveAdapterTests.swift
+  s_f193227df3df34::t_25c2bfdb17cc6b 55,319,386,529
+SchriftTests/Features/Editor/Native/ReplicaTypabilityTests.swift
+  s_f193227df3df34::t_ce18c4d0c0c701 48
+SchriftTests/Features/Editor/Native/VideoPosterTests.swift
+  s_f193227df3df34::t_a6abdfcee2e5b8 432
+SchriftTests/Features/Editor/NewDocumentEntryTests.swift
+  s_f193227df3df34::t_8d27dbf20b423f 35
+SchriftTests/Features/Editor/PagesTreeViewModelTests.swift
+  s_f193227df3df34::t_fcb490ee1535c2 65,806
+SchriftTests/Features/Editor/SlashMenuTests.swift
+  s_f193227df3df34::t_edc1e9d2a6a7db 125
+SchriftTests/Features/Home/HomeViewModelLoadTests.swift
+  s_f193227df3df34::t_3d7d38f9bae741 567
+SchriftTests/Features/Home/HomeViewModelTestCase.swift
+  s_f193227df3df34::t_8a0a8adb06960f 103
+SchriftTests/Features/Options/OptionsViewModelTests.swift
+  s_f193227df3df34::t_980c785fbc7816 90,183,211,260,279
+SchriftTests/Features/Search/SearchViewModelTests.swift
+  s_f193227df3df34::t_2c81c00d079bb0 140,262
+SchriftTests/Features/Shared/SharedViewModelTests.swift
+  s_f193227df3df34::t_08bd1cbde1010a 429
+SchriftTests/Support/AsyncTestHelpers.swift
+  s_f193227df3df34::t_9c92d00348c34a 172-202
+SchriftTests/Features/Editor/DocumentSaveCoordinatorClassicConversionTests.swift
+  s_f193227df3df34::t_4c087aade5bd20 139-140
+SchriftTests/Features/Editor/DocumentSaveCoordinatorNativeRetryTests.swift
+  s_f193227df3df34::t_cd4e325611cce7 22-23,58,384-751
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayStartOverTests.swift
+  s_f193227df3df34::t_8d9117098827b5 700-701
+SchriftTests/Features/Editor/EditorAttachmentInsertionTests.swift
+  s_f193227df3df34::t_9bdf47ff432cdc 73-74,312-313
+SchriftTests/Features/Editor/EditorBlockMutationTests.swift
+  s_f193227df3df34::t_811d8693a7cf4c 13-14
+SchriftTests/Features/Editor/EditorLinkEditingTests.swift
+  s_f193227df3df34::t_1cc52f42ac26c2 45-46
+SchriftTests/Features/Editor/EditorPhotoInsertionTests.swift
+  s_f193227df3df34::t_a144a61f51cf36 66-67,91,860
+SchriftTests/Features/Editor/EditorThemeTests.swift
+  s_f193227df3df34::t_bb4eeac94897e3 36-37
+SchriftTests/Features/Editor/EditorUnavailableDetailTests.swift
+  s_f193227df3df34::t_4322d1d5f2ae8c 43-44
+SchriftTests/Features/Editor/EditorViewModelConflictDetectionTests.swift
+  s_f193227df3df34::t_3e91efb403b1fa 331-332,445-446
+SchriftTests/Features/Editor/EditorViewModelLinkTests.swift
+  s_f193227df3df34::t_5f6054552ea47e 39-40
+SchriftTests/Features/Editor/EditorViewModelLiveTests.swift
+  s_f193227df3df34::t_b6a0255c6e9350 51-52
+SchriftTests/Features/Editor/LeafNestingTests.swift
+  s_f193227df3df34::t_4dd80c44070a7f 19-20
+SchriftTests/Features/Editor/ListNestingTests.swift
+  s_f193227df3df34::t_2f986a944afdbe 18-19
+SchriftTests/Features/Editor/LiveEditingBridgeTests.swift
+  s_f193227df3df34::t_f2f92341d624cf 50-51
+SchriftTests/Features/Editor/LiveEditingIntegrationTests.swift
+  s_f193227df3df34::t_23e06705123407 153-154
+SchriftTests/Features/Editor/Native/NativeEditorInlinePickerViewTests.swift
+  s_f193227df3df34::t_40f40fc7f471ea 106-107
+SchriftTests/Features/Editor/Native/NativeEditorLifecycleTests.swift
+  s_f193227df3df34::t_b9243d9fefb298 776,1008-1009
+SchriftTests/Features/Editor/Native/NativeMediaQueueTests.swift
+  s_f193227df3df34::t_7077e722a83ac0 109-110
+SchriftTests/Features/Editor/Native/NativeReplicaSaveSchedulerTests.swift
+  s_f193227df3df34::t_cfd800303b7c31 71-99
+docs/standards/document-engine.md
+  s_f193227df3df34::t_f371bf3888957b 161-167,189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0f9e8cc42b81df32eb9a3b5d08634c5d502ebb18",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_f193227df3df34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dbe81370-1886-4254-8a96-847487f9d822",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
