@@ -851,7 +851,7 @@ final class NativeEditorSession {
     }
 
     /// Journal bytes not yet handed to the coordinator. They are durable on
-    /// this device, so the view reports them as saved here, never as synced.
+    /// this device: the view offers Save while online, never reports them as synced.
     var hasPendingSave: Bool { saveScheduler?.hasPendingSave ?? false }
 
     /// Flush a debounced save now (background, close, a tap on the status).

@@ -101,5 +101,10 @@ final class SaveStatusDisplayTests: XCTestCase {
         XCTAssertEqual(native(.saving, unsent: false, down: false), .saving, "handed over: the coordinator decides")
         XCTAssertEqual(native(.saved, unsent: false, down: false), .saved)
         XCTAssertEqual(native(.pendingSync, unsent: false, down: false), .savedOnDevice)
+        XCTAssertEqual(native(.failed("nope"), unsent: true, down: false), .retry, "a failure is not hidden")
+        let held = nativeSaveStatusDisplay(
+            hasUnsentEdits: true, saveState: .saved, hasConflict: true, hasUnsavedLocalContent: true,
+            connectionDown: false)
+        XCTAssertEqual(held, .savedOnDevice, "a held conflict offers no Save that would not send")
     }
 }
