@@ -100,3 +100,72 @@ func waitAndConfirmNever(
         try? await Task.sleep(for: .milliseconds(25))
     }
 }
+
+/// A fake `sleep` for tests: records each requested duration and suspends until
+/// released. Cancellation resumes the waiter by throwing `CancellationError`,
+/// matching `Task.sleep`.
+final class SleepGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requested: [Duration] = []
+    private var waiters: [(id: Int, continuation: CheckedContinuation<Void, Error>)] = []
+    private var nextID = 0
+    private var cancelledIDs: Set<Int> = []
+
+    var durations: [Duration] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requested
+    }
+
+    var pendingCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return waiters.count
+    }
+
+    func sleep(_ duration: Duration) async throws {
+        let id: Int = {
+            lock.lock()
+            defer { lock.unlock() }
+            requested.append(duration)
+            nextID += 1
+            return nextID
+        }()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                lock.lock()
+                if cancelledIDs.contains(id) {
+                    lock.unlock()
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    waiters.append((id, continuation))
+                    lock.unlock()
+                }
+            }
+        } onCancel: {
+            lock.lock()
+            let match = waiters.first { $0.id == id }
+            waiters.removeAll { $0.id == id }
+            if match == nil { cancelledIDs.insert(id) }
+            lock.unlock()
+            match?.continuation.resume(throwing: CancellationError())
+        }
+    }
+
+    /// Lets the oldest suspended sleep run to completion.
+    func releaseNext() {
+        lock.lock()
+        let next = waiters.isEmpty ? nil : waiters.removeFirst()
+        lock.unlock()
+        next?.continuation.resume()
+    }
+
+    /// Lets every sleep currently suspended run to completion.
+    func releaseAll() {
+        lock.lock()
+        let pending = waiters
+        waiters.removeAll()
+        lock.unlock()
+        pending.forEach { $0.continuation.resume() }
+    }
+}

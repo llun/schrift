@@ -16,6 +16,7 @@ final class NativeReplicaSaveScheduler {
     static let maxDeferral: TimeInterval = 30
 
     private let interval: Duration
+    private let sleep: @Sendable (Duration) async throws -> Void
     /// Returns false when nobody could take the save (the account is unknown):
     /// the edits stay pending on this device.
     private let enqueue: () throws -> Bool
@@ -29,10 +30,12 @@ final class NativeReplicaSaveScheduler {
 
     init(
         interval: Duration = .seconds(10),
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         enqueue: @escaping () throws -> Bool,
         onFailure: @escaping (Error) -> Void
     ) {
         self.interval = interval
+        self.sleep = sleep
         self.enqueue = enqueue
         self.onFailure = onFailure
     }
@@ -47,9 +50,14 @@ final class NativeReplicaSaveScheduler {
         if dirtySince == nil { dirtySince = now }
         let overdue = dirtySince.map { now.timeIntervalSince($0) >= Self.maxDeferral } ?? false
         let delay: Duration = overdue ? .zero : interval
+        arm(delay: delay)
+    }
+
+    private func arm(delay: Duration) {
         task?.cancel()
+        let sleep = self.sleep
         task = Task { [weak self] in
-            try? await Task.sleep(for: delay)
+            do { try await sleep(delay) } catch { return }
             guard !Task.isCancelled else { return }
             self?.flush()
         }
@@ -65,7 +73,11 @@ final class NativeReplicaSaveScheduler {
         guard hasPendingSave, !isFrozen else { return }
         hasPendingSave = false
         do {
-            if try !enqueue() { hasPendingSave = true }
+            if try !enqueue() {
+                hasPendingSave = true
+                // Re-arm one normal interval so a failed hand-over retries without a keystroke.
+                arm(delay: interval)
+            }
         } catch {
             isFrozen = true
             onFailure(error)
