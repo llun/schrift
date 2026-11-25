@@ -54,6 +54,11 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         }
         XCTAssertNotNil(firstSession.scope)
         XCTAssertGreaterThan(firstSession.sessionSeq, 0)
+        await waitUntil {
+            NativeEditorDiagnosticsStore.shared
+                .sessionSummary(for: firstSession.sessionSeq)?
+                .stages[NativeEditorStage.openOfflineCacheRefresh.rawValue]?.count == 1
+        }
         let firstSummary = try XCTUnwrap(
             NativeEditorDiagnosticsStore.shared.sessionSummary(for: firstSession.sessionSeq))
         for stage in firstOpenStages {
@@ -104,6 +109,11 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         }
         XCTAssertNil(inspectSession.scope)
         XCTAssertGreaterThan(inspectSession.sessionSeq, 0)
+        await waitUntil {
+            NativeEditorDiagnosticsStore.shared
+                .sessionSummary(for: inspectSession.sessionSeq)?
+                .stages[NativeEditorStage.openOfflineCacheRefresh.rawValue]?.count == 1
+        }
         let inspectSummary = try XCTUnwrap(
             NativeEditorDiagnosticsStore.shared.sessionSummary(for: inspectSession.sessionSeq))
         for stage in firstOpenStages {
@@ -125,11 +135,160 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             return XCTFail("expected a native session when collection is disabled")
         }
         XCTAssertEqual(offSession.sessionSeq, 0)
+        await waitUntil { offEnv.model.contentCache.content(for: offEnv.documentID) != nil }
         let offSnapshot = NativeEditorDiagnosticsStore.shared.snapshot()
         XCTAssertEqual(offSnapshot.totalSampleCount, 0)
         XCTAssertTrue(offSnapshot.sessions.isEmpty)
         for stage in firstOpenStages {
             XCTAssertNil(offSnapshot.stageDistributions[stage.rawValue])
+        }
+    }
+
+    func testFirstOpenShowsNativeWithoutWaitingForOfflineCacheRefresh() async throws {
+        NativeEditorDiagnosticsStore.shared.reset()
+        defer {
+            NativeEditorDiagnosticsStore.shared.setForcedCollection(nil)
+            NativeEditorDiagnosticsStore.shared.reset()
+        }
+        NativeEditorDiagnosticsStore.shared.setForcedCollection(true)
+
+        // 1. First open reaches `.native` while formatted-content is still held on a gate,
+        //    then updates the classic cache and records `openOfflineCacheRefresh` once released.
+        let state = seedState()
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: state)
+        server.serverTitle = "Fresh server title"
+        server.serverContent = "Fresh server-exported offline text"
+        let gate = MockURLProtocol.ResponseGate()
+        server.contentGate = gate
+        server.install()
+
+        let open = NativeEditorOpen(preference: { true })
+        defer {
+            gate.open()
+            open.close()
+        }
+        let openTask = Task { await open.open(viewModel: env.model, isOffline: false, canUpdate: true) }
+        await waitUntil(timeout: 2) {
+            if case .native = open.route { return true }
+            return false
+        }
+        guard case .native(let session) = open.route else {
+            return XCTFail("first open must reach .native before formatted-content completes")
+        }
+        await openTask.value
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && server.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
+        XCTAssertNotNil(session.scope)
+        XCTAssertNotNil(session.input)
+        XCTAssertEqual(env.model.title, "Fresh server title")
+        XCTAssertNotNil(env.model.lastSyncedAt)
+        XCTAssertNil(
+            env.model.contentCache.content(for: env.documentID),
+            "classic cache must still be empty while formatted-content is pending")
+        let pendingSummary = try XCTUnwrap(
+            NativeEditorDiagnosticsStore.shared.sessionSummary(for: session.sessionSeq))
+        XCTAssertEqual(pendingSummary.stages[NativeEditorStage.openServerConfig.rawValue]?.count, 1)
+        XCTAssertEqual(pendingSummary.stages[NativeEditorStage.openDocumentState.rawValue]?.count, 1)
+        XCTAssertNil(
+            pendingSummary.stages[NativeEditorStage.openOfflineCacheRefresh.rawValue],
+            "openOfflineCacheRefresh must not be recorded before the background refresh finishes")
+
+        gate.open()
+        await waitUntil {
+            env.model.contentCache.content(for: env.documentID)?.markdown == "Fresh server-exported offline text"
+        }
+        await waitUntil {
+            NativeEditorDiagnosticsStore.shared
+                .sessionSummary(for: session.sessionSeq)?
+                .stages[NativeEditorStage.openOfflineCacheRefresh.rawValue]?.count == 1
+        }
+        let cached = try XCTUnwrap(env.model.contentCache.content(for: env.documentID))
+        XCTAssertEqual(cached.title, "Fresh server title")
+        let refreshSamples = NativeEditorDiagnosticsStore.shared.snapshot().recentSamples.filter {
+            $0.stage == .openOfflineCacheRefresh
+        }
+        XCTAssertEqual(refreshSamples.count, 1)
+        XCTAssertEqual(refreshSamples.first?.sessionSeq, session.sessionSeq)
+        open.close()
+
+        // 2. Closing while the deferred refresh is in flight cancels it and never writes the cache or records a stage.
+        NativeEditorDiagnosticsStore.shared.reset()
+        let closedEnv = makeEnvironment()
+        defer { closedEnv.clean() }
+        let closedServer = ServerStub(owner: owner, state: state)
+        closedServer.serverContent = "Closed-open body that must not cache"
+        let closedGate = MockURLProtocol.ResponseGate()
+        let closedSettled = Counter()
+        closedServer.contentGate = closedGate
+        closedServer.onContentCompletion = { _ = closedSettled.next() }
+        closedServer.install()
+
+        let closedOpen = NativeEditorOpen(preference: { true })
+        defer {
+            closedGate.open()
+            closedOpen.close()
+        }
+        await closedOpen.open(viewModel: closedEnv.model, isOffline: false, canUpdate: true)
+        guard case .native(let closedSession) = closedOpen.route else {
+            return XCTFail("expected .native before formatted-content completes")
+        }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && closedServer.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
+        closedOpen.close()
+        closedGate.open()
+        await waitUntil { closedSettled.current == 1 }
+        await waitAndConfirmNever {
+            closedEnv.model.contentCache.content(for: closedEnv.documentID) != nil
+                || NativeEditorDiagnosticsStore.shared
+                    .sessionSummary(for: closedSession.sessionSeq)?
+                    .stages[NativeEditorStage.openOfflineCacheRefresh.rawValue] != nil
+        }
+
+        // 3. Superseding via reopen cancels the previous refresh so its late response never writes the cache.
+        NativeEditorDiagnosticsStore.shared.reset()
+        let supersededEnv = makeEnvironment()
+        defer { supersededEnv.clean() }
+        let supersededServer = ServerStub(owner: owner, state: state)
+        supersededServer.serverContent = "Superseded body that must not cache"
+        let supersededGate = MockURLProtocol.ResponseGate()
+        let supersededSettled = Counter()
+        supersededServer.contentGate = supersededGate
+        supersededServer.onContentCompletion = { _ = supersededSettled.next() }
+        supersededServer.install()
+
+        let supersededOpen = NativeEditorOpen(preference: { true })
+        defer {
+            supersededGate.open()
+            supersededOpen.close()
+        }
+        await supersededOpen.open(viewModel: supersededEnv.model, isOffline: false, canUpdate: true)
+        guard case .native(let supersededSession) = supersededOpen.route else {
+            return XCTFail("expected .native before formatted-content completes")
+        }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && supersededServer.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
+        supersededOpen.reopen(viewModel: supersededEnv.model, isOffline: true, canUpdate: true)
+        await waitUntil {
+            if case .native(let reopened) = supersededOpen.route {
+                return reopened.sessionSeq != supersededSession.sessionSeq
+            }
+            return false
+        }
+        supersededGate.open()
+        await waitUntil { supersededSettled.current == 1 }
+        await waitAndConfirmNever {
+            supersededEnv.model.contentCache.content(for: supersededEnv.documentID) != nil
+                || NativeEditorDiagnosticsStore.shared
+                    .sessionSummary(for: supersededSession.sessionSeq)?
+                    .stages[NativeEditorStage.openOfflineCacheRefresh.rawValue] != nil
         }
     }
 
@@ -2184,6 +2343,7 @@ private final class ServerStub: @unchecked Sendable {
     private var _titles: [String] = []
     var stateGate: MockURLProtocol.ResponseGate?
     var contentGate: MockURLProtocol.ResponseGate?
+    var onContentCompletion: (@Sendable () -> Void)?
 
     init(owner: UUID, state: Data) {
         self.owner = owner
@@ -2305,7 +2465,7 @@ private final class ServerStub: @unchecked Sendable {
                 ]
                 return .init(
                     statusCode: 200, headers: json, body: try! JSONSerialization.data(withJSONObject: object),
-                    error: nil, releasedBy: contentGate)
+                    error: nil, releasedBy: contentGate, onCompletion: onContentCompletion)
             }
             if url.contains("/children/") {
                 if request.httpMethod == "POST" {

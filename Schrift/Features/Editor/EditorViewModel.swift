@@ -4043,6 +4043,32 @@ final class EditorViewModel {
             markdownIsLocal: existing.markdownIsLocal)
     }
 
+    /// Seeds header and baseline metadata from the server responses already fetched
+    /// during a first native open (`collaborationYDocState` and optional document detail),
+    /// before the deferred classic offline-cache refresh completes.
+    func applyNativeOpenMetadata(serverTitle: String?, serverUpdatedAt: Date?) {
+        if let serverTitle {
+            saveCoordinator.noteServerTitle(documentID: documentID, title: serverTitle)
+        }
+        guard !hasPendingNativeTitleEdit,
+            saveCoordinator.pendingSave(documentID: documentID) == nil,
+            saveCoordinator.storedDraft(documentID: documentID) == nil,
+            syncConflict == nil
+        else { return }
+        lastSyncedAt = Date()
+        if let serverTitle, serverTitle != title {
+            title = serverTitle
+            savedTitle = serverTitle
+        }
+        if let serverUpdatedAt,
+            nativeServerBaseline == nil
+                || nativeServerBaseline?.serverUpdatedAt.map({ serverUpdatedAt > $0 }) == true
+        {
+            nativeServerBaseline = DraftBaseline(
+                serverUpdatedAt: serverUpdatedAt, markdown: "", title: serverTitle, markdownIsLocal: true)
+        }
+    }
+
     /// Updates coordinator title tracking, baseline, and clean on-screen title after a fresh
     /// native-reader fetch past `mayPredateSave`.
     func applyNativeServerContent(formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
