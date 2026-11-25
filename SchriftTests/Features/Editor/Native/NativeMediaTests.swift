@@ -134,6 +134,7 @@ final class NativeMediaTests: NativeEditingTestCase {
         let applied = await harness.run { harness.input.insertMediaBlock(node: "image") }
         XCTAssertFalse(applied)
         XCTAssertNil(harness.input.requestedMedia)
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_unavailable, "a refused tap says why")
         XCTAssertEqual(harness.session.surface.blocks.map(\.node), ["paragraph", "codeBlock"])
         try await assertConsistent(harness, localCommands: 0)
     }

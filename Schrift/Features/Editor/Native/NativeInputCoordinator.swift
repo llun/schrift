@@ -2556,7 +2556,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// path without a "/query" token to consume.
     @discardableResult
     func insertMediaBlock(node: String) -> Bool {
-        guard let (entry, position) = mediaInsertionTarget() else { return false }
+        // The menu's enabled state may predate a caret move: say why nothing happened.
+        guard let (entry, position) = mediaInsertionTarget() else {
+            noticeKey = .native_editor_input_unavailable
+            return false
+        }
         let ids = [UUID().uuidString, UUID().uuidString]
         let replaces = text(of: surface.blocks[position]).utf16.isEmpty
         let posted = applyStructural(
@@ -2570,7 +2574,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// Whether the Attach button can insert a media block now: a writable
     /// surface with the caret in a root paragraph, the same target the slash
     /// media items need (the engine refuses a nested, code or table block).
-    var canInsertMediaBlock: Bool { mediaInsertionTarget() != nil }
+    var canInsertMediaBlock: Bool { barrier == nil && mediaInsertionTarget() != nil }
 
     private func mediaInsertionTarget() -> (entry: ProjectionRangeIndex.Entry, position: Int)? {
         guard let view, canFormat, view.selectedRange.length == 0,
