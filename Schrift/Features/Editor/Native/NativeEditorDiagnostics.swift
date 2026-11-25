@@ -7,6 +7,9 @@ import Synchronization
 /// Raw values are static ASCII identifiers; no document, user, or server data
 /// may ever appear in any case or payload.
 enum NativeEditorStage: String, Codable, Sendable, CaseIterable {
+    case openServerConfig
+    case openDocumentState
+    case openOfflineCacheRefresh
     case diskRestore
     case decodeIntegrate
     case projection

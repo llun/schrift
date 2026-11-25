@@ -1256,7 +1256,8 @@ source buffers), adds `/divider` and `---`/`***`/`___` + Return via `insertDivid
 localized `BackToTop` accessibility action on `NativeEditorView`, and orders auxiliary subviews
 top-to-bottom in `orderAuxiliarySubviews()` without altering TextKit's text element or `headingRotor`.
 `NativeEditorDiagnosticsStore` (`Logger(subsystem: "dev.llun.Schrift", category: "NativeEditor")`
-+ `OSSignposter`) instruments ten pipeline stages (`diskRestore`, `decodeIntegrate`, `projection`,
++ `OSSignposter`) instruments thirteen pipeline stages (`openServerConfig`, `openDocumentState`,
+`openOfflineCacheRefresh`, `diskRestore`, `decodeIntegrate`, `projection`,
 `storageApply`, `firstVisibleContent`, `timeToEdit`, `inputToDisplay`, `mailboxQueueWait`,
 `remoteMerge`, `checkpointCompact`), workload metrics, surface work counters, and Mach
 `task_vm_info` `phys_footprint` samples into a bounded in-memory ring (256 samples / 32 sessions,

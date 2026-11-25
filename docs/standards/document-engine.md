@@ -2121,7 +2121,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   synced replicas while retaining dirty, provisional, conflicted, and unreadable ones (`isExcludedFromBackup`
   is `true` while clean and `false` before local appends/provisionals).
   **Diagnostics & Acceptance Suite (PR15b):** `NativeEditorDiagnosticsStore` (`Logger(subsystem: "dev.llun.Schrift", category: "NativeEditor")`
-  + `OSSignposter`) records 10 pipeline stages, `ReplicaWorkloadMetrics`, `SurfaceWorkCounters`, and Mach
+  + `OSSignposter`) records 13 pipeline stages, `ReplicaWorkloadMetrics`, `SurfaceWorkCounters`, and Mach
   `phys_footprint` in a bounded 256-sample / 32-session in-memory ring (active only when both
   `NativeEditorPreference` and the separate default-off `NativeEditorDiagnosticsPreference`
   ("Collect native editor diagnostics" in Profile, shown only when the native editor is on) are enabled,
