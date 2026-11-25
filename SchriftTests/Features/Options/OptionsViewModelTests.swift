@@ -87,7 +87,7 @@ final class OptionsViewModelTests: XCTestCase {
             client: client, draftStore: drafts, createStore: creates, deleteStore: deletes,
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let document = coordinator.createLocalDocument(
             title: "Untitled document", parentID: nil,
             ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
@@ -180,7 +180,7 @@ final class OptionsViewModelTests: XCTestCase {
         let coordinator = DocumentSaveCoordinator(
             client: env.client, draftStore: env.drafts, createStore: env.creates,
             deleteStore: env.deletes,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let viewModel = OptionsViewModel(
             client: env.client, documentID: env.document.id, isFavorite: false, saveCoordinator: coordinator)
 
@@ -208,7 +208,7 @@ final class OptionsViewModelTests: XCTestCase {
         let coordinator = DocumentSaveCoordinator(
             client: env.client, draftStore: env.drafts, createStore: env.creates,
             deleteStore: env.deletes,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let viewModel = OptionsViewModel(
             client: env.client, documentID: env.document.id, isFavorite: false, saveCoordinator: coordinator)
 
@@ -257,7 +257,7 @@ final class OptionsViewModelTests: XCTestCase {
         // Rebuilt so the mirror picks the checkpoint up, exactly as a relaunch would.
         let coordinator = DocumentSaveCoordinator(
             client: env.client, draftStore: env.drafts, createStore: env.creates, deleteStore: env.deletes,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         return OptionsViewModel(
             client: env.client, documentID: env.document.id, isFavorite: false,
             saveCoordinator: coordinator, signedInUser: env.signedIn)
@@ -276,7 +276,7 @@ final class OptionsViewModelTests: XCTestCase {
             createStore: PendingDocumentCreateStore(userDefaults: defaults), deleteStore: deletes,
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let signedIn = SignedInUserStore(userDefaults: defaults)
         if let signedInUserID { signedIn.remember(signedInUserID) }
         let viewModel = OptionsViewModel(

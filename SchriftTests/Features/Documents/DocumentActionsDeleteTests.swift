@@ -98,7 +98,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: PendingDraftStore(userDefaults: defaults),
             createStore: PendingDocumentCreateStore(userDefaults: defaults), deleteStore: deletes,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         // No `remember` — the account is unknown.
         let actions = DocumentActions(
             client: client, saveCoordinator: coordinator,
@@ -138,7 +138,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             createStore: env.creates, deleteStore: env.deletes,
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
 
@@ -172,7 +172,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             createStore: env.creates, deleteStore: env.deletes,
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
 
@@ -203,7 +203,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             createStore: env.creates, deleteStore: env.deletes,
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
 
@@ -258,7 +258,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             createStore: env.creates, deleteStore: env.deletes,
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
         let recorder = DeletionRecorder()
@@ -287,7 +287,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             createStore: env.creates, deleteStore: env.deletes,
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
 
@@ -314,7 +314,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             createStore: env.creates, deleteStore: env.deletes,
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
 

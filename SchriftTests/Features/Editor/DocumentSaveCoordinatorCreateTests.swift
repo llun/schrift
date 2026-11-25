@@ -45,7 +45,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
             createStore: createStore,
             serverOrigin: origin,
-            backgroundTasks: .noop
+            backgroundTasks: .noop, sleep: neverSleep
         )
         return (coordinator, draftStore, createStore)
     }
@@ -64,7 +64,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
             serverOrigin: origin,
-            backgroundTasks: .noop
+            backgroundTasks: .noop, sleep: neverSleep
         )
         return (coordinator, defaults)
     }
@@ -469,7 +469,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let seed = DocumentSaveCoordinator(
             client: client, draftStore: PendingDraftStore(userDefaults: defaults),
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
-            createStore: createStore, serverOrigin: origin, backgroundTasks: .noop)
+            createStore: createStore, serverOrigin: origin, backgroundTasks: .noop, sleep: neverSleep)
         let local = seed.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
         defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingDrafts")
 
@@ -477,7 +477,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             client: client, draftStore: PendingDraftStore(userDefaults: defaults),
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
-            serverOrigin: origin, backgroundTasks: .noop)
+            serverOrigin: origin, backgroundTasks: .noop, sleep: neverSleep)
         await coordinator.recoverDrafts()
 
         XCTAssertEqual(
@@ -535,7 +535,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             client: client, draftStore: draftStore,
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
-            serverOrigin: origin, backgroundTasks: .noop)
+            serverOrigin: origin, backgroundTasks: .noop, sleep: neverSleep)
         await coordinator.recoverDrafts()
 
         XCTAssertGreaterThan(
@@ -574,7 +574,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             client: client, draftStore: draftStore,
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
-            serverOrigin: origin, backgroundTasks: .noop)
+            serverOrigin: origin, backgroundTasks: .noop, sleep: neverSleep)
         await coordinator.recoverDrafts()
 
         XCTAssertGreaterThan(
@@ -977,7 +977,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
             createStore: createStore,
             serverOrigin: serverOrigin ?? origin,
-            backgroundTasks: .noop
+            backgroundTasks: .noop, sleep: neverSleep
         )
         return (coordinator, drafts, createStore)
     }

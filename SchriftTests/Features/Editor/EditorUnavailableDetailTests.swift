@@ -40,7 +40,8 @@ final class EditorUnavailableDetailTests: XCTestCase {
         let draftStore = PendingDraftStore(userDefaults: userDefaults)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop,
+            sleep: neverSleep)
         return EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
             contentCache: contentCache,

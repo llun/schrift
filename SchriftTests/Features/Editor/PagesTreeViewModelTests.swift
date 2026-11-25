@@ -62,7 +62,7 @@ final class PagesTreeViewModelTests: XCTestCase {
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: cache,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         // Pinned off: the default reads `UserDefaults.standard`, so a simulator with the native
         // editor on would refuse every local mint these tests expect.
         coordinator.nativeEditorEnabled = { false }
@@ -803,7 +803,7 @@ final class PagesTreeViewModelTests: XCTestCase {
                 userDefaults: defaults,
                 directory: contentCacheDirectory.appendingPathComponent("attachments")),
             listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: cache,
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         // Pinned off for the same reason as `makeLocalRootViewModel`.
         coordinator.nativeEditorEnabled = { false }
         let signedIn = SignedInUserStore(userDefaults: defaults)

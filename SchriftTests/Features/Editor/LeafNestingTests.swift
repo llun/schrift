@@ -16,7 +16,8 @@ final class LeafNestingTests: XCTestCase {
         let suiteName = "LeafNestingTests.\(UUID().uuidString)"
         suiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
-        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, backgroundTasks: .noop)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore, backgroundTasks: .noop, sleep: neverSleep)
         let viewModel = EditorViewModel(client: client, documentID: UUID(), title: "Doc", saveCoordinator: coordinator)
         viewModel.blocks = blocks
         viewModel.mode = .blocks

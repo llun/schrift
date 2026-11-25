@@ -97,6 +97,10 @@ private struct AuthenticatedHomeContainer: View {
             isLiveReplicaHeld: { [weak collaborationManager] documentID in
                 collaborationManager?.hasHeldLiveReplica(for: documentID) ?? false
             },
+            isOnline: { [weak connectivity] in connectivity?.isReachable ?? true },
+            // Not foregrounded until `.onAppear` reads the real scene phase, so a cold launch
+            // in the background never arms a save retry.
+            isForegrounded: false,
             diagnostics: diagnostics)
         // Native media uploads commit through a headless lease of the app's replicas (PR13b),
         // bound to the sign-in generation they started in.
@@ -172,6 +176,7 @@ private struct AuthenticatedHomeContainer: View {
         let leavingUserID = SignedInUserStore().userID
         signOutTask = Task { @MainActor in
             defer { signOutTask = nil }
+            viewModel.saveCoordinator.cancelNativeSaveRetries()
             // Drain pending native saves, then close every replica before purging clean ones.
             await nativeSessions.drainAll().value
             await nativeSessions.closeAll().value
@@ -244,8 +249,12 @@ private struct AuthenticatedHomeContainer: View {
         // The live sockets follow the real path edge only: transport evidence says nothing
         // about whether a socket should be rebuilt.
         .onChange(of: connectivity.isReachable) { wasReachable, isReachable in
+            if !isReachable { viewModel.saveCoordinator.cancelNativeSaveRetries(resetBackoff: false) }
             guard shouldSyncOnReachabilityChange(wasReachable: wasReachable, isReachable: isReachable) else { return }
             collaboration.reconnect()
+        }
+        .onAppear {
+            viewModel.saveCoordinator.setForegrounded(scenePhase == .active)
         }
         .onChange(of: connectivity.appearsOffline) { wasOffline, isOffline in
             guard shouldSyncOnReachabilityChange(wasReachable: !wasOffline, isReachable: !isOffline) else { return }
@@ -253,6 +262,7 @@ private struct AuthenticatedHomeContainer: View {
             Task { await homeViewModel.syncPendingDrafts() }
         }
         .onChange(of: scenePhase) { _, phase in
+            viewModel.saveCoordinator.setForegrounded(phase == .active)
             // The server may have rotated or extended its cookies since sign-in; snapshot them
             // before iOS can terminate the process, or the next launch restores stale ones and
             // its first request 401s on a session that was still alive.
@@ -277,6 +287,7 @@ private struct AuthenticatedHomeContainer: View {
         // The session under every screen may be another account's now: close
         // every replica; mounted native editors reopen on the same signal.
         .onChange(of: sessionStore.signInGeneration) { _, _ in
+            viewModel.saveCoordinator.cancelNativeSaveRetries()
             nativeSessions.closeAll()
             NativeEditorDiagnosticsStore.shared.reset()
             // Nothing announces the previous account; `reauthenticated` learns the new one.

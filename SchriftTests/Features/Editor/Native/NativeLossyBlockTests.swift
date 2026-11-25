@@ -98,7 +98,7 @@ final class NativeLossyBlockTests: NativeEditingTestCase {
         return DocumentSaveCoordinator(
             client: client, draftStore: PendingDraftStore(userDefaults: defaults),
             replicaStore: harness.store, contentCache: DocumentContentCacheStore(directory: cacheDirectory),
-            listCache: DocumentCacheStore(userDefaults: defaults), backgroundTasks: .noop)
+            listCache: DocumentCacheStore(userDefaults: defaults), backgroundTasks: .noop, sleep: neverSleep)
     }
 
     private func stub(_ log: RequestRecorder, owner: UUID) {

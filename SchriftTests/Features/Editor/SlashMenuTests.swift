@@ -122,7 +122,7 @@ final class SlashMenuTests: XCTestCase {
         let client = DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!)
         let viewModel = EditorViewModel(
             client: client, documentID: UUID(), title: "Doc",
-            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop))
+            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop, sleep: neverSleep))
         viewModel.mode = .blocks
         let block = EditorBlock(kind: .paragraph, text: "/link")
         viewModel.blocks = [block]

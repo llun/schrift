@@ -106,7 +106,8 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
             createStore: PendingDocumentCreateStore(userDefaults: device.defaults),
             attachmentStore: device.attachments, listCache: DocumentCacheStore(userDefaults: device.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: device.defaults), serverOrigin: Self.origin,
-            mediaCheckMaxAttempts: 1, mediaCheckRetryInterval: .milliseconds(1), backgroundTasks: .noop)
+            mediaCheckMaxAttempts: 1, mediaCheckRetryInterval: .milliseconds(1), backgroundTasks: .noop,
+            sleep: neverSleep)
         let registry = NativeSessionRegistry()
         if leases { coordinator.nativeSessions = registry }
         // The headless typing gate (review X2): the switch on, and the account may update the document.

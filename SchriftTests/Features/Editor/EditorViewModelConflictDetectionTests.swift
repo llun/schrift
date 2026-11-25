@@ -328,7 +328,8 @@ final class EditorViewModelConflictDetectionTests: EditorViewModelTestCase {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop,
+            sleep: neverSleep)
         let viewModel = EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
             contentCache: contentCache,
@@ -441,7 +442,8 @@ final class EditorViewModelConflictDetectionTests: EditorViewModelTestCase {
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         // A fresh coordinator: the conflict rehydrates, but `states` is empty (`.idle`).
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop,
+            sleep: neverSleep)
         let viewModel = EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
             contentCache: contentCache,

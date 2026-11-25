@@ -152,7 +152,7 @@ final class DocumentActionsMoveTests: DocumentActionsTestCase {
             createStore: env.creates, deleteStore: env.deletes,
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
-            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
         let parentID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!

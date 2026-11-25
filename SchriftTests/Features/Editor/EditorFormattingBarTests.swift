@@ -16,7 +16,7 @@ final class EditorFormattingBarTests: XCTestCase {
         let client = DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!)
         let viewModel = EditorViewModel(
             client: client, documentID: UUID(), title: "Doc",
-            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop))
+            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop, sleep: neverSleep))
         viewModel.mode = .blocks
         viewModel.blocks = [EditorBlock(kind: .paragraph, text: "text")]
         if focused { viewModel.focusedBlockID = viewModel.blocks[0].id }

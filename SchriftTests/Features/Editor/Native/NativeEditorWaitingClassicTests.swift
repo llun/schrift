@@ -1211,7 +1211,7 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
                 listCache: model.listCache,
                 childrenCache: model.childrenCache,
                 serverOrigin: model.client.serverOrigin,
-                backgroundTasks: .noop)
+                backgroundTasks: .noop, sleep: neverSleep)
             coordinator.nativeEditorEnabled = { true }
             return EditorViewModel(
                 client: model.client,
@@ -1269,7 +1269,7 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
             listCache: listCache,
             childrenCache: childrenCache,
             serverOrigin: client.serverOrigin,
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         coordinator.nativeEditorEnabled = { true }
         let documentID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
         let model = EditorViewModel(

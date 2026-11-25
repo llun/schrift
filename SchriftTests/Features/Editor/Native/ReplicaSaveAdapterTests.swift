@@ -52,7 +52,7 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: drafts, replicaStore: store, contentCache: contentCache,
-            listCache: listCache, backgroundTasks: .noop, isLiveReplicaHeld: isHeld)
+            listCache: listCache, backgroundTasks: .noop, isLiveReplicaHeld: isHeld, sleep: neverSleep)
         return Fixture(
             client: client, coordinator: coordinator, drafts: drafts, listCache: listCache,
             contentCache: contentCache, store: store,
@@ -316,7 +316,7 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         let relaunched = DocumentSaveCoordinator(
             client: f.client, draftStore: f.drafts, replicaStore: f.store,
             contentCache: DocumentContentCacheStore(directory: cacheDirectory), listCache: f.listCache,
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         await relaunched.syncPendingDrafts()
         await waitUntil { self.isSaved(relaunched.state(for: self.documentID)) }
         XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/"), 1)
@@ -383,7 +383,7 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         let relaunched = DocumentSaveCoordinator(
             client: f.client, draftStore: f.drafts, replicaStore: f.store,
             contentCache: DocumentContentCacheStore(directory: cacheDirectory), listCache: f.listCache,
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         await relaunched.syncPendingDrafts()
         XCTAssertNil(MockURLProtocol.lastRequest)
         let restore = try XCTUnwrap(f.store.restore(for: f.scope))
@@ -526,7 +526,7 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         let relaunched = DocumentSaveCoordinator(
             client: f.client, draftStore: f.drafts, replicaStore: f.store,
             contentCache: DocumentContentCacheStore(directory: cacheDirectory), listCache: f.listCache,
-            backgroundTasks: .noop)
+            backgroundTasks: .noop, sleep: neverSleep)
         XCTAssertNil(relaunched.pendingSave(documentID: documentID))
         let restore = try XCTUnwrap(f.store.restore(for: f.scope))
         try Data([0xff]).write(
