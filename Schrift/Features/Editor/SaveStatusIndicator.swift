@@ -64,6 +64,28 @@ func saveStatusDisplay(
     }
 }
 
+/// The native route's slot: edits journaled on this device but not yet handed to the save
+/// coordinator (the debounce, a title edit) offer the tap that sends them now while online,
+/// like the classic `.dirty`; offline nothing would reach the server, so they read as saved
+/// on this device. A recorded conflict or a failed save keeps the coordinator's state
+/// (`saveStatusDisplay`), which decides otherwise too.
+func nativeSaveStatusDisplay(
+    hasUnsentEdits: Bool,
+    saveState: EditorViewModel.SaveState,
+    hasConflict: Bool,
+    hasUnsavedLocalContent: Bool,
+    connectionDown: Bool
+) -> SaveStatusDisplay {
+    // A held conflict or a failure keeps its own state (below): a Save there would not send.
+    if hasUnsentEdits, !hasConflict {
+        if connectionDown { return .savedOnDevice }
+        if case .failed = saveState {} else { return .save }
+    }
+    return saveStatusDisplay(
+        saveState: saveState, hasConflict: hasConflict, hasUnsavedLocalContent: hasUnsavedLocalContent,
+        connectionDown: connectionDown)
+}
+
 struct SaveStatusIndicator: View {
     @Environment(\.docsTheme) private var theme
     let display: SaveStatusDisplay
