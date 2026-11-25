@@ -1069,10 +1069,9 @@ struct NativeDocumentShellView: View {
     }
 
     private func nativeSaveStatus(_ session: NativeEditorSession) -> SaveStatusDisplay {
-        if session.hasPendingSave || viewModel.hasPendingNativeTitleEdit { return .savedOnDevice }
-        let hasConflict = viewModel.visibleNativeSyncConflict != nil
-        return saveStatusDisplay(
-            saveState: viewModel.saveState, hasConflict: hasConflict,
+        nativeSaveStatusDisplay(
+            hasUnsentEdits: session.hasPendingSave || viewModel.hasPendingNativeTitleEdit,
+            saveState: viewModel.saveState, hasConflict: viewModel.visibleNativeSyncConflict != nil,
             hasUnsavedLocalContent: viewModel.isNativeLocalContentUnsaved(
                 sessionHasPendingSave: session.hasPendingSave),
             connectionDown: isOffline || viewModel.availability.connectionAppearsDown)

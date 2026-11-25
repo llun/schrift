@@ -750,14 +750,15 @@ classic autosave cadence (trailing interval, 30 s cap) and hands the verified ou
 to `enqueueReplica` with the cached server title/baseline. Close and backgrounding
 flush it; reopening a replica whose outbox has no draft (a process that ended inside
 the debounce) schedules it. The native view reuses `SaveStatusIndicator`: debounced
-journal bytes show "Saved on this device", then the coordinator's real state. A
+journal bytes show a tappable "Save" while online ("Saved on this device" offline), then the
+coordinator's real state. A
 refused capture freezes authoring and reports `.failed`. Reconnect integrates the
 fetched state again. The sign-in guard reuses `SessionStore.signInGeneration`
 (threaded to `EditorView`, which closes and reopens a native route on change) plus
 the remembered signed-in user, rechecked after every await; `enqueueReplica` and
 the sender already refuse another account. Both login flows hand the confirmed id to
 `signIn`, which remembers it before the generation moves, and a flush while the
-account is unknown keeps the save pending ("Saved on this device") for the reopen.
+account is unknown keeps the save pending (still "Save") for the reopen.
 Sign-out bumps the generation too. An unparseable confirmation id signs in with the
 identity unknown. `/users/me/` writers
 drop answers from before the session changed hands (`SignedInUserStore.epoch`), and

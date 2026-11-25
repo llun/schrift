@@ -86,4 +86,20 @@ final class SaveStatusDisplayTests: XCTestCase {
         saveStatusDisplay(
             saveState: state, hasConflict: hasConflict, hasUnsavedLocalContent: true, connectionDown: connectionDown)
     }
+
+    // MARK: - Native route: edits not yet handed over
+
+    func testNativeUnsentEditsOfferSaveOnlineAndReadAsSavedOnDeviceOffline() {
+        func native(_ state: EditorViewModel.SaveState, unsent: Bool, down: Bool) -> SaveStatusDisplay {
+            nativeSaveStatusDisplay(
+                hasUnsentEdits: unsent, saveState: state, hasConflict: false, hasUnsavedLocalContent: unsent,
+                connectionDown: down)
+        }
+        XCTAssertEqual(native(.saved, unsent: true, down: false), .save, "online: tap sends now")
+        XCTAssertEqual(native(.idle, unsent: true, down: false), .save)
+        XCTAssertEqual(native(.saved, unsent: true, down: true), .savedOnDevice, "offline: kept on this device")
+        XCTAssertEqual(native(.saving, unsent: false, down: false), .saving, "handed over: the coordinator decides")
+        XCTAssertEqual(native(.saved, unsent: false, down: false), .saved)
+        XCTAssertEqual(native(.pendingSync, unsent: false, down: false), .savedOnDevice)
+    }
 }

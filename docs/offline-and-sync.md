@@ -248,7 +248,8 @@ verified outbox to `enqueueReplica`, with the cached server copy as title and
 baseline (a stored draft keeps its own baseline). Close and the app going inactive
 or to the background flush it. Reopening a replica whose outbox has no draft (the
 process ended inside the debounce) schedules it. The native view shows the classic
-`SaveStatusIndicator`: unsent journal bytes read "Saved on this device", then the
+`SaveStatusIndicator`: unsent journal bytes offer a tappable "Save" that sends them now
+while online, and read "Saved on this device" offline; then the
 coordinator's state (saving, saved, pending sync, retry). A tap retries a raw draft
 through `retryReplicaDraft`, never the classic enqueue. A refused capture freezes
 authoring and reports `.failed`; the journal bytes stay durable.
@@ -270,7 +271,7 @@ flows passes its id to `signIn(serverURL:userID:)`, which remembers it before th
 generation moves, so the reopen at that bump already knows the owner; the same account
 re-authenticating types again. A flush while the account is unknown (the cookie-handover
 bump, or a sign-out the view has not reacted to) neither fails nor freezes and leaves
-the save pending, so the status stays "Saved on this device"; the reopen or a status
+the save pending, so the status keeps offering "Save"; the reopen or a status
 tap under the known owner hands the outbox over. `signOut` bumps `signInGeneration` too,
 so a mounted native editor closes. The login flows' confirmation (`confirmSession`)
 accepts any JSON object as before: an id that is not a UUID signs in with the identity
