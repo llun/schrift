@@ -108,6 +108,12 @@ The steps below run in the Build job (1, 2, 5) or in every shard (3, 4, 6, 7):
    `SchriftUITests/Features/ElementSettling.swift`) spends the first touch on inert text
    (not a retry); `setEditing`'s waiter is 15s; and the "Stop simulator push daemon" step
    boots out `apsd` (Schrift has no push entitlement; best-effort, never fails the job).
+   A few minutes after boot the simulator also runs its post-install background tasks;
+   the wallpaper pre-render (`com.apple.springboard.posterboardupdate.prewarm`: PosterBoard,
+   every poster extension, `MTLCompilerService`) takes about two minutes of a hosted runner's
+   CPU, during which XCUI queries take seconds and a test's own waits run out before it
+   reads anything. "Warm the simulator for UI tests" waits until SpringBoard logs
+   `PosterBoardUpdate completed` (capped at 7 minutes; never fails the job).
    The Edit/Done press and `ChecklistHitTests` still wait for the target's frame to hold
    still across two reads (`waitForStableFrame`) as a precondition, but the frame was stable
    in every captured failure.
