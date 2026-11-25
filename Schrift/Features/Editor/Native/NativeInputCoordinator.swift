@@ -2563,12 +2563,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         let ids = [UUID().uuidString, UUID().uuidString]
         let replaces = text(of: surface.blocks[position]).utf16.isEmpty
-        let posted = applyStructural(
+        let target = replaces ? entry.blockID : ids[0]
+        // Open the inspector only once the block exists: a refused or stale-then-failed insert opens nothing.
+        return applyStructural(
             entry.blockID, .insertMedia(node: node, ids: ids, removing: 0..<0),
             refusal: .native_editor_input_unavailable,
-            retry: again { [weak self] in self?.insertMediaBlock(node: node) ?? false }, readsSelection: true)
-        if posted { requestedMedia = replaces ? entry.blockID : ids[0] }
-        return posted
+            retry: again { [weak self] in self?.insertMediaBlock(node: node) ?? false }, readsSelection: true,
+            onSettled: { [weak self] applied in
+                guard applied, let self, self.surface.rangeIndex.entry(for: target) != nil else { return }
+                self.requestedMedia = target
+            })
     }
 
     /// Whether the Attach button can insert a media block now: a writable
