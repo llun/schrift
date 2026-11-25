@@ -1,0 +1,19 @@
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_4fb28ab57323fe::t_aac81f92ba35b4 2566-2568,2571-2575
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5df1561a15bb712facd51e95109eda2db5e2907b",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
