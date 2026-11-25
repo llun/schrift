@@ -323,6 +323,40 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 5), .completed, "the journal restores the caption")
     }
 
+    /// The formatting bar's Attach menu inserts a media block at the caret and
+    /// opens its inspector: the slash menu's media path without a "/query".
+    /// PDF, not Photo, so no system photo picker is involved.
+    func testTheFormattingBarAttachMenuInsertsAMediaBlockAndOpensItsInspector() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-slow-disk"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        focusFirstParagraph(of: editor, in: app)
+        editor.typeText("Attach here")
+
+        let attach = app.buttons["nativeEditor.format.attach"]
+        XCTAssertTrue(attach.waitForExistence(timeout: 5), "the bar offers Attach")
+        attach.tap()
+        let pdf = app.buttons["PDF"]
+        XCTAssertTrue(pdf.waitForExistence(timeout: 5), "the Attach menu offers PDF")
+        pdf.tap()
+
+        let done = app.buttons["nativeMedia.done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "the new block's inspector opened")
+        done.tap()
+        XCTAssertTrue(waitForText(of: editor, containing: "Attach here"))
+        XCTAssertFalse(app.staticTexts["nativeEditor.editUnavailableNotice"].exists)
+        waitForDurableJournal(in: app)
+        app.terminate()
+
+        app.launchArguments = ["--native-open"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitForText(of: editor, containing: "Attach here"))
+        XCTAssertFalse(app.staticTexts["nativeEditor.editUnavailableNotice"].exists)
+    }
+
     func testTypingInBothColumnsSurvivesRelaunch() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-open", "--reset", "--native-columns"]

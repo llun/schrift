@@ -2550,6 +2550,39 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true)
     }
 
+    /// The formatting bar's Attach choice: an empty media block after the
+    /// caret's paragraph, or in its place when it is empty, then its inspector
+    /// (`requestedMedia`) uploads or links the file. The slash menu's media
+    /// path without a "/query" token to consume.
+    @discardableResult
+    func insertMediaBlock(node: String) -> Bool {
+        guard let (entry, position) = mediaInsertionTarget() else { return false }
+        let ids = [UUID().uuidString, UUID().uuidString]
+        let replaces = text(of: surface.blocks[position]).utf16.isEmpty
+        let posted = applyStructural(
+            entry.blockID, .insertMedia(node: node, ids: ids, removing: 0..<0),
+            refusal: .native_editor_input_unavailable,
+            retry: again { [weak self] in self?.insertMediaBlock(node: node) ?? false }, readsSelection: true)
+        if posted { requestedMedia = replaces ? entry.blockID : ids[0] }
+        return posted
+    }
+
+    /// Whether the Attach button can insert a media block now: a writable
+    /// surface with the caret in a root paragraph, the same target the slash
+    /// media items need (the engine refuses a nested, code or table block).
+    var canInsertMediaBlock: Bool { mediaInsertionTarget() != nil }
+
+    private func mediaInsertionTarget() -> (entry: ProjectionRangeIndex.Entry, position: Int)? {
+        guard let view, canFormat, view.selectedRange.length == 0,
+            let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location)
+                ?? (view.selectedRange.location == surface.rangeIndex.length ? surface.rangeIndex.entries.last : nil),
+            let position = surface.rangeIndex.position(for: entry.blockID),
+            surface.blocks[position].node == "paragraph", surface.blocks[position].depth == 0,
+            !surface.isHidden(blockID: entry.blockID)
+        else { return nil }
+        return (entry, position)
+    }
+
     /// A paragraph starting with "/" and the caret after it, with no
     /// whitespace between: that "/query" is the command. Unlike the classic
     /// editor (which clears the whole block), only the token is consumed, as

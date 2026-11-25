@@ -690,6 +690,45 @@ private struct ColumnJump {
     var block: String
 }
 
+/// The Attach menu's choices: the slash menu's media blocks, with Photo and
+/// File standing in for the image and file blocks (their inspector holds the
+/// photo picker and the file importer).
+private enum NativeAttachChoice: String, CaseIterable, Identifiable {
+    case photo, file, video, audio, pdf
+
+    var id: String { rawValue }
+
+    var node: String {
+        switch self {
+        case .photo: "image"
+        case .file: "file"
+        case .video: "video"
+        case .audio: "audio"
+        case .pdf: "pdf"
+        }
+    }
+
+    var titleKey: L10nKey {
+        switch self {
+        case .photo: .editor_slash_photo
+        case .file: .editor_slash_file
+        case .video: .editor_slash_video
+        case .audio: .editor_slash_audio
+        case .pdf: .editor_slash_pdf
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .photo: "photo"
+        case .file: "doc"
+        case .video: "video"
+        case .audio: "waveform"
+        case .pdf: "doc.richtext"
+        }
+    }
+}
+
 /// The native editor's formatting bar: the classic bar's tokens and labels
 /// over the selection's marks. Each action is at most one durable command.
 struct NativeFormattingBar: View {
@@ -702,7 +741,7 @@ struct NativeFormattingBar: View {
     var body: some View {
         ScrollView(.horizontal) {
             HStack(spacing: DocsSpacing.space4xs) {
-                // The block menu first: it acts on the block, the rest on text.
+                // The block menu and Attach first: they act on the block, the rest on text.
                 button(id: "block", label: loc[.native_editor_block_actions], isOn: false) {
                     showsBlockMenu = true
                 } glyph: {
@@ -711,6 +750,7 @@ struct NativeFormattingBar: View {
                 .popover(isPresented: $showsBlockMenu) {
                     NativeBlockMenu(input: input) { showsBlockMenu = false }
                 }
+                attach
                 toggle("bold", label: .editor_format_bold) { MaterialSymbol(.format_bold, size: 20, scales: false) }
                 toggle("italic", label: .editor_format_italic) {
                     MaterialSymbol(.format_italic, size: 20, scales: false)
@@ -748,6 +788,26 @@ struct NativeFormattingBar: View {
     }
 
     private func isOn(_ key: String) -> Bool { input.activeMarks.contains { $0.key == key } }
+
+    /// The Attach menu: the media blocks the slash menu offers, with Photo and
+    /// File standing in for the image and file blocks (their inspector holds
+    /// the photo picker and the file importer). Each inserts at the caret.
+    private var attach: some View {
+        Menu {
+            ForEach(NativeAttachChoice.allCases) { choice in
+                Button {
+                    input.insertMediaBlock(node: choice.node)
+                } label: {
+                    Label(loc[choice.titleKey], systemImage: choice.systemImage)
+                }
+                .disabled(!input.canInsertMediaBlock)
+            }
+        } label: {
+            circle(isOn: false) { MaterialSymbol(.attach_file, size: 20, scales: false) }
+        }
+        .accessibilityLabel(loc[.editor_format_attach])
+        .accessibilityIdentifier("nativeEditor.format.attach")
+    }
 
     private func toggle(_ key: String, label: L10nKey, @ViewBuilder glyph: () -> some View) -> some View {
         button(id: key, label: loc[label], isOn: isOn(key), action: { input.toggleMark(key) }, glyph: glyph)

@@ -1774,7 +1774,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   it (`setMediaProps` returning true only means posted: a command and its retry can both go stale),
   so Done writes a lost submit again.
   **UI:** slash items Image/Video/Audio/File/PDF (`mediaSlashItems`, `SlashMenuAction.media`,
-  native only) insert and set `requestedMedia`, which opens the inspector; a media card tap or
+  native only) and the formatting bar's Attach menu (Photo, File, Video, Audio, PDF —
+  `NativeAttachChoice` → `insertMediaBlock(node:)`, the same path with no "/query" to consume;
+  Photo and File stand in for the image and file blocks, whose inspector holds the photo picker
+  and the file importer) insert and set `requestedMedia`, which opens the inspector; a media card tap or
   VoiceOver activation (`NativeBlockControls.onOpenMedia`) opens `NativeMediaInspector` (a sheet,
   `nativeMedia.*` identifiers): name and caption (one command on submit or Done), Show preview,
   Width (Original or 240–640 pt, plus the block's own), Alignment, Upload photo (image), Upload file
