@@ -180,7 +180,9 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
    - Exercise bold/italic/underline/strike/code/link via both formatting bar and `⌘B`/`⌘I`/`⌘U`/`⇧⌘X`/`⌘E`/`⌘K`,
      `/divider` and `---` + Return, `/table` + `TableEditorViewController`, `/columns` +
      `ColumnEditorViewController`, `mathBlock`/`diagram`/`inlineMath` + `NativeSourceEditor`,
-     and `[[` / `@` pickers; verify hardware keyboard undo/redo.
+     the formatting bar's **Attach** menu (Photo, File, Video, Audio, PDF insert after the
+     paragraph or in place of an empty one and open the inspector), and `[[` / `@` pickers;
+     verify hardware keyboard undo/redo.
    - Type a markdown prefix at a paragraph's start (`# `, `## `, `### `, `- `, `* `, `+ `, `1. `,
      `1) `, `[] `, `[ ] `, `[x] `, `> `) and verify the block converts with the prefix removed and
      the caret at the start; `#### ` and a prefix typed mid-line stay literal. Type a

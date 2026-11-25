@@ -87,6 +87,88 @@ final class NativeMediaTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: 2)
     }
 
+    // MARK: - The formatting bar's Attach menu
+
+    /// The Attach choice from a paragraph with text: the block goes after it
+    /// (there is no "/query" to consume), the last root block gets the web's
+    /// trailing paragraph, and the new block's inspector is requested.
+    func testInsertMediaBlockAfterANonEmptyParagraphInsertsAfterItAndRequestsItsInspector() async throws {
+        let harness = try await makeHarness([paragraph("lead", "Notes"), paragraph("q", "Later")])
+        addTeardownBlock { await harness.close() }
+        setSelection(harness, NSRange(location: try location(harness.session, "q", 2), length: 0))
+        XCTAssertTrue(harness.input.canInsertMediaBlock)
+        let applied = await harness.run { harness.input.insertMediaBlock(node: "pdf") }
+        XCTAssertTrue(applied)
+        let blocks = harness.session.surface.blocks
+        XCTAssertEqual(blocks.map(\.node), ["paragraph", "paragraph", "pdf", "paragraph"])
+        XCTAssertEqual(blocks[1].runs.map(\.text).joined(), "Later", "the paragraph keeps its text")
+        XCTAssertEqual(harness.input.requestedMedia, blocks[2].id)
+        XCTAssertEqual(harness.view.selectedRange.location, try location(harness.session, blocks[3].id, 0))
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    /// From an empty paragraph the block takes its place (the same id), as the
+    /// slash menu's media items do.
+    func testInsertMediaBlockInAnEmptyParagraphReplacesIt() async throws {
+        let harness = try await makeHarness([paragraph("lead", "Notes"), paragraph("q", "")])
+        addTeardownBlock { await harness.close() }
+        setSelection(harness, NSRange(location: try location(harness.session, "q", 0), length: 0))
+        let applied = await harness.run { harness.input.insertMediaBlock(node: "image") }
+        XCTAssertTrue(applied)
+        let blocks = harness.session.surface.blocks
+        XCTAssertEqual(blocks.map(\.node), ["paragraph", "image", "paragraph"])
+        XCTAssertEqual(blocks[1].id, "q", "the empty paragraph became the image in place")
+        XCTAssertEqual(harness.input.requestedMedia, "q")
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    /// A code block takes text and marks only: the Attach choice is refused
+    /// and nothing is written.
+    func testInsertMediaBlockIsRefusedInACodeBlock() async throws {
+        let code = BlockNoteBlock(
+            node: "codeBlock", props: paragraph("x", "").props, runs: [InlineRun("let x = 1")], id: "code")
+        let harness = try await makeHarness([paragraph("lead", "Notes"), code])
+        addTeardownBlock { await harness.close() }
+        setSelection(harness, NSRange(location: try location(harness.session, "code", 0), length: 0))
+        XCTAssertFalse(harness.input.canInsertMediaBlock)
+        let applied = await harness.run { harness.input.insertMediaBlock(node: "image") }
+        XCTAssertFalse(applied)
+        XCTAssertNil(harness.input.requestedMedia)
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_unavailable, "a refused tap says why")
+        XCTAssertEqual(harness.session.surface.blocks.map(\.node), ["paragraph", "codeBlock"])
+        try await assertConsistent(harness, localCommands: 0)
+    }
+
+    /// A nested paragraph has no shadow for a media block: refused, as the
+    /// slash item is.
+    func testInsertMediaBlockIsRefusedInANestedParagraph() async throws {
+        let parent = BlockNoteBlock(
+            node: "bulletListItem", props: paragraph("x", "").props, runs: [InlineRun("Parent")], id: "parent",
+            children: [paragraph("q", "")])
+        let harness = try await makeHarness([parent, paragraph("tail", "After")])
+        addTeardownBlock { await harness.close() }
+        setSelection(harness, NSRange(location: try location(harness.session, "q", 0), length: 0))
+        XCTAssertFalse(harness.input.canInsertMediaBlock)
+        let applied = await harness.run { harness.input.insertMediaBlock(node: "image") }
+        XCTAssertFalse(applied)
+        XCTAssertNil(harness.input.requestedMedia)
+        XCTAssertEqual(harness.session.surface.blocks.map(\.node), ["bulletListItem", "paragraph", "paragraph"])
+        try await assertConsistent(harness, localCommands: 0)
+    }
+
+    /// A read-only surface offers no Attach choice and writes nothing.
+    func testInsertMediaBlockIsRefusedReadOnly() async throws {
+        let harness = try await makeHarness([paragraph("lead", "Notes")])
+        addTeardownBlock { await harness.close() }
+        harness.session.textView.isEditable = false
+        setSelection(harness, NSRange(location: try location(harness.session, "lead", 0), length: 0))
+        XCTAssertFalse(harness.input.canInsertMediaBlock)
+        let applied = await harness.run { harness.input.insertMediaBlock(node: "image") }
+        XCTAssertFalse(applied)
+        XCTAssertNil(harness.input.requestedMedia)
+        try await assertConsistent(harness, localCommands: 0, expectedEditable: false)
+    }
+
     /// Each inspector change is one command; the card's preview follows it,
     /// and an unchanged value writes nothing.
     func testInspectorPropsAreOneCommandEachAndTheCardFollows() async throws {
