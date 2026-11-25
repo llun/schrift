@@ -390,4 +390,16 @@ final class NativeNavigationTests: NativeEditingTestCase {
         view.scrollRectToVisible(CGRect(x: 16, y: 100, width: 2, height: 22), animated: false)
         XCTAssertEqual(view.contentOffset.y, 100, accuracy: 0.5, "the caret lands at the top edge")
     }
+
+    /// Typing at the end of a paragraph taller than the visible text: UIKit reveals the caret,
+    /// then the paragraph's rect; the second must not pull the caret back off screen.
+    func testRevealingAParagraphTallerThanTheViewKeepsTheCaretShown() {
+        let view = shortShellPage()
+        view.contentSize = CGSize(width: 402, height: 2_000)
+        view.scrollRectToVisible(CGRect(x: 16, y: 878, width: 2, height: 22), animated: false)
+        let caretShown = view.contentOffset.y
+        XCTAssertEqual(caretShown, 900 - 327, accuracy: 0.5)
+        view.scrollRectToVisible(CGRect(x: 0, y: 400, width: 402, height: 500), animated: false)
+        XCTAssertEqual(view.contentOffset.y, caretShown, accuracy: 0.5, "the paragraph already fills the view")
+    }
 }

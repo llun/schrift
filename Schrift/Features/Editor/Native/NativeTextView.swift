@@ -941,15 +941,17 @@ final class NativeTextView: UITextView {
         setContentOffset(CGPoint(x: contentOffset.x, y: y), animated: animated)
     }
 
-    /// The smallest scroll that shows `rect` between the safe areas (its top
-    /// when it is taller than that), clamped to the content; nil when none.
+    /// The smallest scroll that shows `rect` between the safe areas (or keeps
+    /// the view inside it when it is taller), clamped to the content; nil when none.
     private static func revealOffset(for rect: CGRect, in view: UIScrollView) -> CGFloat? {
         let safeTop = view.adjustedContentInset.top - view.contentInset.top
         let safeBottom = view.adjustedContentInset.bottom - view.contentInset.bottom
         let current = view.contentOffset.y
-        var y = current
-        if rect.maxY > y + view.bounds.height - safeBottom { y = rect.maxY - view.bounds.height + safeBottom }
-        if rect.minY < y + safeTop { y = rect.minY - safeTop }
+        let lowest = rect.minY - safeTop
+        let highest = rect.maxY - view.bounds.height + safeBottom
+        // A rect taller than the visible text (a long paragraph) already fills it from any offset
+        // between `lowest` and `highest`: stay put there, or the caret and paragraph reveals alternate.
+        var y = lowest <= highest ? min(max(current, lowest), highest) : min(max(current, highest), lowest)
         let minY = -view.adjustedContentInset.top
         let maxY = max(minY, view.contentSize.height + view.adjustedContentInset.bottom - view.bounds.height)
         y = min(max(y, minY), maxY)
