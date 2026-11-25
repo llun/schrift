@@ -4047,7 +4047,7 @@ final class EditorViewModel {
         guard let existing else { return }
         nativeServerBaseline = DraftBaseline(
             serverUpdatedAt: serverUpdatedAt, markdown: existing.markdown, title: existing.title,
-            markdownIsLocal: existing.markdownIsLocal)
+            markdownIsLocal: existing.markdownIsLocal, bodyIsUnknown: existing.bodyIsUnknown)
     }
 
     /// Seeds header and baseline metadata from the server responses already fetched
@@ -4069,7 +4069,7 @@ final class EditorViewModel {
         }
         if let serverUpdatedAt, nativeServerBaseline == nil {
             nativeServerBaseline = DraftBaseline(
-                serverUpdatedAt: serverUpdatedAt, markdown: "", title: serverTitle, markdownIsLocal: true)
+                serverUpdatedAt: serverUpdatedAt, markdown: "", title: serverTitle, bodyIsUnknown: true)
         }
     }
 
@@ -4084,6 +4084,18 @@ final class EditorViewModel {
         let serverCopy = serverCopyKeepingLeafNesting(
             fetched: formatted.content ?? "", overlay: leafNesting,
             known: contentCache.content(for: documentID)?.markdown)
+        // If we only hold the first-open timestamp-only seed and the server has not moved past
+        // it (`formatted.updatedAt == seededDate`), this fetch is provably the ancestor of any
+        // edits made since open: fill in its body and title (clearing `bodyIsUnknown`) without
+        // moving the timestamp, even while local native work is pending.
+        if let existing = nativeServerBaseline,
+            existing.bodyIsUnknown == true,
+            let seededDate = existing.serverUpdatedAt,
+            formatted.updatedAt == seededDate
+        {
+            nativeServerBaseline = DraftBaseline(
+                serverUpdatedAt: seededDate, markdown: serverCopy, title: formatted.title ?? existing.title)
+        }
         // Only advance the native baseline and clean title when no local work protects an
         // earlier ancestor.
         guard !hasPendingNativeTitleEdit,
@@ -4326,7 +4338,8 @@ final class EditorViewModel {
         // block preservation must never read as the server copy.
         serverBaseline = DraftBaseline(
             serverUpdatedAt: conflict.serverUpdatedAt, markdown: serverBaseline?.markdown ?? currentMarkdown(),
-            title: serverBaseline?.title, markdownIsLocal: serverBaseline.map { $0.markdownIsLocal } ?? true)
+            title: serverBaseline?.title, markdownIsLocal: serverBaseline.map { $0.markdownIsLocal } ?? true,
+            bodyIsUnknown: serverBaseline?.bodyIsUnknown)
         flushPendingChanges()
         // **Re-check after the flush.** `isDirty` is not proof there is anything to push:
         // `flushPendingChanges` enqueues nothing when the content serializes back to

@@ -708,17 +708,22 @@ final class DraftSyncDecisionTests: XCTestCase {
         XCTAssertEqual(baseline?.markdown, "# Base")
         XCTAssertEqual(baseline?.serverUpdatedAt, Date(timeIntervalSince1970: 1_000_000))
         XCTAssertNil(baseline?.title)
+        XCTAssertNil(baseline?.bodyIsUnknown)
     }
 
-    // MARK: - Local / timestamp-only baselines (`markdownIsLocal == true`)
+    // MARK: - Unknown-body vs local ("keep mine") baselines
 
-    /// A baseline with `markdownIsLocal: true` carries no server body. Its empty placeholder
+    /// A baseline with `bodyIsUnknown: true` carries no server body (seeded from a first-open
+    /// timestamp before the deferred offline-cache refresh returns). Its empty placeholder
     /// `markdown: ""` must never satisfy rule 2's body-equality tiebreak when a co-author
-    /// empties the document on the server.
-    func testMarkdownIsLocalEmptyBaselineDoesNotMatchEmptiedServerDocument() {
+    /// empties the document on the server, and `serverMarkdown` must be `nil`.
+    func testBodyIsUnknownEmptyBaselineDoesNotMatchEmptiedServerDocument() {
+        let baseline = DraftBaseline(
+            serverUpdatedAt: base, markdown: "", title: "Doc", bodyIsUnknown: true)
+        XCTAssertNil(baseline.serverMarkdown)
+
         let decision = draftSyncDecision(
-            baseline: DraftBaseline(
-                serverUpdatedAt: base, markdown: "", title: "Doc", markdownIsLocal: true),
+            baseline: baseline,
             lastPushedMarkdown: nil,
             localMarkdown: "# My edit",
             draftTitle: "Doc",
@@ -730,15 +735,15 @@ final class DraftSyncDecisionTests: XCTestCase {
 
         XCTAssertEqual(
             decision, .conflict,
-            "a markdownIsLocal baseline has no server body and must conflict when a newer server is empty")
+            "a bodyIsUnknown baseline has no server body and must conflict when a newer server is empty")
     }
 
-    /// With a `markdownIsLocal` (timestamp-only) baseline, a newer server timestamp cannot prove
+    /// With a `bodyIsUnknown` (timestamp-only) baseline, a newer server timestamp cannot prove
     /// the body stayed unchanged, so a newer web title-only rename falls through to `.conflict`
     /// — the same conservative outcome as any timestamp-only baseline without a server body.
-    func testMarkdownIsLocalBaselineWithNewerTitleOnlyChangeConflictsConservatively() {
+    func testBodyIsUnknownBaselineWithNewerTitleOnlyChangeConflictsConservatively() {
         let timestampOnlyBaseline = DraftBaseline(
-            serverUpdatedAt: base, markdown: "", title: "Old Title", markdownIsLocal: true)
+            serverUpdatedAt: base, markdown: "", title: "Old Title", bodyIsUnknown: true)
         let decision = draftSyncDecision(
             baseline: timestampOnlyBaseline,
             lastPushedMarkdown: nil,
@@ -766,6 +771,31 @@ final class DraftSyncDecisionTests: XCTestCase {
             serverMarkdown: "# Original body"
         )
         XCTAssertEqual(merged, .push(title: "Web Renamed", evidence: .descendsFromBaseline))
+    }
+
+    /// A "keep mine" resolution with no prior baseline stamps `markdownIsLocal: true` with the
+    /// user's own body (never `bodyIsUnknown`). When that push actually landed on the server
+    /// with a lost response and the user later edited further, rule 2's body-equality tiebreak
+    /// still recognises our own landed body and pushes instead of re-asking the user.
+    func testMarkdownIsLocalKeepMineBaselineMatchesNewerServerHoldingOurBody() {
+        let baseline = DraftBaseline(
+            serverUpdatedAt: base, markdown: "# My resolved body", title: "Doc", markdownIsLocal: true)
+        XCTAssertNil(baseline.serverMarkdown, "block preservation must never treat a local body as a server base")
+
+        let decision = draftSyncDecision(
+            baseline: baseline,
+            lastPushedMarkdown: nil,
+            localMarkdown: "# My resolved body\n\nFollow-up edit",
+            draftTitle: "Doc",
+            draftUpdatedAt: base.addingTimeInterval(120),
+            serverTitle: "Doc",
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: "# My resolved body"
+        )
+
+        XCTAssertEqual(
+            decision, .push(title: "Doc", evidence: .descendsFromBaseline),
+            "a markdownIsLocal keep-mine baseline must still match a newer server holding our landed push")
     }
 
     // MARK: - retryableSaveFailure

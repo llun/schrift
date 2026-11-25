@@ -4877,7 +4877,8 @@ final class DocumentSaveCoordinator {
                         // conflict the user just answered. (Only the timestamp is knowable —
                         // `SyncConflict` carries no server content, titles included.)
                         title: draft.baseline?.title,
-                        markdownIsLocal: draft.baseline.map { $0.markdownIsLocal } ?? true),
+                        markdownIsLocal: draft.baseline.map { $0.markdownIsLocal } ?? true,
+                        bodyIsUnknown: draft.baseline?.bodyIsUnknown),
                     lastPushedMarkdown: draft.lastPushedMarkdown,
                     // The user answered: the hold is released, on disk as well as in memory
                     // (`clearResolvedConflict` below rewrites this to nil).

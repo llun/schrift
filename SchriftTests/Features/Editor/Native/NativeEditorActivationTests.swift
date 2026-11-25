@@ -514,6 +514,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertEqual(afterOpen.markdown, "# Cached Body", "cached baseline body must be preserved")
         XCTAssertEqual(afterOpen.serverUpdatedAt, nov7, "cached baseline timestamp must not be advanced")
         XCTAssertNil(afterOpen.markdownIsLocal)
+        XCTAssertNil(afterOpen.bodyIsUnknown)
 
         // 2. Newer refresh advances baseline to Nov 8; an older Nov 6 response must never regress it.
         env.model.applyNativeServerContent(
@@ -530,6 +531,79 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             env.model.nativeEnqueueInputs(cached: nil, draft: nil, fallbackTitle: "Fallback").baseline)
         XCTAssertEqual(afterStale.serverUpdatedAt, nov8, "baseline timestamp must never regress to an older fetch")
         XCTAssertEqual(afterStale.markdown, "# Nov 8 Body")
+    }
+
+    func testUnchangedDeferredRefreshFillsSeededBaselineBodyWhileEditsPendingSoLaterWebRenameMerges() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let nov7 = ISO8601DateFormatter().date(from: "2026-11-07T10:00:00Z")!
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Base Title"
+        server.serverUpdatedAt = "2026-11-07T10:00:00Z"
+        server.serverContent = "First paragraph."
+        let gate = MockURLProtocol.ResponseGate()
+        let settled = Counter()
+        server.contentGate = gate
+        server.onContentCompletion = { _ = settled.next() }
+        server.install()
+
+        let open = NativeEditorOpen(preference: { true })
+        defer {
+            gate.open()
+            open.close()
+        }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else {
+            return XCTFail("expected .native before formatted-content completes")
+        }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && server.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1
+        }
+        let syncedBefore = try XCTUnwrap(env.model.lastSyncedAt)
+
+        // User types body text while the deferred refresh is still pending.
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Local ")
+        await session.settle()
+        XCTAssertTrue(session.hasPendingSave)
+
+        // Deferred refresh returns with the exact same Nov 7 timestamp (provably the ancestor).
+        gate.open()
+        await waitUntil { settled.current == 1 }
+        await waitUntil { env.model.contentCache.content(for: env.documentID)?.markdown == "First paragraph." }
+        XCTAssertEqual(
+            env.model.lastSyncedAt, syncedBefore,
+            "lastSyncedAt must still respect the unsaved-work guard")
+        XCTAssertEqual(env.model.title, "Base Title")
+
+        let upgraded = try XCTUnwrap(
+            env.model.nativeEnqueueInputs(cached: nil, draft: nil, fallbackTitle: "Fallback").baseline)
+        XCTAssertEqual(
+            upgraded.markdown, "First paragraph.",
+            "an unchanged deferred refresh must fill the seeded timestamp-only baseline body")
+        XCTAssertEqual(upgraded.serverUpdatedAt, nov7)
+        XCTAssertNil(upgraded.bodyIsUnknown)
+
+        // Flush offline, then a co-author renames only the title at a newer timestamp on the server.
+        server.isOffline = true
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        server.serverTitle = "Web Renamed Title"
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverContent = "First paragraph."
+        server.contentGate = nil
+        server.onContentCompletion = nil
+        server.isOffline = false
+        await env.model.saveCoordinator.syncPendingDrafts()
+        await waitUntil { self.isSaved(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        // Body matches the filled-in ancestor baseline, and draftTitleOutcome adopts the web rename.
+        XCTAssertNil(env.model.syncConflict, "a web title-only rename must not raise a body conflict")
+        XCTAssertEqual(server.patchedUpdates.count, 1)
+        XCTAssertEqual(server.titles, ["Web Renamed Title"])
     }
 
     /// A page created on this device before the switch was on is still a classic draft. Opening
