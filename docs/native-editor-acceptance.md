@@ -49,18 +49,21 @@ durations are emitted.
 `NativeEditorDiagnosticsStore.signposter` uses `Logger(subsystem: "dev.llun.Schrift", category: "NativeEditor")`.
 Attach Instruments (**Logging** / **os_signpost**) or stream `os_signpost` events for subsystem
 `dev.llun.Schrift`, category `NativeEditor` (`NativeEditorStage` intervals and `NativeEditorMetric`
-events) across all ten instrumented stages:
+events) across all thirteen instrumented stages:
 
-1. `diskRestore` (`ReplicaStore.restore` checkpoint + journal segment read)
-2. `decodeIntegrate` (`DocumentReplicaSession` decode + `YDoc.applyUpdate`)
-3. `projection` (`NativeBlockProjection` / `AttributedDocumentProjection`)
-4. `storageApply` (`NativeTextSurface` `NSTextStorage` & `ProjectionRangeIndex` mutation)
-5. `firstVisibleContent` (`NativeEditorOpen.open` start → first non-empty `NativeTextView` viewport layout)
-6. `timeToEdit` (open / tap-to-edit / `Edit` tap → editable & first responder ready)
-7. `inputToDisplay` (`NativeInputCoordinator` entry → mailbox round-trip → `NativeTextSurface` patch → `CATransaction` commit)
-8. `mailboxQueueWait` (`ReplicaCommandMailbox` enqueue → worker dequeue)
-9. `remoteMerge` (socket/HTTP remote update arrival → journal append → main-actor patch apply)
-10. `checkpointCompact` (`ReplicaSaveAdapter.compactIfNeeded` → `ReplicaStore.compact`)
+1. `openServerConfig` (`NativeEditorOpen.open` first-open `serverConfig()` fetch)
+2. `openDocumentState` (`NativeEditorOpen.open` first-open `collaborationYDocState` + `serverAbility` fetch)
+3. `openOfflineCacheRefresh` (`NativeEditorOpen.open` first-open `refreshOfflineCacheForNativeReader` fetch)
+4. `diskRestore` (`ReplicaStore.restore` checkpoint + journal segment read)
+5. `decodeIntegrate` (`DocumentReplicaSession` decode + `YDoc.applyUpdate`)
+6. `projection` (`NativeBlockProjection` / `AttributedDocumentProjection`)
+7. `storageApply` (`NativeTextSurface` `NSTextStorage` & `ProjectionRangeIndex` mutation)
+8. `firstVisibleContent` (`NativeEditorOpen.open` start → first non-empty `NativeTextView` viewport layout)
+9. `timeToEdit` (open / tap-to-edit / `Edit` tap → editable & first responder ready)
+10. `inputToDisplay` (`NativeInputCoordinator` entry → mailbox round-trip → `NativeTextSurface` patch → `CATransaction` commit)
+11. `mailboxQueueWait` (`ReplicaCommandMailbox` enqueue → worker dequeue)
+12. `remoteMerge` (socket/HTTP remote update arrival → journal append → main-actor patch apply)
+13. `checkpointCompact` (`ReplicaSaveAdapter.compactIfNeeded` → `ReplicaStore.compact`)
 
 Each session summary also records `ReplicaWorkloadMetrics` (`rawBytes`, `yjsStructCount`,
 `tombstoneCount`, `blockCount`, `mediaBlockCount`, `journalSegmentCount`, `outboxSegmentCount`),

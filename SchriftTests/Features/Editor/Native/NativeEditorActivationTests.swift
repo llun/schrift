@@ -30,6 +30,109 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertNil(open.editUnavailableReason)
     }
 
+    func testFirstOpenRecordsStepTimingsOnlyWhenCollectingAndNotOnOwnedReopen() async throws {
+        let firstOpenStages: [NativeEditorStage] = [
+            .openServerConfig, .openDocumentState, .openOfflineCacheRefresh,
+        ]
+        NativeEditorDiagnosticsStore.shared.reset()
+        defer {
+            NativeEditorDiagnosticsStore.shared.setForcedCollection(nil)
+            NativeEditorDiagnosticsStore.shared.reset()
+        }
+
+        // 1. First open (seeded writable path) with collection enabled: exactly one sample per stage under sessionSeq.
+        NativeEditorDiagnosticsStore.shared.setForcedCollection(true)
+        let state = seedState()
+        let env = makeEnvironment()
+        defer { env.clean() }
+        ServerStub(owner: owner, state: state).install()
+
+        let firstOpen = NativeEditorOpen(preference: { true })
+        await firstOpen.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let firstSession) = firstOpen.route else {
+            return XCTFail("expected a seeded native session on first open")
+        }
+        XCTAssertNotNil(firstSession.scope)
+        XCTAssertGreaterThan(firstSession.sessionSeq, 0)
+        let firstSummary = try XCTUnwrap(
+            NativeEditorDiagnosticsStore.shared.sessionSummary(for: firstSession.sessionSeq))
+        for stage in firstOpenStages {
+            let distribution = try XCTUnwrap(
+                firstSummary.stages[stage.rawValue], "missing \(stage.rawValue) on first open")
+            XCTAssertEqual(distribution.count, 1, "expected exactly one \(stage.rawValue) sample")
+            XCTAssertGreaterThanOrEqual(distribution.maxMs, 0)
+        }
+        let firstSnapshot = NativeEditorDiagnosticsStore.shared.snapshot()
+        let firstStageSamples = firstSnapshot.recentSamples.filter { firstOpenStages.contains($0.stage) }
+        XCTAssertEqual(firstStageSamples.count, firstOpenStages.count)
+        XCTAssertTrue(
+            firstStageSamples.allSatisfy { $0.sessionSeq == firstSession.sessionSeq },
+            "all first-open step timings must be attributed to the active session")
+        let stateSample = try XCTUnwrap(firstStageSamples.first { $0.stage == .openDocumentState })
+        XCTAssertEqual(stateSample.byteCount, state.count)
+
+        // 2. Reopen (owned replica) with collection still enabled: none of the three first-open stages are recorded.
+        firstOpen.close()
+        let reopen = NativeEditorOpen(preference: { true })
+        defer { reopen.close() }
+        await reopen.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let reopenedSession) = reopen.route else {
+            return XCTFail("expected an owned native session on reopen")
+        }
+        XCTAssertNotEqual(reopenedSession.sessionSeq, firstSession.sessionSeq)
+        let reopenSummary = try XCTUnwrap(
+            NativeEditorDiagnosticsStore.shared.sessionSummary(for: reopenedSession.sessionSeq))
+        for stage in firstOpenStages {
+            XCTAssertNil(
+                reopenSummary.stages[stage.rawValue], "reopen must not record \(stage.rawValue)")
+        }
+        let reopenSamples = NativeEditorDiagnosticsStore.shared.snapshot().recentSamples.filter {
+            $0.sessionSeq == reopenedSession.sessionSeq && firstOpenStages.contains($0.stage)
+        }
+        XCTAssertTrue(reopenSamples.isEmpty)
+
+        // 3. First open (inspect-only path when live-held) with collection enabled: records all three under sessionSeq.
+        NativeEditorDiagnosticsStore.shared.reset()
+        let inspectEnv = makeEnvironment(isLiveHeld: { _ in true })
+        defer { inspectEnv.clean() }
+        ServerStub(owner: owner, state: state).install()
+        let inspectOpen = NativeEditorOpen(preference: { true })
+        defer { inspectOpen.close() }
+        await inspectOpen.open(viewModel: inspectEnv.model, isOffline: false, canUpdate: true)
+        guard case .native(let inspectSession) = inspectOpen.route else {
+            return XCTFail("expected an inspect-only native session when live-held")
+        }
+        XCTAssertNil(inspectSession.scope)
+        XCTAssertGreaterThan(inspectSession.sessionSeq, 0)
+        let inspectSummary = try XCTUnwrap(
+            NativeEditorDiagnosticsStore.shared.sessionSummary(for: inspectSession.sessionSeq))
+        for stage in firstOpenStages {
+            let distribution = try XCTUnwrap(
+                inspectSummary.stages[stage.rawValue], "missing \(stage.rawValue) on inspect-only first open")
+            XCTAssertEqual(distribution.count, 1)
+        }
+
+        // 4. First open with collection disabled: none of the stages are recorded.
+        NativeEditorDiagnosticsStore.shared.reset()
+        NativeEditorDiagnosticsStore.shared.setForcedCollection(false)
+        let offEnv = makeEnvironment()
+        defer { offEnv.clean() }
+        ServerStub(owner: owner, state: state).install()
+        let offOpen = NativeEditorOpen(preference: { true })
+        defer { offOpen.close() }
+        await offOpen.open(viewModel: offEnv.model, isOffline: false, canUpdate: true)
+        guard case .native(let offSession) = offOpen.route else {
+            return XCTFail("expected a native session when collection is disabled")
+        }
+        XCTAssertEqual(offSession.sessionSeq, 0)
+        let offSnapshot = NativeEditorDiagnosticsStore.shared.snapshot()
+        XCTAssertEqual(offSnapshot.totalSampleCount, 0)
+        XCTAssertTrue(offSnapshot.sessions.isEmpty)
+        for stage in firstOpenStages {
+            XCTAssertNil(offSnapshot.stageDistributions[stage.rawValue])
+        }
+    }
+
     /// A page created on this device before the switch was on is still a classic draft. Opening
     /// it offline must convert it and land on the native route, not the classic editor.
     func testAClassicUnsentPageWithTheSwitchOnRoutesToNativeOffline() async throws {

@@ -823,6 +823,17 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         XCTAssertFalse(json.contains("title"))
         XCTAssertFalse(json.contains("markdown"))
 
+        // Every stage raw value must be a static ASCII alphanumeric identifier.
+        for stage in NativeEditorStage.allCases {
+            XCTAssertFalse(stage.rawValue.isEmpty)
+            XCTAssertTrue(
+                stage.rawValue.unicodeScalars.allSatisfy {
+                    ($0.value >= 0x41 && $0.value <= 0x5A) || ($0.value >= 0x61 && $0.value <= 0x7A)
+                        || ($0.value >= 0x30 && $0.value <= 0x39)
+                },
+                "stage identifier must be ASCII alphanumeric: \(stage.rawValue)")
+        }
+
         // Separate opt-in preference: native editor alone does not enable diagnostics collection.
         let prefSuite = "NativeEditorDiagnosticsPref.\(UUID())"
         let prefDefaults = UserDefaults(suiteName: prefSuite)!
