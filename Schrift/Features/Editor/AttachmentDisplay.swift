@@ -185,10 +185,16 @@ func attachmentDisplayTitle(_ display: AttachmentDisplay) -> String {
 /// everything that renders as web content: HTML and its variants, the archive
 /// formats that wrap it, and SVG/XML, which carry external references.
 func attachmentIsPreviewable(_ display: AttachmentDisplay) -> Bool {
+    attachmentExtensionIsPreviewable(display.fileExtension)
+}
+
+/// `attachmentIsPreviewable` by file extension alone: also gates a native media
+/// block's pending upload, which has a picked file name but no server url yet.
+func attachmentExtensionIsPreviewable(_ fileExtension: String) -> Bool {
     ![
         "html", "htm", "xhtml", "xht", "shtml", "svg", "svgz", "xml", "xsl", "xslt",
         "mht", "mhtml", "webarchive", "epub", "webloc", "url", "eml", "emlx",
-    ].contains(display.fileExtension.lowercased())
+    ].contains(fileExtension.lowercased())
 }
 
 // MARK: - Private

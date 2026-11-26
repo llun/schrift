@@ -59,6 +59,7 @@ struct NativeEditorView: View {
     @Environment(ImageLoader.self) private var images: ImageLoader?
     /// The app's video poster loader; a host without one shows clean video cards.
     @Environment(VideoPosterLoader.self) private var posters: VideoPosterLoader?
+    @Environment(AttachmentLoader.self) private var attachments: AttachmentLoader?
     @Environment(\.docsTheme) private var theme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var linkTarget: NativeLinkTarget?
@@ -187,8 +188,8 @@ struct NativeEditorView: View {
                 NativeTextCanvas(
                     session: session, contentSize: uiContentSizeCategory(for: dynamicTypeSize),
                     labels: .document(loc),
-                    theme: theme, loc: loc, images: images, posters: posters, serverOrigin: serverOrigin,
-                    isOffline: isOffline,
+                    theme: theme, loc: loc, images: images, posters: posters, attachments: attachments,
+                    serverOrigin: serverOrigin, isOffline: isOffline,
                     uploads: uploads,
                     onOpenTable: {
                         requestEditIfWritable()
@@ -863,9 +864,27 @@ private struct NativeBlockMenu: View {
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
 
+    /// The media block whose inspector opens once the menu has gone.
+    @State private var mediaOptions: String?
+
     var body: some View {
         let available = Set(input.availableBlockActions())
         VStack(alignment: .leading, spacing: 0) {
+            // A media block's settings (its card's Options button).
+            if let media = input.mediaOptionsTarget() {
+                Button {
+                    mediaOptions = media
+                    dismiss()
+                } label: {
+                    Text(loc[.editor_action_options])
+                        .font(DocsFont.body)
+                        .frame(maxWidth: .infinity, minHeight: DocsSpacing.rowMinHeight, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.colors.textPrimary)
+                .accessibilityIdentifier("nativeEditor.block.mediaOptions")
+            }
             ForEach(NativeBlockAction.allCases, id: \.self) { action in
                 row(action, isAvailable: available.contains(action))
             }
@@ -873,6 +892,10 @@ private struct NativeBlockMenu: View {
         .padding(.horizontal, DocsSpacing.spaceBase)
         .padding(.vertical, DocsSpacing.space2xs)
         .presentationCompactAdaptation(.popover)
+        // After the popover is gone: a sheet asked for while it dismisses would not show.
+        .onDisappear {
+            if let mediaOptions { input.requestedMedia = mediaOptions }
+        }
     }
 
     private func row(_ action: NativeBlockAction, isAvailable: Bool) -> some View {
@@ -923,6 +946,8 @@ extension NativeEditorLabels {
             mediaUploadFailed: loc[.native_editor_media_upload_stopped],
             mediaUploadWaiting: loc[.native_editor_media_upload_queued],
             uploadElsewhere: loc[.native_editor_upload_elsewhere],
+            mediaOptions: loc[.editor_action_options], mediaOffline: loc[.editor_attachment_offline],
+            mediaFailed: loc[.editor_attachment_failed_retry], mediaDismiss: loc[.editor_action_done],
             chipPage: loc[.native_editor_chip_page],
             chipMention: loc[.native_editor_chip_mention],
             chipUntitled: loc[.native_editor_chip_untitled],
@@ -1009,6 +1034,7 @@ private struct NativeTextCanvas: UIViewControllerRepresentable {
     let loc: LocalizationStore
     let images: ImageLoader?
     let posters: VideoPosterLoader?
+    let attachments: AttachmentLoader?
     let serverOrigin: String
     let isOffline: Bool
     var uploads: NativeMediaUploads? = nil
@@ -1046,6 +1072,7 @@ private struct NativeTextCanvas: UIViewControllerRepresentable {
         session.textView.blockControls.labels = labels
         session.textView.blockControls.images = images
         session.textView.blockControls.posters = posters
+        session.textView.blockControls.attachments = attachments
         session.textView.blockControls.serverOrigin = serverOrigin
         session.input?.serverOrigin = serverOrigin
         session.input?.mediaUploads = uploads

@@ -204,7 +204,7 @@ final class NativeAttachmentView: UIView {
         applyTheme()
         if content.preview.isTable || content.preview.isColumns || isMedia || content.preview.isSource {
             // The card opens the table editor (PR11a), the column editor
-            // (PR12a), the media inspector (PR13a), or the source editor (PR14).
+            // (PR12a), the source editor (PR14), or plays or previews its media.
             accessibilityTraits = [.button]
             addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openTable)))
         }
@@ -248,11 +248,32 @@ final class NativeAttachmentView: UIView {
         if content.preview.isColumns {
             controls?.onOpenColumns?(content.blockID)
         } else if isMedia {
-            controls?.onOpenMedia?(content.blockID)
+            openMedia()
         } else if content.preview.isSource {
             controls?.onOpenSource?(.block(blockID: content.blockID))
         } else {
             controls?.onOpenTable?(content.blockID)
+        }
+    }
+
+    /// Video and audio play, image, file and PDF preview; a block with nothing
+    /// to show yet (or nothing this app shows) opens its inspector.
+    private func openMedia() {
+        guard let controls else { return }
+        let (node, url) =
+            switch content.preview {
+            case .image(let url, _, _): ("image", url)
+            case .video(let url, _, _): ("video", url)
+            case .file(let node, _, let url): (node, url)
+            default: ("", "")
+            }
+        let tap = NativeMediaTap.route(
+            node: node, url: url, serverOrigin: controls.serverOrigin, isOffline: controls.isOffline,
+            localFile: controls.mediaUploads?.localFile(content.blockID))
+        if tap == .inspector {
+            controls.onOpenMedia?(content.blockID)
+        } else {
+            controls.onShowMedia(tap, self)
         }
     }
 
@@ -722,7 +743,7 @@ final class NativeAttachmentView: UIView {
             openTable()
             return true
         }
-        if isMedia, loadButton == nil, controls?.onOpenMedia != nil {
+        if isMedia, loadButton == nil, controls != nil {
             openTable()
             return true
         }

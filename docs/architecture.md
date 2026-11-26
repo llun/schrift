@@ -1203,8 +1203,15 @@ is shown as "Upload in progress elsewhere", saved as nothing, and never polled, 
 edited: the web client that wrote it finishes it. The slash menu offers Image, Video, Audio,
 File and PDF; like the web it turns the emptied "/query" paragraph into an empty media block (or
 adds one after a paragraph with text) and adds an empty paragraph at the end of the document
-when nothing after the block takes text. Tapping a media card opens its inspector: name,
-caption, width, alignment and preview are each one `updateBlock`-shaped command (an unset width
+when nothing after the block takes text. Tapping a media card plays a video or audio block in
+the system player (`AVPlayerViewController`, with the playback audio session so it sounds with
+the silent switch on) and previews an image, file or PDF in QuickLook. An upload on this server
+is downloaded once through the attachment loader (the session's cookies, its disk cache, so a
+cached file plays offline) and shown from that file; another site's file is requested only on
+that tap, only over https and never offline (a notice says so), and another site's document
+opens in the browser. A block with no file yet, the card's Options button (editing only) and
+the block menu's Options open its inspector: name, caption, width, alignment and preview are
+each one `updateBlock`-shaped command (an unset width
 is removed, as the web removes it), and the file comes from Upload photo, Upload file or a
 typed http(s) link. An upload goes through the existing attachment upload and media-check poll
 to the document the editor had open when it started; the URL it returns must be this server's

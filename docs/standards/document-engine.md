@@ -1785,8 +1785,16 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   native only) and the formatting bar's Attach menu (Photo, File, Video, Audio, PDF —
   `NativeAttachChoice` → `insertMediaBlock(node:)`, the same path with no "/query" to consume;
   Photo and File stand in for the image and file blocks, whose inspector holds the photo picker
-  and the file importer) insert and set `requestedMedia`, which opens the inspector; a media card tap or
-  VoiceOver activation (`NativeBlockControls.onOpenMedia`) opens `NativeMediaInspector` (a sheet,
+  and the file importer) insert and set `requestedMedia`, which opens the inspector. A media card tap or
+  VoiceOver activation is routed by `NativeMediaTap.route` (pure; `NativeMediaPlaybackTests`): video
+  and audio play, image, file and PDF preview (`NativeMediaPresenter`: `AVPlayerViewController`,
+  `QLPreviewController`), from a queued upload's bytes, this server's upload through
+  `AttachmentLoader`, an image through `ImageLoader`, or another site's https file on the tap
+  (offline: a notice; a document: the browser); a block with no url, an `uploadLoader`, a
+  non-https other-site URL or a type QuickLook must not render opens the inspector instead. The
+  card's Options button (`mediaOptionButtons`, editing only) and the block menu's Options
+  (`mediaOptionsTarget` → `requestedMedia`) call `NativeBlockControls.onOpenMedia`, which opens
+  `NativeMediaInspector` (a sheet,
   `nativeMedia.*` identifiers): name and caption (one command on submit or Done), Show preview,
   Width (Original or 240–640 pt, plus the block's own), Alignment, Upload photo (image), Upload file
   (types by kind), Link (`isAuthoredURL`; the name becomes its last path segment, the web's

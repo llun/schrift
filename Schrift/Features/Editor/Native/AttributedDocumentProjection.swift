@@ -72,6 +72,11 @@ struct NativeEditorLabels: Equatable {
     var mediaUploadFailed = Strings_en.table[.native_editor_media_upload_stopped]!
     var mediaUploadWaiting = Strings_en.table[.native_editor_media_upload_queued]!
     var uploadElsewhere = Strings_en.table[.native_editor_upload_elsewhere]!
+    /// A media card's Options button, and why a tap could not play or preview the file.
+    var mediaOptions = Strings_en.table[.editor_action_options]!
+    var mediaOffline = Strings_en.table[.editor_attachment_offline]!
+    var mediaFailed = Strings_en.table[.editor_attachment_failed_retry]!
+    var mediaDismiss = Strings_en.table[.editor_action_done]!
     /// Inline chip accessibility labels (PR13c).
     var chipPage = Strings_en.table[.native_editor_chip_page]!
     var chipMention = Strings_en.table[.native_editor_chip_mention]!

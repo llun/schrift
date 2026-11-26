@@ -27,10 +27,13 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     private(set) var checkboxes: [String: UIButton] = [:]
     private(set) var languageButtons: [String: UIButton] = [:]
     private(set) var toggleButtons: [String: UIButton] = [:]
+    /// The Options button on each visible media card while editing (its inspector).
+    private(set) var mediaOptionButtons: [String: UIButton] = [:]
     @ObservationIgnored var onToggleCheckbox: ((String) -> Void)?
 
     var orderedControlViews: [UIView] {
         Array(checkboxes.values) + Array(languageButtons.values) + Array(toggleButtons.values)
+            + Array(mediaOptionButtons.values)
     }
 
     func controlViews(for blockID: String) -> [UIView] {
@@ -38,6 +41,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         if let checkbox = checkboxes[blockID] { views.append(checkbox) }
         if let toggle = toggleButtons[blockID] { views.append(toggle) }
         if let language = languageButtons[blockID] { views.append(language) }
+        if let options = mediaOptionButtons[blockID] { views.append(options) }
         return views
     }
 
@@ -330,9 +334,20 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     /// A tap (or VoiceOver activation) on a column group's card opens the
     /// column editor (PR12a), with the group's block id.
     var onOpenColumns: ((String) -> Void)?
-    /// A tap (or VoiceOver activation) on a media block's card opens its
-    /// inspector (PR13a), with the block id.
+    /// A media block's inspector, with the block id: its card's Options
+    /// button, or a tap on a card with nothing to play or preview yet.
     var onOpenMedia: ((String) -> Void)?
+    /// A tap on a media card that plays or previews its file
+    /// (`NativeMediaPresenter`); a test records the request instead.
+    lazy var onShowMedia: (NativeMediaTap, UIView) -> Void = { [weak self] tap, view in
+        guard let self else { return }
+        NativeMediaPresenter.show(tap, from: view, controls: self)
+    }
+    /// The app's attachment loader: an upload on this server plays or
+    /// previews from the file it downloads and caches. Nil shows nothing.
+    var attachments: AttachmentLoader?
+    /// The editor's uploads: a queued upload's card plays its local bytes.
+    var mediaUploads: NativeMediaUploads? { textView?.inputCoordinator?.mediaUploads }
     /// A tap (or VoiceOver action) on an enabled inline page link chip opens
     /// that document (PR13c1), with the target UUID and optional `blockId`.
     var onOpenDocument: ((UUID, String) -> Void)?
@@ -492,6 +507,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         var visibleChecks = Set<String>()
         var visibleCode = Set<String>()
         var visibleToggles = Set<String>()
+        var visibleMedia = Set<String>()
         layout.enumerateTextLayoutFragments(from: viewport.location, options: []) { fragment in
             guard fragment.rangeInElement.location.compare(viewport.endLocation) == .orderedAscending else {
                 return false
@@ -514,6 +530,16 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
                 button.frame = CGRect(
                     x: lead + inset + (indent - inset) / 2 - size / 2, y: frame.minY + midY - size / 2, width: size,
                     height: size)
+            }
+            if enabled, let type = fragment.blockType, MediaBlock.isMediaLike(type), let card = attachmentView(id) {
+                visibleMedia.insert(id)
+                let button = mediaOptionButtons[id] ?? makeMediaOptions(id)
+                button.accessibilityLabel = labels.mediaOptions
+                // The card's top trailing corner, over the card.
+                let cardFrame = card.convert(card.bounds, to: textView)
+                let size = DocsSpacing.rowMinHeight
+                button.frame = CGRect(x: cardFrame.maxX - size, y: cardFrame.minY, width: size, height: size)
+                textView.bringSubviewToFront(button)
             }
             switch fragment.blockType {
             case "checkListItem":
@@ -556,6 +582,38 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
             button.removeFromSuperview()
             toggleButtons[id] = nil
         }
+        for (id, button) in mediaOptionButtons where !visibleMedia.contains(id) {
+            button.removeFromSuperview()
+            mediaOptionButtons[id] = nil
+        }
+    }
+
+    private func attachmentView(_ blockID: String) -> NativeAttachmentView? {
+        attachmentViews.allObjects.first { $0.content.blockID == blockID && $0.window != nil && $0.superview != nil }
+    }
+
+    /// A media card's Options button: "⋯" on a dark disc, legible over a photo,
+    /// with a 44 pt target. A tap opens the block's inspector.
+    private func makeMediaOptions(_ blockID: String) -> UIButton {
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = UIImage(
+            systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(textStyle: .footnote, scale: .medium)
+        )
+        configuration.baseForegroundColor = .white
+        configuration.background.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        configuration.background.backgroundInsets = NSDirectionalEdgeInsets(
+            top: DocsSpacing.space2xs, leading: DocsSpacing.space2xs, bottom: DocsSpacing.space2xs,
+            trailing: DocsSpacing.space2xs)
+        configuration.cornerStyle = .capsule
+        let button = UIButton(configuration: configuration)
+        button.isAccessibilityElement = true
+        button.accessibilityTraits = .button
+        button.accessibilityIdentifier = "nativeEditor.mediaOptions.\(blockID)"
+        button.addAction(
+            UIAction { [weak self] _ in self?.onOpenMedia?(blockID) }, for: .primaryActionTriggered)
+        textView?.addSubview(button)
+        mediaOptionButtons[blockID] = button
+        return button
     }
 
     private func gutter(_ textView: UITextView) -> CGFloat {
