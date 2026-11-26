@@ -49,6 +49,9 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     var labels = NativeEditorLabels() {
         didSet { if labels != oldValue { invalidateChrome() } }
     }
+    /// A source surface (`mathBlock`, `diagram`, inline `math`) has no code
+    /// language of its own, so it shows no language control.
+    var showsCodeLanguage = true
     var traits: UITraitCollection { textView?.traitCollection ?? .current }
 
     // MARK: Attachment previews (PR06e)
@@ -528,7 +531,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
                 button.frame = CGRect(
                     x: lead + inset + (indent - inset) / 2 - size / 2, y: frame.minY + midY - size / 2, width: size,
                     height: size)
-            case "codeBlock":
+            case "codeBlock" where showsCodeLanguage:
                 visibleCode.insert(id)
                 let language = attributes[.nativeCodeLanguage] as? String ?? "text"
                 let button = languageButtons[id] ?? makeLanguageButton(id)

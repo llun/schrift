@@ -2094,7 +2094,12 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   and `TableEditorViewController`) edits live with Done / `Escape` / `⌘Return`, Return = newline in
   `mathBlock`/`diagram` and exit-after-chip in `.inlineMath`, slash/formatting/link/indent gating in
   `NativeInputCoordinator` (including plain-text paste fallback inside source buffers and newline
-  rejection in `.inlineMath`), and IME `provisional.json` recovery. `sourceSlashItems` adds
+  rejection in `.inlineMath`), and IME `provisional.json` recovery. The sheet's text view starts
+  below the navigation bar with the code block's header row inside it (a `mathBlock`/`diagram`
+  source is a code block, whose header row is drawn above the first line), and a source surface
+  shows no code-language control: `mathBlock`/`diagram` are their own block types with no
+  language prop (the web's `@blocknote/diagram-block` fixes mermaid), so there is nothing to
+  pick. `sourceSlashItems` adds
   `mathBlock` and `inlineMath` (both auto-opening `NativeSourceEditor`), and `diagram` (seeding
   `SourceBlock.defaultDiagramSource`).
   **Tests:** `BlockNoteSourceOracleTests` (13 tests), `DocumentEngineSourceTests` (10 tests),
