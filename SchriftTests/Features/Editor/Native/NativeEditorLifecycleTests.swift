@@ -11,6 +11,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             MockURLProtocol.reset()
         }
         var reads = 0
+        // The switch is on by default now; this test drives the classic route explicitly.
+        fixture.defaults.set(false, forKey: NativeEditorPreference.key)
         let open = NativeEditorOpen(preference: {
             reads += 1
             return NativeEditorPreference.isEnabled(fixture.defaults)
@@ -19,7 +21,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         XCTAssertEqual(reads, 1, "construction only chooses the initial renderer")
         XCTAssertFalse(NativeEditorPreference.isEnabled(fixture.defaults))
         await open.open(viewModel: fixture.model, isOffline: false)
-        guard case .classic = open.route else { return XCTFail("unset preference must keep classic") }
+        guard case .classic = open.route else { return XCTFail("an explicit off must keep classic") }
         XCTAssertEqual(reads, 2, "the first open must reread the source")
         fixture.defaults.set(true, forKey: NativeEditorPreference.key)
         await open.open(viewModel: fixture.model, isOffline: false)

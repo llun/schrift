@@ -30,6 +30,19 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertNil(open.editUnavailableReason)
     }
 
+    /// A fresh install has no stored key, so the native editor is on: an eligible
+    /// Docs 6 document opens on the native route without anyone touching the switch.
+    func testFreshInstallWithNoStoredKeyRoutesToNative() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        ServerStub(owner: owner, state: seedState()).install()
+        env.model.saveCoordinator.nativeEditorEnabled = { NativeEditorPreference.isEnabled(env.defaults) }
+        let open = NativeEditorOpen(preference: { NativeEditorPreference.isEnabled(env.defaults) })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native = open.route else { return XCTFail("a fresh install must open the native route") }
+    }
+
     func testFirstOpenRecordsStepTimingsOnlyWhenCollectingAndNotOnOwnedReopen() async throws {
         let firstOpenStages: [NativeEditorStage] = [
             .openServerConfig, .openDocumentState, .openOfflineCacheRefresh,
@@ -627,6 +640,37 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         }
 
         let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: model, isOffline: true, canUpdate: true)
+
+        guard case .native(let session) = open.route else { return XCTFail("expected the native route") }
+        let scope = try XCTUnwrap(session.scope)
+        XCTAssertEqual(scope.documentID, env.documentID)
+        XCTAssertEqual(model.saveCoordinator.nativeOwnership(documentID: env.documentID), .owned(scope))
+        XCTAssertNil(MockURLProtocol.lastRequest, "an offline open must not touch the network")
+    }
+
+    /// The same conversion runs on a fresh install that never touched the switch: the
+    /// default is on, so a classic local create still becomes a native replica on open.
+    func testAClassicUnsentPageConvertsOnAFreshInstallWithNoStoredKey() async throws {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+        let origin = env.model.client.serverOrigin
+        env.creates.save(
+            PendingDocumentCreate(
+                localID: env.documentID, title: "Local", parentID: nil, createdAt: Date(),
+                serverOrigin: origin, ownerUserID: owner))
+        env.drafts.save(
+            PendingDraft(documentID: env.documentID, title: "Local", markdown: "# Notes", updatedAt: Date()))
+        ServerConfigStore(userDefaults: env.defaults).remember(
+            ServerConfig(releaseVersion: "6.0.0"), forServerOrigin: origin)
+        let model = env.relaunch()
+        model.saveCoordinator.nativeEditorEnabled = { NativeEditorPreference.isEnabled(env.defaults) }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        let open = NativeEditorOpen(preference: { NativeEditorPreference.isEnabled(env.defaults) })
         defer { open.close() }
         await open.open(viewModel: model, isOffline: true, canUpdate: true)
 

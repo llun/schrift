@@ -25,7 +25,7 @@ struct ProfileScreen: View {
     // reads this key live (RootView's `featureEnabled` closure), so writing it here is the
     // entire wiring — see `LiveCollaborationPreference`.
     @AppStorage(LiveCollaborationPreference.key) private var liveCollaboration: Bool = false
-    @AppStorage(NativeEditorPreference.key) private var nativeEditor: Bool = false
+    @AppStorage(NativeEditorPreference.key) private var nativeEditor: Bool = true
     @AppStorage(NativeEditorDiagnosticsPreference.key) private var collectNativeEditorDiagnostics: Bool = false
 
     @State private var isConfirmingDisconnect = false

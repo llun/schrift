@@ -33,4 +33,4 @@ documents below capture the architecture and design rationale.
   and one-time signing setup.
 - [`native-editor-acceptance.md`](native-editor-acceptance.md) — TestFlight acceptance
   protocol, `NativeEditorDiagnostics` capture instructions, measured simulator baselines,
-  and owner sign-off log for the default-off native editor.
+  and owner sign-off log for the native editor.

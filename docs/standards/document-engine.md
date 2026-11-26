@@ -1,7 +1,8 @@
 # The document engine (`Features/Editor/Engine`, B6a/B6b)
 
-The layer the phase 2 native reader sits on. The classic editor remains the
-default; `schrift.nativeEditor` is an experimental, default-off Profile preference.
+The layer the native reader sits on. The native editor is the default;
+`schrift.nativeEditor` is a Profile preference that only an explicit off turns back
+to the classic editor.
 
 - **Native reader (PR01).** On first open, or reopen from `.loading` or `.native`,
   `NativeEditorOpen` reads the preference before starting classic tasks or the live bridge;
@@ -136,7 +137,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   Still open: a total shadow for opaque/rich documents and old Markdown-draft migration
   (clean-replica removal on sign-out and local-create key migration landed in PR15). No live socket.
 
-- **PR02 activation (slice B), behind the default-off switch.** `NativeEditorOpen.open(
+- **Native typing activation, behind the native switch.** `NativeEditorOpen.open(
   viewModel:isOffline:canUpdate:)` enables typing only when the switch is on, the server
   is Docs 6, the remembered signed-in user owns the scope, `canUpdate`
   (`pinRow.abilities.update`, nil fails closed) holds, the document is not a pending

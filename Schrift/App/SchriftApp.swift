@@ -8,6 +8,8 @@ struct SchriftApp: App {
     @State private var connectivity = ConnectivityMonitor()
 
     init() {
+        // Before any reader: the native editor is on unless the user turned it off.
+        NativeEditorPreference.registerDefault()
         NativeMediaDropPaste.removeStagingRoot()
     }
 

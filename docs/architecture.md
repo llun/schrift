@@ -522,8 +522,8 @@ them, which is BlockNote's own rule. No incremental byte pin moved.
 
 ### The headless document engine (B6a/B6b)
 
-The phase 2 native editor's foundation. The default editor keeps its existing
-path; PR01 connects this engine to an opt-in read-only TextKit 2 surface.
+The native editor's foundation. It is the default; this engine backs its
+read-only TextKit 2 surface.
 `Features/Editor/Engine/` holds these pieces:
 
 - **`EditorSurface`** — the model → UI protocol: one `applyPatch(BlockPatch)`.
@@ -557,7 +557,7 @@ path; PR01 connects this engine to an opt-in read-only TextKit 2 surface.
   captures, including an element anchor for an empty text-capable block.
 
 **Native reader (phase 2 PR01).** Profile's `schrift.nativeEditor` preference
-defaults off and is read by `NativeEditorOpen` at each open or reopen. A selected surface
+defaults on and is read by `NativeEditorOpen` at each open or reopen. A selected surface
 never changes in response to a preference write. `NativeEditorOpen` fetches the
 existing raw `collaborationYDocState` for eligible online Docs 6 documents.
 With the switch on, the classic editor is selected only for a pre-Docs 6 server, for
@@ -726,7 +726,7 @@ Backspace at a block start is structural (PR04a, below); at the document end it 
 refused with a notice. Permanent migration/rollback ownership remains open; production
 activation is below.
 
-**PR02 activation (slice B).** With the default-off switch on, `NativeEditorOpen`
+**Native typing activation.** With the native switch on, `NativeEditorOpen`
 enables durable typing only for a signed-in user whose document metadata grants
 `abilities.update`, on a Docs 6 server, for a document that is not a pending create
 or delete, has no classic draft or queued save, has no live owner (A5's
@@ -1232,7 +1232,7 @@ cover, and pushes without writing to the document (`@mention` taps are no-ops; a
 and `blockID` scroll targets arrive in PR13c2).
 
 **PR15 Native shell integration, Reading↔Editing mode handoff, shortcuts, and diagnostics.**
-`EditorView` keeps `NativeEditorPreference.key` (`"schrift.nativeEditor"`) off by default and routes
+`EditorView` keeps `NativeEditorPreference.key` (`"schrift.nativeEditor"`) on by default and routes
 `.loading`, `.native`, `.preservedUnavailable`, and `.unavailable` through `NativeDocumentShellView`
 while keeping `.classic` on `ClassicEditorView`. `NativeDocumentShellView` unifies the production chrome across
 both surfaces (`EditorLoadingPlaceholder`, `EditorBannerStack`, toolbar leading `PagesTreeDrawer` +
@@ -2031,7 +2031,7 @@ ARC collects none of it, so **releasing a `YDoc` frees nothing**; a live session
 opens one replica per document. `YDoc.destroy()` breaks the cycles and must be
 called by the replica's owner — the main actor, through
 `DocumentCollaborationManager` (C1), or `DocumentReplicaSession` for the
-opt-in native route (PR08b) — whenever it drops a replica (entry teardown or a
+native route — whenever it drops a replica (entry teardown or a
 fail-safe). No edge can be
 `unowned` instead: the algorithm reads all of them in both directions, and none has
 a target that provably outlives its source.
@@ -3013,7 +3013,7 @@ Static assets (logo, illustrations, doc-type icons) are copied from the handoff'
 - Unit tests for the on-device Markdown→Yjs encoder (`Core/Yjs` — `YjsEncoderTests`, `MarkdownYjsTests`, `InlineMarkdownTests`, verifying valid Yjs-v1 update bytes) and for the save flow (`DocumentSaveTests` / `DocumentSaveCoordinator*Tests`, verifying `saveDocumentContent` issues `PATCH /content/` then `PATCH /{id}/` for the title; `CollaborationYDocSaveClientTests` for the Docs 6 route choice and request shapes, with `BlockNoteIncrementalSaveTests`/`BlockNoteAlignmentTests` checking at the document level that the incremental update makes the served state read exactly like the saved markdown).
 - `BlockNote056*Tests` inline eight yjs 13.6.33 / BlockNote 0.56 captures from the phase 0 S3 spike (the editing-scenario harness, not object storage), checking seed XML and every incremental edit (17 steps) with nothing pending.
   These tests hold XML and update bytes only; the captures' text deltas are not committed yet. B2's cursor positions are pinned separately by `YRelativePositionTests` (relative positions captured from yjs 13.6.33).
-- `NativeEditorAcceptanceTests` and `SchriftNativeUITests` (`NativeEditorUITests`, including `--native-diagnostics` and the `CADisplayLink` `--native-scroll-sampler` S2 sweep) cover whole-family round-trips, default-off rollback, classic non-regression, offline local-create replica migration, mode handoff, memory reclamation, clean-replica sign-out, and bounded work counters — see [`native-editor-acceptance.md`](native-editor-acceptance.md).
+- `NativeEditorAcceptanceTests` and `SchriftNativeUITests` (`NativeEditorUITests`, including `--native-diagnostics` and the `CADisplayLink` `--native-scroll-sampler` S2 sweep) cover whole-family round-trips, switch-off rollback, classic non-regression, offline local-create replica migration, mode handoff, memory reclamation, clean-replica sign-out, and bounded work counters — see [`native-editor-acceptance.md`](native-editor-acceptance.md).
 - SwiftUI Previews for every DesignSystem component, serving as the visual QA catalog (mirrors the handoff's `*.card.html` files).
 - No live integration tests against docs.llun.dev in CI — it's a personal server; verify manually against it during development instead.
 

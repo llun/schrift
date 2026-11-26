@@ -6,6 +6,9 @@ struct ChecklistTestHostApp: App {
     @State private var loc: LocalizationStore
 
     init() {
+        // This fixture exercises the classic checklist rows, so it opts out of the
+        // now-default-on native editor explicitly.
+        UserDefaults.standard.set(false, forKey: NativeEditorPreference.key)
         let suite = "SchriftChecklistTestHost"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)

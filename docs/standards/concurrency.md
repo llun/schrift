@@ -19,7 +19,7 @@
     a replica is mutable shared state, so exactly one owner may touch it — the
     **main actor**, through `DocumentCollaborationManager` (`@MainActor final
     class`, `Schrift/Core/Collaboration/DocumentCollaborationManager.swift`),
-    which holds one `YDoc` per document (C1). The opt-in native route instead
+    which holds one `YDoc` per document (C1). The native route instead
     has a separate owner off the main actor, `actor DocumentReplicaSession`
     (PR08b); it never attaches to the manager's replica. Pass updates and
     projections across isolation domains — never the `YDoc`. Its inputs/outputs stay value types
