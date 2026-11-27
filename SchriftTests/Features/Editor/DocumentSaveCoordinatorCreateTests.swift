@@ -47,6 +47,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             serverOrigin: origin,
             backgroundTasks: .noop, sleep: neverSleep
         )
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         return (coordinator, draftStore, createStore)
     }
 
@@ -66,6 +67,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             serverOrigin: origin,
             backgroundTasks: .noop, sleep: neverSleep
         )
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         return (coordinator, defaults)
     }
 
@@ -470,6 +472,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             client: client, draftStore: PendingDraftStore(userDefaults: defaults),
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
             createStore: createStore, serverOrigin: origin, backgroundTasks: .noop, sleep: neverSleep)
+        seed.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         let local = seed.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
         defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingDrafts")
 
@@ -478,6 +481,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             serverOrigin: origin, backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         await coordinator.recoverDrafts()
 
         XCTAssertEqual(
@@ -536,6 +540,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             serverOrigin: origin, backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         await coordinator.recoverDrafts()
 
         XCTAssertGreaterThan(
@@ -575,6 +580,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             serverOrigin: origin, backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         await coordinator.recoverDrafts()
 
         XCTAssertGreaterThan(
@@ -979,6 +985,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             serverOrigin: serverOrigin ?? origin,
             backgroundTasks: .noop, sleep: neverSleep
         )
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         return (coordinator, drafts, createStore)
     }
 }

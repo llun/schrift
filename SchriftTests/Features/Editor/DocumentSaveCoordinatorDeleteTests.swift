@@ -65,16 +65,20 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
             userDefaults: defaults, directory: cacheDirectory.appendingPathComponent("Attachments"))
         let lists = DocumentCacheStore(userDefaults: defaults)
         let children = DocumentChildrenCacheStore(userDefaults: defaults)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: drafts,
+            replicaStore: ReplicaStore(
+                directory: cacheDirectory.appendingPathComponent("ReplicaDrafts"),
+                ownershipStore: ReplicaOwnershipStore(userDefaults: defaults), interrupt: replicaInterrupt),
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: creates, deleteStore: deletes, attachmentStore: attachments,
+            listCache: lists, childrenCache: children,
+            serverOrigin: serverOrigin ?? origin, appBuild: "1", backgroundTasks: .noop, sleep: neverSleep)
+        // Pinned off: the default reads `UserDefaults.standard`, where the native editor is on,
+        // so these classic tests would otherwise run the native path.
+        coordinator.nativeEditorEnabled = { false }
         return Environment(
-            coordinator: DocumentSaveCoordinator(
-                client: client, draftStore: drafts,
-                replicaStore: ReplicaStore(
-                    directory: cacheDirectory.appendingPathComponent("ReplicaDrafts"),
-                    ownershipStore: ReplicaOwnershipStore(userDefaults: defaults), interrupt: replicaInterrupt),
-                contentCache: DocumentContentCacheStore(directory: cacheDirectory),
-                createStore: creates, deleteStore: deletes, attachmentStore: attachments,
-                listCache: lists, childrenCache: children,
-                serverOrigin: serverOrigin ?? origin, appBuild: "1", backgroundTasks: .noop, sleep: neverSleep),
+            coordinator: coordinator,
             drafts: drafts, creates: creates, deletes: deletes, attachments: attachments,
             lists: lists, children: children, defaults: defaults)
     }

@@ -4,7 +4,7 @@ import SwiftUI
 /// refreshing, offline state flipping, list reloads) never recreate the
 /// editing session mid-edit. A fresh model is created only when the screen's
 /// identity changes (a different document is opened). `NativeEditorOpen` reads the
-/// default-off native preference at each safe open/reopen; preference changes never
+/// native preference (on by default) at each safe open/reopen; preference changes never
 /// replace a focused editor.
 struct EditorScreen: View {
     let reach: LinkReach

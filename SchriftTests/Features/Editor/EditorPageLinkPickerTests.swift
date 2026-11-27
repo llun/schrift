@@ -69,6 +69,7 @@ final class EditorPageLinkPickerTests: XCTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: listCache, childrenCache: childrenCache,
             serverOrigin: self.serverOrigin, backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         let viewModel = EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
             serverOrigin: serverOrigin ?? self.serverOrigin, signedInUser: signedInUser, contentCache: contentCache,

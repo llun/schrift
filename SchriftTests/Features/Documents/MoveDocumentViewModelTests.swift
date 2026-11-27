@@ -49,6 +49,7 @@ final class MoveDocumentViewModelTests: XCTestCase {
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         let signedIn = SignedInUserStore(userDefaults: defaults)
         signedIn.remember(ownerID)
         return Environment(client: client, coordinator: coordinator, defaults: defaults, signedIn: signedIn)

@@ -7,7 +7,7 @@ sign-off log for the Phase 2 native BlockNote/Yjs editor (`NativeEditorView` / `
 ## 1. Rollout status & scope invariants
 
 - **Default state:** `NativeEditorPreference.key` (`"schrift.nativeEditor"`, persisted in `UserDefaults`,
-  toggled in **Profile → Native editor**) **is `true` (ON) by default**; only an explicit off keeps
+  toggled in **Profile → Native editor (experimental)**) **is `true` (ON) by default**; only an explicit off keeps
   the classic editor.
 - **Scope:** When the switch is on, eligible Docs 6 documents (`usesCollaborationYDocServer == true`)
   open through `NativeDocumentShellView` and `NativeEditorSession`. Pre-Docs 6 servers are refused
@@ -32,7 +32,7 @@ durations are emitted.
 
 ### A. In-app sanitized JSON (TestFlight & Debug)
 
-1. Open **Profile**, enable **Native editor** (`profile.nativeEditor`), and then
+1. Open **Profile**, check **Native editor (experimental)** (`profile.nativeEditor`) is on, and then
    enable **Collect native editor diagnostics** (`profile.nativeEditor.collectDiagnostics`, default
    `false`, shown only while the native editor switch is on). In-memory collection in
    `NativeEditorDiagnosticsStore.shared` (bounded ring: 256 recent stage samples, 32 session
@@ -114,7 +114,7 @@ Recorded in `.review/fix1.log` (`11` tests executed, `0` failures, `6.454 s` tot
 | Test | Scope verified | Result | Duration (s) |
 |---|---|---|---|
 | `testBoundedWorkCountersOnLargeProseAndS2MixedFixtures` | Single insert / checkbox toggle on 5,000-block & S2 5,000/200 fixtures: `textPatchCount == 1` / `blockPatchCount == 1`, `fullStorageRebuildCount == 0`, viewport-bounded realised views (`> 0` and `<= 32`) | Passed | 1.146 |
-| `testClassicEditorAndBlockNoteApplyEditNonRegression` | Default-off classic open, edit, `BlockNotePreservation` (`applyEdit`) save, checklist filter, conflict resolution | Passed | 0.067 |
+| `testClassicEditorAndBlockNoteApplyEditNonRegression` | Explicit-off classic open, edit, `BlockNotePreservation` (`applyEdit`) save, checklist filter, conflict resolution | Passed | 0.067 |
 | `testDiagnosticsStoreBoundedRingPercentilesZeroPIIAndOffModeEarlyReturn` | 256-sample / 32-session ring caps, percentile accuracy, zero PII/IDs/hosts, separate `NativeEditorDiagnosticsPreference` opt-in & `minSessionSeq` floor, mid-session toggle-off interval/session closing & `activeSessions` eviction, mailbox FIFO alignment | Passed | 0.010 |
 | `testNewDocumentSubpageAndOfflineLocalCreateMigration` | Online new doc & subpage + title-only `batch == nil` save; offline local create (`localScope` replica, child create, queued image upload) → online `migrateNativeCreatedDocument` to `serverID` | Passed | 0.243 |
 | `testReadingEditingModeHandoffAndAllHiddenChecklistSettling` | Reading starts non-editable; `Hide completed` zero-Yjs-write hiding of checked items & descendants; 450 ms settle into all-hidden state; "Show completed"; mode round-trip anchor | Passed | 0.479 |
@@ -163,9 +163,9 @@ Execute on physical devices (including an iPad mini 6 4 GB memory floor device a
 iPhone/iPad) using a Release/TestFlight build before considering any rollout change:
 
 1. **Enable switch & inspect `72ebe1bb` contract:**
-   - Confirm **Native editor** starts **ON** (`true`) on fresh/upgraded install.
-   - Open an existing document with the switch OFF to confirm `ClassicEditorView` remains unchanged.
-   - Enable **Native editor** in Profile.
+   - Confirm **Native editor (experimental)** starts **ON** (`true`) on fresh/upgraded install.
+   - Turn the switch OFF and open an existing document to confirm `ClassicEditorView` remains unchanged.
+   - Turn **Native editor (experimental)** back on in Profile.
    - Open the `72ebe1bb` read/render fixture (or designated test doc) and an authorized write
      document: verify first visible content feels instantaneous, all rich families render
      (headings, lists, checklists, toggles, quotes, callouts, code blocks, dividers, page breaks,
@@ -235,7 +235,7 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
 7. **Rollback check & diagnostics capture:**
    - Turn on **Profile → Collect native editor diagnostics** before the run, then copy diagnostics via **Profile → Copy native editor diagnostics** and record Instruments
      `NativeEditor` signpost timings (`p50`/`p95`/`max`) and peak `phys_footprint`.
-   - Disable **Native editor** in Profile: verify any un-synced rich draft still
+   - Disable **Native editor (experimental)** in Profile: verify any un-synced rich draft still
      replays via raw Yjs and opens preserved read-only, while untouched documents return to
      `ClassicEditorView`.
 

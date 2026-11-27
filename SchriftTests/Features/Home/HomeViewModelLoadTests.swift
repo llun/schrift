@@ -565,6 +565,7 @@ final class HomeViewModelLoadTests: HomeViewModelTestCase {
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore,
             contentCache: DocumentContentCacheStore(directory: cacheDir), backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         let viewModel = HomeViewModel(
             client: client, cache: makeCache(), saveCoordinator: coordinator, userDefaults: preferences)
 

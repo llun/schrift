@@ -12,6 +12,8 @@ final class NativeEditorPreferenceTests: XCTestCase {
         super.setUp()
         suite = "NativeEditorPreferenceTests.\(UUID())"
         defaults = UserDefaults(suiteName: suite)
+        // What `SchriftApp.init` does, so this suite does not lean on the host app's launch.
+        NativeEditorPreference.registerDefault(in: defaults)
     }
 
     override func tearDown() {
@@ -20,8 +22,7 @@ final class NativeEditorPreferenceTests: XCTestCase {
     }
 
     func testNoStoredKeyIsEnabledAndTheSettingsToggleReadsOn() {
-        // `SchriftApp.init` registers the on-by-default value; a suite that never
-        // stored the key reads it.
+        // `setUp` registers the on-by-default value; a suite that never stored the key reads it.
         XCTAssertTrue(NativeEditorPreference.isEnabled(defaults), "an absent key must mean on")
         XCTAssertTrue(defaults.bool(forKey: NativeEditorPreference.key), "the Settings toggle reads on")
     }

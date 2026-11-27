@@ -99,6 +99,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             client: client, draftStore: PendingDraftStore(userDefaults: defaults),
             createStore: PendingDocumentCreateStore(userDefaults: defaults), deleteStore: deletes,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         // No `remember` — the account is unknown.
         let actions = DocumentActions(
             client: client, saveCoordinator: coordinator,
@@ -139,6 +140,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
 
@@ -173,6 +175,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
 
@@ -204,6 +207,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
 
@@ -259,6 +263,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
         let recorder = DeletionRecorder()
@@ -288,6 +293,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
 
@@ -315,6 +321,7 @@ final class DocumentActionsDeleteTests: DocumentActionsTestCase {
             listCache: DocumentCacheStore(userDefaults: env.defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
 
