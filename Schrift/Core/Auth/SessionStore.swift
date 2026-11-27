@@ -138,7 +138,8 @@ final class SessionStore {
         self.signedInUser = signedInUser ?? SignedInUserStore(userDefaults: userDefaults)
         self.cachedUser = CurrentUserCacheStore(userDefaults: userDefaults)
         self.serverURL = userDefaults.url(forKey: Self.serverURLKey)
-        self.isAuthenticated = (try? keychain.load(forKey: Self.authenticatedKeychainKey)) != nil
+        let authenticatedMarker = Result { try keychain.load(forKey: Self.authenticatedKeychainKey) }
+        self.isAuthenticated = (try? authenticatedMarker.get()) != nil
         // Synchronous, so the cookies are back in the shared storage before
         // RootView builds the API client and the first request fires.
         if isAuthenticated {
@@ -162,9 +163,12 @@ final class SessionStore {
             keychain.upgradeAccessibility(forKey: Self.authenticatedKeychainKey)
             keychain.upgradeAccessibility(forKey: Self.sessionCookiesKeychainKey)
             restoreSessionCookies()
-        } else {
-            // Signed out at launch: nobody's login may linger in the web view, including one an
-            // earlier build left at its sign-out (it kept those cookies) or an abandoned sign-in.
+        } else if case .success(nil) = authenticatedMarker {
+            // Signed out at launch: nobody's login may linger, including one an earlier build
+            // left at its sign-out (it kept those cookies) or an abandoned sign-in. Only on a
+            // definite "no marker": a Keychain read failing while locked is not a sign-out.
+            // (Not `cookieStorage`: the app never sends the IdP's copies anywhere, and a
+            // sign-in may already be writing its own there.)
             clearWebSiteData(true)
         }
     }
@@ -301,7 +305,12 @@ final class SessionStore {
         cachedUser.clear()
     }
 
-    func beginSignOut() { isSigningOut = true }
+    /// Also unmounts any re-login web view now, so none is still answering the IdP when the
+    /// sign-out wipes the web view's store (an abandoned sign-out re-raises on the next 401).
+    func beginSignOut() {
+        isSigningOut = true
+        endReauthentication()
+    }
 
     /// A stale re-login (see `ReauthenticationViewModel`) has already written its cookies.
     /// Signed in, they are treated as an unconfirmed handover — the identity is forgotten, as
@@ -309,7 +318,9 @@ final class SessionStore {
     /// sign-out under way. Signed out, they are deleted.
     func discardStaleLoginCookies() {
         guard isAuthenticated else {
+            // Landed after the sign-out: undo what it wrote, in the web view's store too.
             cookieStorage.removeCookies(since: .distantPast)
+            clearWebSiteData(true)
             return
         }
         noteWebLoginHandedOver()

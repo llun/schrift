@@ -363,6 +363,38 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertEqual(clears, [false])
     }
 
+    /// A stale login landing after the sign-out undoes what it wrote, in both cookie stores.
+    func testAStaleLoginAfterTheSignOutClearsEverythingAgain() throws {
+        var clears: [Bool] = []
+        let cookies = FakeCookieStorage()
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: cookies,
+            clearWebSiteData: { clears.append($0) })
+        try store.signIn(serverURL: serverURL)
+        try store.signOut()
+        clears = []
+        cookies.setCookie(
+            HTTPCookie(properties: [.domain: "idp.example.org", .path: "/", .name: "idp_session", .value: "fake"])!)
+
+        store.discardStaleLoginCookies()
+
+        XCTAssertEqual(clears, [true])
+        XCTAssertEqual(cookies.storedCookies, [])
+    }
+
+    /// Starting a sign-out unmounts a re-login in progress, so none answers the IdP mid-wipe.
+    func testBeginningASignOutEndsAReauthenticationInProgress() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: serverURL)
+        store.noteSessionExpired()
+        XCTAssertTrue(store.needsReauthentication)
+
+        store.beginSignOut()
+
+        XCTAssertFalse(store.needsReauthentication)
+    }
+
     func testTheSiteDataClearKeepsCookiesOnlyOnAnAccountChange() {
         XCTAssertFalse(webLoginSiteDataTypes(includingCookies: false).contains(WKWebsiteDataTypeCookies))
         XCTAssertTrue(webLoginSiteDataTypes(includingCookies: true).contains(WKWebsiteDataTypeCookies))
