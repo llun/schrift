@@ -183,15 +183,17 @@ final class SessionStore {
         try keychain.save(Data([1]), forKey: Self.authenticatedKeychainKey)
         // Unless this is provably the account whose session the login web view last held, with
         // no other web login in between, drop that view's site data; cookies stay, for single
-        // sign-on. Signed out, only a confirmed account still on record (no sign-out ran, e.g. a
+        // sign-on. Signed out, only a confirmed sign-in still on record (no sign-out ran, e.g. a
         // launch that could not read the Keychain) can differ; after a sign-out there is none.
         let confirmedUserID = userDefaults.string(forKey: Self.webLoginConfirmedUserKey).flatMap(UUID.init)
         let webLogins = userDefaults.integer(forKey: Self.webLoginsSinceConfirmKey)
+        let hasConfirmedRecord = userDefaults.object(forKey: Self.webLoginConfirmedUserKey) != nil
         let provablySameAccount = confirmedUserID != nil && confirmedUserID == userID
-        if webLogins > 1 || (!provablySameAccount && (isAuthenticated || confirmedUserID != nil)) {
+        if webLogins > 1 || (!provablySameAccount && (isAuthenticated || hasConfirmedRecord)) {
             clearWebSiteData(false)
         }
-        userDefaults.set(userID?.uuidString, forKey: Self.webLoginConfirmedUserKey)
+        // "" records a confirmed sign-in by an account nobody can name.
+        userDefaults.set(userID?.uuidString ?? "", forKey: Self.webLoginConfirmedUserKey)
         userDefaults.removeObject(forKey: Self.webLoginsSinceConfirmKey)
         // Invalidate the old disk namespace before saving replacement cookies,
         // so an interruption cannot restore new credentials with old images.
@@ -322,9 +324,9 @@ final class SessionStore {
     /// sign-out under way. Signed out, they are deleted.
     func discardStaleLoginCookies() {
         guard isAuthenticated else {
-            // Landed after the sign-out: undo what it wrote, in the web view's store too —
-            // unless a new sign-in has handed over since, whose cookies these now are.
-            guard userDefaults.integer(forKey: Self.webLoginsSinceConfirmKey) == 0 else { return }
+            // Landed after the sign-out: undo what it wrote, in the web view's store too. Even
+            // if a new sign-in is under way: it fails and is retried, which beats keeping a
+            // stale account's session under the new one.
             cookieStorage.removeCookies(since: .distantPast)
             clearWebSiteData(true)
             return
