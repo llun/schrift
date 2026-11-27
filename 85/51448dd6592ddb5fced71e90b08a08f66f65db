@@ -1,0 +1,40 @@
+SchriftTests/Features/Search/SearchScreenNavigationTests.swift
+  s_4fb28ab57323fe::t_0d0c419d996d6f 33
+SchriftTests/Features/Editor/ReadingPositionTests.swift
+  s_4fb28ab57323fe::t_f8417a10801656 360-365,368-373
+  s_4fb28ab57323fe::t_17be93b08acbfc 366-367
+Schrift/Core/Auth/SessionStore.swift
+  s_4fb28ab57323fe::t_f101c78f610ceb 44-45,138,148
+Schrift/Features/Editor/ReadingPositionSession.swift
+  s_4fb28ab57323fe::t_0d0c419d996d6f 66-68,75,93,166,178-179
+docs/standards/persistence.md
+  s_4fb28ab57323fe::t_fbdfa7ca25297f 290-294
+SchriftTests/Features/Search/RecentSearchesStoreTests.swift
+  s_4fb28ab57323fe::t_fbdfa7ca25297f 51-75
+SchriftTests/Features/Search/SearchViewModelTests.swift
+  s_4fb28ab57323fe::t_fbdfa7ca25297f 17,327
+Schrift/Features/Editor/ReadingPositionStore.swift
+  s_4fb28ab57323fe::t_0d0c419d996d6f 216-218,220
+SchriftTests/Features/Editor/Native/NativeNavigationTests.swift
+  s_4fb28ab57323fe::t_fbdfa7ca25297f 19
+Schrift/Features/Search/RecentSearchesStore.swift
+  s_4fb28ab57323fe::t_f101c78f610ceb 14-16,18,21-27,31,35-36,39,41-47
+docs/offline-and-sync.md
+  s_4fb28ab57323fe::t_61c1ff5b1e86cb 3493-3494
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8551448dd6592ddb5fced71e90b08a08f66f65db",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
