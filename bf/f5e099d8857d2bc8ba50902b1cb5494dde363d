@@ -1,0 +1,81 @@
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAccountTests.swift
+  s_4fb28ab57323fe::t_7a9497e9b60109 1-65
+Schrift/App/RootView.swift
+  s_4fb28ab57323fe::t_fdcbec7509623b 352-356
+Schrift/App/SchriftApp.swift
+  s_4fb28ab57323fe::t_d1e105a5fefb67 19-22
+Schrift/Features/Editor/DocumentContentCacheStore.swift
+  s_4fb28ab57323fe::t_dc2fc26fc7bf11 64-68,70-77,83-86,88-90,106-126,128,133-136,143-144,152-153,155,174-175,178,180,185-194,198,214,229
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_4fb28ab57323fe::t_0af14cb29dd236 591-593,604,615,631,743,747-752,795,858-859,886-887,915,1120,2133-2139,4998-5000,5112
+Schrift/Features/Editor/PendingDraftStore.swift
+  s_4fb28ab57323fe::t_26d313c60c1734 38-40,50-51,61-71,83-93,96,105,111,122-124,128-134,139,143,146,151-155,159-179,251-252,257-262
+SchriftTests/Core/Networking/OfflineAvailabilityTests.swift
+  s_4fb28ab57323fe::t_368b24b8b166a3 40
+SchriftTests/Features/Editor/DocumentContentCacheStoreTests.swift
+  s_4fb28ab57323fe::t_7c30822c8e2487 196-291
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAttachmentHoldTests.swift
+  s_4fb28ab57323fe::t_9458f416f3235b 55
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAttachmentReplayTests.swift
+  s_4fb28ab57323fe::t_478c84babe4bb5 56-58,136-138
+SchriftTests/Features/Editor/DocumentSaveCoordinatorClassicConversionTests.swift
+  s_4fb28ab57323fe::t_c06c07517b0ac7 86-88,300-301
+SchriftTests/Features/Editor/DocumentSaveCoordinatorConflictTests.swift
+  s_4fb28ab57323fe::t_53cd5f418210ab 395,438,488
+SchriftTests/Features/Editor/DocumentSaveCoordinatorCreateTests.swift
+  s_4fb28ab57323fe::t_dd830c04d32e4b 40,62,470,531,574,611,639,664,687,988
+SchriftTests/Features/Editor/DocumentSaveCoordinatorDeleteTests.swift
+  s_4fb28ab57323fe::t_d2f6742c7c3806 59-61
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayTestCase.swift
+  s_4fb28ab57323fe::t_69998cdbea8758 58-60
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplicaOwnershipTests.swift
+  s_4fb28ab57323fe::t_8645a9383812ce 145-146
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTestCase.swift
+  s_4fb28ab57323fe::t_51e219f4ec2fb0 13,69-70
+SchriftTests/Features/Editor/EditorChecklistFilterTests.swift
+  s_4fb28ab57323fe::t_d94cfcc876f786 33
+SchriftTests/Features/Editor/EditorViewModelConflictDetectionTests.swift
+  s_4fb28ab57323fe::t_2a4b426487a61a 321,435
+SchriftTests/Features/Editor/EditorViewModelLiveTests.swift
+  s_4fb28ab57323fe::t_7048ee794d4515 48
+SchriftTests/Features/Editor/EditorViewModelTestCase.swift
+  s_4fb28ab57323fe::t_e37a7bad194128 49-51
+SchriftTests/Features/Editor/LiveEditingBridgeTests.swift
+  s_4fb28ab57323fe::t_1e3adf0cf5af76 47
+SchriftTests/Features/Editor/Native/NativeEditorActivationTests.swift
+  s_4fb28ab57323fe::t_9bb697edb7016a 2152-2156
+SchriftTests/Features/Editor/Native/NativeEditorLifecycleTests.swift
+  s_4fb28ab57323fe::t_409ec1e70db770 312-313,589,633-634,868
+SchriftTests/Features/Editor/Native/NativeEditorWaitingClassicTests.swift
+  s_4fb28ab57323fe::t_bdb9a9d7094d1d 687-689,725-727,740-742,753-755,932-934
+SchriftTests/Features/Editor/Native/ReplicaSaveAdapterTests.swift
+  s_4fb28ab57323fe::t_c047588145dbd8 510-511,518
+SchriftTests/Features/Editor/PendingDraftStoreTests.swift
+  s_4fb28ab57323fe::t_0daaa6b690bd71 6-9,13,22-30,102-103,131,152,260,278,288,294-413
+SchriftTests/Features/Home/HomeViewModelLoadTests.swift
+  s_4fb28ab57323fe::t_31c81702d31ef1 541
+SchriftTests/Features/Home/HomeViewModelTestCase.swift
+  s_4fb28ab57323fe::t_2b1e9c8c0db0f6 86-87
+docs/offline-and-sync.md
+  s_4fb28ab57323fe::t_7961c3c80f4a27 725-727,729-737,763-765,777-778,790-793,796,817-821,1517-1545,1559-1560
+docs/standards/editor-save.md
+  s_4fb28ab57323fe::t_5449d480d8d6b5 822-826,1984-1985
+docs/standards/persistence.md
+  s_4fb28ab57323fe::t_4cff62ace74e9d 67-71,84-85,259-270
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bff5e099d8857d2bc8ba50902b1cb5494dde363d",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
