@@ -1,0 +1,108 @@
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_4fb28ab57323fe::t_b59b93716ca312 606,668-669,673-675,687-696,715,722,968,3837,3840,3866-3867,3874,3876,3883-3887,3890-3891,5691,5693,5731,5737,5742,5744,5760,5765,5782,5786,5837,5864,5909-5910,5913,5918-5919,5923-5932,5935,5938-5939
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_4fb28ab57323fe::t_b59b93716ca312 26-29,58,85-88,2154,2163,2175,2178-2180,2187
+Schrift/Core/Collaboration/DocumentCollaborationManager.swift
+  s_4fb28ab57323fe::t_b59b93716ca312 53-54,79,162-163,165,409-410,431,433-444,446
+Schrift/Features/Editor/EditorViewModel.swift
+  s_4fb28ab57323fe::t_b59b93716ca312 2239,2245-2257
+  s_4fb28ab57323fe::t_ae63ee47d399e1 2258-2259
+Schrift/App/RootView.swift
+  s_4fb28ab57323fe::t_f38c305b478127 300-306
+Schrift/Core/Auth/SessionStore.swift
+  s_4fb28ab57323fe::t_2088abd52de74f 166,258,271
+Schrift/Core/Auth/SignedInUserStore.swift
+  s_4fb28ab57323fe::t_2c03bf68bf23ba 80-82,85,88-91,93
+Schrift/Core/Localization/L10nKey.swift
+  s_4fb28ab57323fe::t_27061b10b3c041 674-677
+Schrift/Core/Localization/Strings+en.swift
+  s_4fb28ab57323fe::t_c7d69551891b02 602-604
+Schrift/Features/Editor/EditorView.swift
+  s_4fb28ab57323fe::t_f751757c442117 422-429,768-772,1104
+Schrift/Features/Editor/Native/NativeDocumentShellView.swift
+  s_4fb28ab57323fe::t_6bed563d428cf8 16-18,35-43
+Schrift/Features/Editor/PendingDraftStore.swift
+  s_4fb28ab57323fe::t_e88a853be0c566 93-94,146-149,152,157
+SchriftTests/Core/Auth/SignedInUserStoreTests.swift
+  s_4fb28ab57323fe::t_cc82a8fc35df35 97-100,112,118-120
+SchriftTests/Core/Collaboration/DocumentCollaborationManagerLifecycleTests.swift
+  s_4fb28ab57323fe::t_4d1fd14ccfb5cf 165,172-189
+SchriftTests/Core/Collaboration/DocumentCollaborationManagerTestCase.swift
+  s_4fb28ab57323fe::t_d322cbbac6ca26 38-39,49-50
+SchriftTests/Core/Localization/StringsCompletenessTests.swift
+  s_4fb28ab57323fe::t_dac84702923097 33
+SchriftTests/Features/Editor/BlockTextFocusTests.swift
+  s_4fb28ab57323fe::t_f7db28e303fa32 887
+SchriftTests/Features/Editor/ChecklistPresentationTests.swift
+  s_4fb28ab57323fe::t_410e6736ad254f 311
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAccountTests.swift
+  s_4fb28ab57323fe::t_99296ced93e7ee 12-13,193-195,197,201-202,204-207
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAttachmentReplayTests.swift
+  s_4fb28ab57323fe::t_c284e128e8d12a 216,228,237,241,264
+SchriftTests/Features/Editor/DocumentSaveCoordinatorDeleteTests.swift
+  s_4fb28ab57323fe::t_bab3fef8f36486 811,814,830-831
+SchriftTests/Features/Editor/DocumentSaveCoordinatorFailureDetailTests.swift
+  s_4fb28ab57323fe::t_d7c3699257f829 15
+SchriftTests/Features/Editor/DocumentSaveCoordinatorNativeRetryTests.swift
+  s_4fb28ab57323fe::t_006812dbf4c330 357
+SchriftTests/Features/Editor/EditorAttachmentInsertionTests.swift
+  s_4fb28ab57323fe::t_f75b609fb6ba33 69,311
+SchriftTests/Features/Editor/EditorBlockMutationTests.swift
+  s_4fb28ab57323fe::t_3dff1b607a508d 12
+SchriftTests/Features/Editor/EditorLinkEditingTests.swift
+  s_4fb28ab57323fe::t_c89bc6c96275d5 41,56-58,63-64
+SchriftTests/Features/Editor/EditorPhotoInsertionTests.swift
+  s_4fb28ab57323fe::t_3f476fe87930cd 62
+SchriftTests/Features/Editor/EditorSurfaceParityTests.swift
+  s_4fb28ab57323fe::t_b1c9b2d4e190c2 799
+SchriftTests/Features/Editor/EditorThemeTests.swift
+  s_4fb28ab57323fe::t_f33f288ff37377 35
+SchriftTests/Features/Editor/EditorUnavailableDetailTests.swift
+  s_4fb28ab57323fe::t_f7fda8a1a83ab5 40
+SchriftTests/Features/Editor/EditorViewModelAccountTests.swift
+  s_4fb28ab57323fe::t_14e1416848da5f 13-14,62-108
+SchriftTests/Features/Editor/EditorViewModelCompositionTests.swift
+  s_4fb28ab57323fe::t_d6c6deba5d12d5 451
+SchriftTests/Features/Editor/EditorViewModelLinkTests.swift
+  s_4fb28ab57323fe::t_67b13a1c908d89 36
+SchriftTests/Features/Editor/LeafNestingTests.swift
+  s_4fb28ab57323fe::t_9a566482a0cde2 18
+SchriftTests/Features/Editor/ListNestingTests.swift
+  s_4fb28ab57323fe::t_0090e4320327e1 17
+SchriftTests/Features/Editor/LiveEditingIntegrationTests.swift
+  s_4fb28ab57323fe::t_1611d26d6cdfbe 149,770,776-777,788
+SchriftTests/Features/Editor/Native/ColumnEditorTests.swift
+  s_4fb28ab57323fe::t_d3cc58aeb77283 708
+SchriftTests/Features/Editor/Native/NativeEditUnavailableReasonTests.swift
+  s_4fb28ab57323fe::t_71a5aea4e401a3 70-71,191,197,203,209,215,221,227-238
+SchriftTests/Features/Editor/Native/NativeEditorActivationTests.swift
+  s_4fb28ab57323fe::t_22eb55d5a979c9 51
+SchriftTests/Features/Editor/Native/NativeEditorLifecycleTests.swift
+  s_4fb28ab57323fe::t_bda7311eb8abbf 885-886
+SchriftTests/Features/Editor/Native/NativeEditorWaitingClassicTests.swift
+  s_4fb28ab57323fe::t_50518443e1489c 945-946
+SchriftTests/Features/Editor/PendingDraftStoreTests.swift
+  s_4fb28ab57323fe::t_de792d33e75950 417-419,422-426,428,430-432,434
+SchriftTests/Support/SignedInDraftStore.swift
+  s_4fb28ab57323fe::t_2426bee5381ba2 1-14
+docs/offline-and-sync.md
+  s_4fb28ab57323fe::t_e11ce7ced7a42b 1544-1545,1552-1570,1580-1583,1599-1601
+docs/standards/editor-save.md
+  s_4fb28ab57323fe::t_51ea07b48da3c9 827-829
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9fe1ec5f5ae724257b9d8116d63b9b3935c918dc",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
