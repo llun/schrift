@@ -14,6 +14,7 @@ final class ConnectViewModel {
     private let serverCapabilities: ServerCapabilityStore
     private let serverConfigStore: ServerConfigStore
     private let apiClientFactory: (URL) -> DocsAPIClient
+    private let pendingWebDataClear: () -> Task<Void, Never>?
 
     init(
         sessionStore: SessionStore,
@@ -22,8 +23,10 @@ final class ConnectViewModel {
         serverConfigStore: ServerConfigStore = ServerConfigStore(),
         apiClientFactory: @escaping (URL) -> DocsAPIClient = { serverURL in
             DocsAPIClient(baseURL: serverURL.appendingPathComponent("api/v1.0/"))
-        }
+        },
+        pendingWebDataClear: @escaping () -> Task<Void, Never>? = { pendingWebLoginDataClear }
     ) {
+        self.pendingWebDataClear = pendingWebDataClear
         self.sessionStore = sessionStore
         self.recentServers = recentServers
         self.serverCapabilities = serverCapabilities
@@ -38,13 +41,25 @@ final class ConnectViewModel {
         }
         errorKey = nil
         pendingServerURL = url
-        isPresentingWebLogin = true
+        presentWebLogin()
     }
 
     func selectRecentServer(_ url: URL) {
         errorKey = nil
         pendingServerURL = url
-        isPresentingWebLogin = true
+        presentWebLogin()
+    }
+
+    /// After any wipe of the web view's store still under way (a sign-out a moment ago).
+    private func presentWebLogin() {
+        guard let clear = pendingWebDataClear() else {
+            isPresentingWebLogin = true
+            return
+        }
+        Task {
+            await clear.value
+            isPresentingWebLogin = true
+        }
     }
 
     /// The web login is about to write its cookies (PR13a review W1).

@@ -368,10 +368,10 @@ final class SessionStore {
         // (read-only, no account) instead of typing on under a forgotten identity.
         signInGeneration += 1
         generationClock.advance()
-        // The cookie snapshot first: if the marker delete below throws, a relaunch must not
-        // restore this session (it finds the marker but no cookies, and asks for a password).
+        // The cookie snapshot first, and the sign-out finishes even if the marker delete fails:
+        // a relaunch then finds the marker but no cookies, and asks for a password.
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
-        try keychain.delete(forKey: Self.authenticatedKeychainKey)
+        let markerDelete = Result { try keychain.delete(forKey: Self.authenticatedKeychainKey) }
         endReauthentication()
         silentReauthenticationExhausted = false
         lastSilentSignIn = nil
@@ -380,6 +380,7 @@ final class SessionStore {
         isAuthenticated = false
         imageCacheSessionID = nil
         userDefaults.removeObject(forKey: Self.imageCacheSessionKey)
+        try markerDelete.get()
     }
 
     /// Called (via the API client's `onSessionExpired` hook) whenever any

@@ -50,9 +50,21 @@ func webLoginSiteDataTypes(includingCookies: Bool) -> Set<String> {
     return types
 }
 
+/// The latest wipe of the login web view's store, until it finishes: a sign-in started right
+/// after a sign-out waits for it, so the old IdP session cannot answer that login.
+@MainActor private(set) var pendingWebLoginDataClear: Task<Void, Never>?
+
 @MainActor
 func clearWebLoginSiteData(includingCookies: Bool) {
-    WKWebsiteDataStore.default().removeData(
-        ofTypes: webLoginSiteDataTypes(includingCookies: includingCookies), modifiedSince: .distantPast
-    ) {}
+    let types = webLoginSiteDataTypes(includingCookies: includingCookies)
+    let previous = pendingWebLoginDataClear
+    let clear = Task { @MainActor in
+        await previous?.value
+        await WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: .distantPast)
+    }
+    pendingWebLoginDataClear = clear
+    Task { @MainActor in
+        await clear.value
+        if pendingWebLoginDataClear == clear { pendingWebLoginDataClear = nil }
+    }
 }

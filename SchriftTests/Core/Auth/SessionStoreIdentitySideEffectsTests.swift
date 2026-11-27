@@ -441,8 +441,8 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertEqual(clears, [false])
     }
 
-    /// A sign-out whose marker delete fails still clears the cookies and their snapshot, so a
-    /// relaunch cannot restore the session without a password.
+    /// A sign-out whose marker delete fails still signs this process out and clears the cookies
+    /// and their snapshot, so a relaunch cannot restore the session without a password.
     func testAFailedMarkerDeleteAtSignOutLeavesNoSessionToRestore() throws {
         let keychain = FakeKeychainStore()
         let cookies = FakeCookieStorage()
@@ -454,6 +454,7 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
 
         XCTAssertThrowsError(try store.signOut())
 
+        XCTAssertFalse(store.isAuthenticated, "this process is signed out all the same")
         XCTAssertEqual(cookies.storedCookies, [])
         let relaunchedCookies = FakeCookieStorage()
         _ = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: relaunchedCookies)
