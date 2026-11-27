@@ -64,7 +64,11 @@
   `schrift.workOffline` read goes through the VM's injected `userDefaults`,
   never the singleton. Metadata caches are **not** cleared on sign-out — a
   recorded decision; neither are unsaved drafts in `PendingDraftStore` (full
-  document text, deliberately backup-included so unsaved work survives) nor the
+  document text, deliberately backup-included so unsaved work survives; each is
+  stamped with its account's **`ownerUserID`** and keyed `<owner>|<document>`, and
+  only that account is shown or replays it — nobody while the account is unknown —
+  while the backup, purge, photo-collection and conflict-hold protections read every
+  account's through `allDraftsOfEveryAccount()`) nor the
   on-device create records in `PendingDocumentCreateStore` (same reasoning — for
   a document that exists nowhere else, that record and its draft are the only
   copies; surviving sign-out is made safe by the record's **`ownerUserID`**, not by
@@ -77,8 +81,8 @@
   profile in `CurrentUserCacheStore` (next bullet — cleared, like the account id
   beside it, in `SessionStore` itself and not only in RootView, because it has to go
   on sign-*in* too, which only `SessionStore` sees). **The content cache is the
-  one with the RootView-only rule**: `DocumentContentCacheStore().removeAll()` lives in
-  RootView's `onSignOut` closure and **not** inside `SessionStore.signOut()`, so a new
+  one with the RootView-only rule**: `DocumentContentCacheStore().removeAll()` (which
+  removes every account's folder) lives in RootView's `onSignOut` closure and **not** inside `SessionStore.signOut()`, so a new
   sign-out path must call it explicitly. `AttachmentCacheStore().removeAll()` runs there
   and also from `SessionStore`'s injected `clearAttachmentCache` (sign-in, cookie
   handover, sign-out); a download that started before a clear is never written back. Displayed image bytes are also cleared at cookie handover, sign-in
@@ -252,9 +256,18 @@
   ignored (it was refused on the replaced cookies). Keep the hidden web view transparent, never
   `isHidden`: WebKit throttles hidden views.
 - `DocumentContentCacheStore` is the one **file-based** store (full document
-  bodies are too large for UserDefaults): stateless over its directory,
-  `isExcludedFromBackup`, cleared on sign-out, never logged. Its eviction
-  selection is a top-level pure free function (`contentCacheEvictions`).
+  bodies are too large for UserDefaults): one folder per account
+  (`ContentCache/<user id lowercased>/`), resolved from `SignedInUserStore` on every
+  call so a long-lived instance follows an account change and reads nothing while the
+  account is unknown; stateless over that folder, `isExcludedFromBackup`, every
+  account's cleared on sign-out, never logged. Its eviction selection is a top-level
+  pure free function (`contentCacheEvictions`), applied per account folder.
+- **Work from before account scoping is assigned once, in `SchriftApp.init`** — before
+  any sign-in can name an account: `PendingDraftStore.assignOwnersToEarlierDrafts()`
+  and `DocumentContentCacheStore.moveEarlierBodiesIntoAccountFolder()` give it to the
+  account signed in at that moment, each behind its own UserDefaults flag. With none
+  known, drafts are set aside (kept, shown to nobody) and flat cached bodies are
+  deleted. Unowned drafts an older build writes afterwards stay set aside.
 - **"Continue reading" positions** (`ReadingPositionStore`,
   `dev.llun.Schrift.readingPositions`, one JSON blob in UserDefaults) remember which
   block was at the top of the screen when a document was left, so reopening scrolls

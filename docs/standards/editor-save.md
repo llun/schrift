@@ -819,7 +819,11 @@ markdown write endpoint**. Understand this before touching the save path:
   axis so long titles wrap on both surfaces, including Dynamic Type.
 - Saves go through **`DocumentSaveCoordinator`** (app-scoped; owns its `Task`s so
   navigating away never cancels a save; write-ahead draft to `PendingDraftStore`;
-  per-document latest-wins coalescing; background-task assertion; draft replay).
+  per-document latest-wins coalescing; background-task assertion; draft replay). A draft
+  belongs to the account that saved it: the store's plain reads, and so `storedDraft`, the
+  titles and every replay, see only the signed-in account's, and none while it is unknown;
+  protections read `allDraftsOfEveryAccount()` (see
+  [`docs/offline-and-sync.md`](../offline-and-sync.md#drafts-belong-to-an-account)).
   View models **enqueue** on the coordinator — they never call the client to
   persist edits themselves.
 - **A document created on this device has no server id, and four gates keep the
@@ -1977,8 +1981,8 @@ markdown write endpoint**. Understand this before touching the save path:
   savedTitle`) outranks all of them; it is what makes a reconcile call two titles a conflict
   rather than a merge.
 - Content is cached on-device in **`DocumentContentCacheStore`** (one JSON per
-  document under Application Support, backup-excluded, ≤50 entries by
-  most-recent `syncedAt` via file mtime): `load()` shows a local copy
+  document in the signed-in account's folder under Application Support, backup-excluded,
+  ≤50 entries per account by most-recent `syncedAt` via file mtime): `load()` shows a local copy
   **synchronously** (precedence: in-flight save → stored draft → cached copy →
   network-with-spinner), then revalidates silently as the awaited structured
   tail of `load()` (deliberately no unstructured `Task`; a generation counter

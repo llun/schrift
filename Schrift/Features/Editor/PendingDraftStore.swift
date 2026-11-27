@@ -35,6 +35,9 @@ struct PendingDraft: Codable, Equatable, Sendable {
     /// Presence reserves this draft for raw replay, even with the switch off.
     /// Missing on older drafts; never silently migrate those into a replica.
     let replica: ReplicaDraftReference?
+    /// The account the draft belongs to: only that account is shown or replays it. Stamped by
+    /// `PendingDraftStore.save`; nil on a draft no account could be named for (see `owner`).
+    let ownerUserID: UUID?
 
     init(
         documentID: UUID,
@@ -44,7 +47,8 @@ struct PendingDraft: Codable, Equatable, Sendable {
         baseline: DraftBaseline? = nil,
         lastPushedMarkdown: String? = nil,
         conflictServerUpdatedAt: Date? = nil,
-        replica: ReplicaDraftReference? = nil
+        replica: ReplicaDraftReference? = nil,
+        ownerUserID: UUID? = nil
     ) {
         self.documentID = documentID
         self.title = title
@@ -54,6 +58,17 @@ struct PendingDraft: Codable, Equatable, Sendable {
         self.lastPushedMarkdown = lastPushedMarkdown
         self.conflictServerUpdatedAt = conflictServerUpdatedAt
         self.replica = replica
+        self.ownerUserID = ownerUserID
+    }
+
+    /// A native draft's account is its replica's, whatever the stamp says.
+    var owner: UUID? { replica?.scope.ownerUserID ?? ownerUserID }
+
+    func owned(by owner: UUID?) -> PendingDraft {
+        PendingDraft(
+            documentID: documentID, title: title, markdown: markdown, updatedAt: updatedAt, baseline: baseline,
+            lastPushedMarkdown: lastPushedMarkdown, conflictServerUpdatedAt: conflictServerUpdatedAt,
+            replica: replica, ownerUserID: owner)
     }
 }
 
@@ -65,8 +80,20 @@ struct PendingDraft: Codable, Equatable, Sendable {
 /// near-simultaneous web edit (full-overwrite saves are already last-writer-wins).
 let pendingDraftClockTolerance: TimeInterval = 120
 
+/// Every draft stays on disk until its own account sends or discards it, but the plain reads
+/// (`draft(for:)`, `allDrafts()`) and `remove` see only the signed-in account's — and nothing
+/// while no account is known (`SignedInUserStore` answers nil), exactly as the owner-scoped
+/// create and delete stores fail closed. `allDraftsOfEveryAccount()` is for the protections
+/// that must hold whoever is signed in (backup exclusion, replica purge, photo collection,
+/// conflict holds), never for showing or sending.
+///
+/// Stored under `<owner>|<document>`, so two accounts' drafts of one shared document never
+/// replace each other. A bare `<document>` key is a draft from an earlier build that
+/// `assignOwnersToEarlierDrafts` could name no account for, or one an older build wrote after
+/// it ran: set aside, shown to nobody and replayed by nobody, but kept.
 final class PendingDraftStore {
     private static let draftsKey = "dev.llun.Schrift.pendingDrafts"
+    private static let ownersAssignedKey = "dev.llun.Schrift.pendingDrafts.ownersAssigned"
     private static let quarantineKey = "dev.llun.Schrift.pendingDrafts.unreadable"
     private static let additionalQuarantineKey = "dev.llun.Schrift.pendingDrafts.unreadable.additional"
     /// Shared by every instance and every `UserDefaults`: it memoizes the decode of whatever
@@ -75,11 +102,13 @@ final class PendingDraftStore {
     private static let memo = DecodedBlobMemo<[String: PendingDraft]>()
 
     private let userDefaults: UserDefaults
+    private let signedInUser: SignedInUserStore
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
+        self.signedInUser = SignedInUserStore(userDefaults: userDefaults)
         let encoder = JSONEncoder()
         // Millisecond precision: plain .iso8601 truncates to whole seconds,
         // which can make a draft look older than the save it raced against.
@@ -90,26 +119,62 @@ final class PendingDraftStore {
         self.decoder = decoder
     }
 
+    /// Stamps the draft with the signed-in account (a native draft keeps its replica's) and
+    /// replaces only that account's draft of the document. Saved while no account is known, it
+    /// is set aside in a slot of its own for this sign-in, so it replaces no one's work either.
     func save(_ draft: PendingDraft) {
         quarantineUnreadableDataIfNeeded()
         var drafts = loadAll()
-        drafts[draft.documentID.uuidString] = draft
+        let stamped = draft.owned(by: draft.owner ?? signedInUser.userID)
+        if let owner = stamped.owner {
+            drafts = drafts.filter { $0.value.documentID != draft.documentID || $0.value.owner != owner }
+            drafts["\(owner.uuidString)|\(draft.documentID.uuidString)"] = stamped
+        } else {
+            drafts["unknown-\(signedInUser.epoch)|\(draft.documentID.uuidString)"] = stamped
+        }
         persist(drafts)
     }
 
     func draft(for documentID: UUID) -> PendingDraft? {
-        loadAll()[documentID.uuidString]
+        allDrafts().last { $0.documentID == documentID }
     }
 
     func remove(documentID: UUID) {
+        guard let owner = signedInUser.userID else { return }
         quarantineUnreadableDataIfNeeded()
         var drafts = loadAll()
-        drafts[documentID.uuidString] = nil
+        drafts = drafts.filter { $0.value.documentID != documentID || $0.value.owner != owner }
         persist(drafts)
     }
 
     func allDrafts() -> [PendingDraft] {
+        guard let owner = signedInUser.userID else { return [] }
+        return allDraftsOfEveryAccount().filter { $0.owner == owner }
+    }
+
+    func allDraftsOfEveryAccount() -> [PendingDraft] {
         loadAll().values.sorted { $0.updatedAt < $1.updatedAt }
+    }
+
+    /// Run once, at launch before any sign-in can name an account: drafts from an earlier build
+    /// carry no owner, so they go to the account signed in at that moment. With none known (signed
+    /// out, or a login handover not yet confirmed — which may be another account's) they are set
+    /// aside instead, and the flag keeps a later sign-in from claiming them. Native drafts need
+    /// nothing: their replica names the account. An unreadable store is left for its recovery and
+    /// asked again at the next launch.
+    func assignOwnersToEarlierDrafts() {
+        guard !userDefaults.bool(forKey: Self.ownersAssignedKey) else { return }
+        if let data = userDefaults.data(forKey: Self.draftsKey) {
+            guard var drafts = decoded(data) else { return }
+            if let owner = signedInUser.userID {
+                for (key, draft) in drafts where draft.owner == nil {
+                    drafts[key] = nil
+                    drafts["\(owner.uuidString)|\(draft.documentID.uuidString)"] = draft.owned(by: owner)
+                }
+                persist(drafts)
+            }
+        }
+        userDefaults.set(true, forKey: Self.ownersAssignedKey)
     }
 
     /// There is stored draft data and it does not decode — so the drafts are **unknown**,
@@ -183,11 +248,18 @@ final class PendingDraftStore {
         return true
     }
 
+    /// An older build re-encodes every draft without `ownerUserID`, so the key's owner prefix
+    /// stands in for a stamp it dropped.
     private func loadAll() -> [String: PendingDraft] {
         guard let data = userDefaults.data(forKey: Self.draftsKey), let drafts = decoded(data) else {
             return [:]
         }
-        return drafts
+        return drafts.reduce(into: [:]) { result, entry in
+            let (key, draft) = entry
+            let parts = key.split(separator: "|")
+            let keyOwner = parts.count == 2 ? UUID(uuidString: String(parts[0])) : nil
+            result[key] = draft.owner == nil && keyOwner != nil ? draft.owned(by: keyOwner) : draft
+        }
     }
 
     /// The blob's decode, memoized on its bytes: a read with no write since the last one costs a

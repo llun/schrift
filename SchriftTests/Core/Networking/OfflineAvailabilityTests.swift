@@ -37,6 +37,7 @@ final class OfflineAvailabilityTests: XCTestCase {
             baseURL: URL(string: "https://docs.example.org/api/v1.0/")!,
             session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         cache = DocumentContentCacheStore(directory: directory)
+        SignedInUserStore(userDefaults: defaults).remember(UUID())
         drafts = PendingDraftStore(userDefaults: defaults)
         coordinator = DocumentSaveCoordinator(
             client: client, draftStore: drafts, contentCache: cache,

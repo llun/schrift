@@ -309,6 +309,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             fixture.clean()
             MockURLProtocol.reset()
         }
+        // A draft is shown only to the signed-in account it belongs to.
+        SignedInUserStore(userDefaults: fixture.defaults).remember(UUID())
         let gate = MockURLProtocol.ResponseGate()
         stub(version: "6.0.0", state: Data(), status: 500, gate: gate)
         let open = NativeEditorOpen(preference: { true })
@@ -584,6 +586,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             fixture.clean()
             MockURLProtocol.reset()
         }
+        SignedInUserStore(userDefaults: fixture.defaults).remember(UUID())
         PendingDraftStore(userDefaults: fixture.defaults).save(
             PendingDraft(documentID: fixture.model.documentID, title: "Local", markdown: "Unsynced", updatedAt: Date()))
         let openOn = NativeEditorOpen(preference: { true })
@@ -627,6 +630,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             fixture.clean()
             MockURLProtocol.reset()
         }
+        // A draft is shown only to the signed-in account it belongs to.
+        SignedInUserStore(userDefaults: fixture.defaults).remember(UUID())
         let gate = MockURLProtocol.ResponseGate()
         stub(version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID), gate: gate)
         let open = NativeEditorOpen(preference: { true })
@@ -860,6 +865,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         ServerConfigStore(userDefaults: drafted.defaults).remember(
             ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
             forServerOrigin: drafted.model.client.serverOrigin)
+        SignedInUserStore(userDefaults: drafted.defaults).remember(UUID())
         let pendingStore = PendingDraftStore(userDefaults: drafted.defaults)
         pendingStore.save(
             PendingDraft(

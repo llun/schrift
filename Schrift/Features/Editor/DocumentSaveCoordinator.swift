@@ -588,8 +588,9 @@ final class DocumentSaveCoordinator {
         // after a revalidation happens to return. That ordering is the whole point: on launch
         // the editor renders a stored draft synchronously and unblocks editing immediately,
         // so a Done tap could otherwise beat the fetch and push a full overwrite over the body
-        // the user was already warned about.
-        for draft in draftStore.allDrafts() {
+        // the user was already warned about. Every account's: a hold is a protection, and a
+        // fresh sign-in builds this coordinator before `/users/me/` names the account.
+        for draft in draftStore.allDraftsOfEveryAccount() {
             if let serverUpdatedAt = draft.conflictServerUpdatedAt {
                 conflicts[draft.documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
             }
@@ -600,7 +601,7 @@ final class DocumentSaveCoordinator {
             dirtyIDs.contains(documentID)
         }
         for documentID in dirtyIDs.snapshot() {
-            if let scope = draftStore.draft(for: documentID)?.replica?.scope
+            if let scope = anyAccountReplicaScope(documentID: documentID)
                 ?? nativeOwnership(documentID: documentID).scope
             {
                 self.replicaStore.refreshBackupExclusion(for: scope)
@@ -611,7 +612,7 @@ final class DocumentSaveCoordinator {
     private func computeBackupDirtyDocumentIDs() -> Set<UUID> {
         var ids = Set(pendingCreates.keys)
         ids.formUnion(pendingCreates.values.compactMap(\.syncedServerID))
-        ids.formUnion(draftStore.allDrafts().map(\.documentID))
+        ids.formUnion(draftStore.allDraftsOfEveryAccount().map(\.documentID))
         ids.formUnion(queued.keys)
         ids.formUnion(inFlight.keys)
         ids.formUnion(inFlightContent.keys)
@@ -627,7 +628,7 @@ final class DocumentSaveCoordinator {
     private func syncBackupExclusion(for documentID: UUID, scope: ReplicaScope? = nil) {
         updateBackupProtection()
         if let resolvedScope = scope
-            ?? draftStore.draft(for: documentID)?.replica?.scope
+            ?? anyAccountReplicaScope(documentID: documentID)
             ?? nativeOwnership(documentID: documentID).scope
         {
             replicaStore.refreshBackupExclusion(for: resolvedScope)
@@ -739,8 +740,14 @@ final class DocumentSaveCoordinator {
     /// (a repair that could not read its folder): its Markdown is only a shadow.
     func nativeOwnership(documentID: UUID) -> ReplicaOwnership {
         let marker = replicaStore.ownership(documentID: documentID, serverOrigin: client.serverOrigin)
-        guard marker == .none, let scope = draftStore.draft(for: documentID)?.replica?.scope else { return marker }
+        guard marker == .none, let scope = anyAccountReplicaScope(documentID: documentID) else { return marker }
         return scope.serverOrigin == client.serverOrigin ? .owned(scope) : .unreadable
+    }
+
+    /// Whichever account's native draft names this document: what keeps it read-only and out of
+    /// backups and purges, so another account's draft counts too.
+    private func anyAccountReplicaScope(documentID: UUID) -> ReplicaScope? {
+        draftStore.allDraftsOfEveryAccount().last { $0.documentID == documentID && $0.replica != nil }?.replica?.scope
     }
 
     var hasUnreadableDrafts: Bool { draftStore.holdsUnreadableData }
@@ -785,7 +792,7 @@ final class DocumentSaveCoordinator {
     /// Document IDs with unsynced coordinator state (drafts, creates, deletes, in-flight,
     /// queued, conflicts, or pending attachments) that must never be removed by purge or LRU.
     private func protectedReplicaDocumentIDs() -> Set<UUID> {
-        var keeping = Set(draftStore.allDrafts().map(\.documentID))
+        var keeping = Set(draftStore.allDraftsOfEveryAccount().map(\.documentID))
         keeping.formUnion(pendingCreates.keys)
         keeping.formUnion(pendingCreates.values.compactMap(\.syncedServerID))
         keeping.formUnion(pendingDeletes.keys)
@@ -848,7 +855,8 @@ final class DocumentSaveCoordinator {
     @discardableResult
     func repairReplicaOwnership() -> Bool {
         guard !draftStore.holdsUnreadableData else { return false }
-        return replicaStore.repairOwnership(draftScopes: draftStore.allDrafts().compactMap { $0.replica?.scope })
+        return replicaStore.repairOwnership(
+            draftScopes: draftStore.allDraftsOfEveryAccount().compactMap { $0.replica?.scope })
     }
 
     /// A replica folder the repair cannot read (quarantined, damaged, newer format)
@@ -875,7 +883,8 @@ final class DocumentSaveCoordinator {
         guard scope.serverOrigin == client.serverOrigin,
             signedInUser.userID == scope.ownerUserID,
             !draftStore.holdsUnreadableData,
-            draftStore.draft(for: id) == nil, inFlight[id] == nil, queued[id] == nil,
+            !draftStore.allDraftsOfEveryAccount().contains(where: { $0.documentID == id }),
+            inFlight[id] == nil, queued[id] == nil,
             anyCheckpointedRecord(forServerID: id) == nil
         else { return false }
         return replicaStore.clearOwnership(for: scope)
@@ -903,7 +912,7 @@ final class DocumentSaveCoordinator {
     func recoverQuarantinedDrafts() -> Bool {
         guard draftStore.recoverQuarantinedDrafts() else { return false }
         draftsVersion &+= 1
-        for draft in draftStore.allDrafts() {
+        for draft in draftStore.allDraftsOfEveryAccount() {
             if let serverUpdatedAt = draft.conflictServerUpdatedAt {
                 conflicts[draft.documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
             }
@@ -1108,7 +1117,7 @@ final class DocumentSaveCoordinator {
         // very push the conflict is holding. See `migrateCreatedDocument`.
         var draft = PendingDraft(
             documentID: record.localID, title: title, markdown: seedMarkdown,
-            updatedAt: record.createdAt)
+            updatedAt: record.createdAt, ownerUserID: ownerUserID)
         var createdScope: ReplicaScope?
         if nativeEditorEnabled(), !client.serverOrigin.isEmpty, let org = cachedDocs6Org() {
             let scope = ReplicaScope(
@@ -2121,12 +2130,13 @@ final class DocumentSaveCoordinator {
     /// Whether anything this device holds still names this photo — the draft, a parked save, or
     /// a save on the wire. What decides whether collecting the record would strand a placeholder.
     private func referencesPendingAttachment(_ record: PendingAttachment) -> Bool {
-        let bodies = [
-            draftStore.draft(for: record.documentID)?.markdown,
-            queued[record.documentID]?.markdown,
-            inFlightContent[record.documentID]?.markdown,
-        ]
-        return bodies.compactMap { $0 }.contains {
+        // Every account's draft: collecting a photo another account's draft still names would
+        // strand its placeholder.
+        let drafts = draftStore.allDraftsOfEveryAccount().filter { $0.documentID == record.documentID }
+        let bodies =
+            drafts.map(\.markdown)
+            + [queued[record.documentID]?.markdown, inFlightContent[record.documentID]?.markdown].compactMap { $0 }
+        return bodies.contains {
             markdownReferencesPendingAttachment($0, localID: record.localID)
         }
     }
@@ -4985,10 +4995,9 @@ final class DocumentSaveCoordinator {
     func resolveConflictKeepingLocal(documentID: UUID) {
         let resolved = conflicts[documentID]
         // Another signed-in account must never rewrite, release or send this raw draft:
-        // the conflict, baseline and queued work all stay exactly as they are.
-        if let reference = draftStore.draft(for: documentID)?.replica,
-            reference.scope.ownerUserID != signedInUser.userID
-        {
+        // the conflict, baseline and queued work all stay exactly as they are. Asked of every
+        // account's drafts, since that account's is not shown to this one.
+        if let scope = anyAccountReplicaScope(documentID: documentID), scope.ownerUserID != signedInUser.userID {
             markFailed(documentID, reason: "Conflict resolution refused: the draft belongs to another account")
             return
         }
@@ -5100,7 +5109,7 @@ final class DocumentSaveCoordinator {
             return false
         }
         let reference = draftStore.draft(for: documentID)?.replica
-        if let scope = reference?.scope ?? ownership.scope,
+        if let scope = anyAccountReplicaScope(documentID: documentID) ?? ownership.scope,
             scope.ownerUserID != signedInUser.userID
         {
             markFailed(

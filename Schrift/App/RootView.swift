@@ -349,12 +349,11 @@ struct RootView: View {
                 sessionStore: sessionStore,
                 connectivity: connectivity,
                 onSignOut: {
-                    // Full document bodies must not survive sign-out on disk. The
-                    // metadata caches (DocumentCacheStore's document lists and
-                    // DocumentChildrenCacheStore's sub-page lists) and unsaved
-                    // drafts (PendingDraftStore) keep their existing behavior — a
-                    // recorded decision, see the 2026-07-03 spec and the
-                    // instant-local-doc-lists plan.
+                    // Full document bodies must not survive sign-out on disk: every
+                    // account's folder goes. The metadata caches (DocumentCacheStore's
+                    // document lists and DocumentChildrenCacheStore's sub-page lists) stay,
+                    // and unsaved drafts (PendingDraftStore) stay with their account, shown
+                    // again only when it signs back in.
                     DocumentContentCacheStore().removeAll()
                     // Downloaded attachment bytes are document content too, and
                     // are re-downloadable, so they go with the session for the

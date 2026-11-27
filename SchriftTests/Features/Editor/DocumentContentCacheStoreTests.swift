@@ -193,4 +193,100 @@ final class DocumentContentCacheStoreTests: XCTestCase {
         let values = try directory.resourceValues(forKeys: [.isExcludedFromBackupKey])
         XCTAssertEqual(values.isExcludedFromBackup, true)
     }
+
+    // MARK: - One folder per account
+
+    private let accountA = UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!
+    private let accountB = UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!
+
+    private func makeDefaults(signedIn account: UUID?) -> UserDefaults {
+        let defaults = UserDefaults(suiteName: "DocumentContentCacheStoreTests.\(UUID().uuidString)")!
+        SignedInUserStore(userDefaults: defaults).remember(account)
+        return defaults
+    }
+
+    private func signIn(_ account: UUID?, in defaults: UserDefaults) {
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.clear()
+        signedIn.remember(account)
+    }
+
+    /// One long-lived instance, as the coordinator and screens that survive a re-login hold.
+    func testEachAccountReadsOnlyItsOwnBodiesAcrossAnAccountChange() {
+        let defaults = makeDefaults(signedIn: accountA)
+        let store = DocumentContentCacheStore(root: directory, userDefaults: defaults)
+        store.save(makeEntry(markdown: "# A's"))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(
+                    "\(accountA.uuidString.lowercased())/\(documentID.uuidString.lowercased()).json"
+                ).path))
+
+        signIn(accountB, in: defaults)
+        XCTAssertNil(store.content(for: documentID))
+        XCTAssertTrue(store.allContents().isEmpty)
+        XCTAssertTrue(store.allContentsReader()().isEmpty)
+        store.save(makeEntry(markdown: "# B's"))
+        XCTAssertEqual(store.content(for: documentID)?.markdown, "# B's")
+
+        signIn(accountA, in: defaults)
+        XCTAssertEqual(store.content(for: documentID)?.markdown, "# A's", "nothing was wiped or overwritten")
+    }
+
+    func testWithNoKnownAccountNothingIsReadOrWritten() {
+        let defaults = makeDefaults(signedIn: accountA)
+        let store = DocumentContentCacheStore(root: directory, userDefaults: defaults)
+        store.save(makeEntry(id: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!))
+
+        signIn(nil, in: defaults)
+        store.save(makeEntry())
+        XCTAssertNil(store.content(for: documentID))
+        XCTAssertTrue(store.allContents().isEmpty)
+        XCTAssertTrue(store.allContentsReader()().isEmpty)
+
+        signIn(accountA, in: defaults)
+        XCTAssertNil(store.content(for: documentID), "the unknown-account save wrote nothing")
+        XCTAssertEqual(store.allContents().count, 1)
+    }
+
+    func testRemoveAllRemovesEveryAccountsBodies() {
+        let defaults = makeDefaults(signedIn: accountA)
+        let store = DocumentContentCacheStore(root: directory, userDefaults: defaults)
+        store.save(makeEntry())
+        signIn(accountB, in: defaults)
+        store.save(makeEntry())
+
+        store.removeAll()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    func testEarlierFlatBodiesMoveIntoTheAccountSignedInAtTheFirstLaunchOnly() {
+        DocumentContentCacheStore(directory: directory).save(makeEntry(markdown: "# Earlier"))
+        let defaults = makeDefaults(signedIn: accountA)
+
+        DocumentContentCacheStore.moveEarlierBodiesIntoAccountFolder(root: directory, userDefaults: defaults)
+
+        let store = DocumentContentCacheStore(root: directory, userDefaults: defaults)
+        XCTAssertEqual(store.content(for: documentID)?.markdown, "# Earlier")
+        signIn(accountB, in: defaults)
+        let olderBuild = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        DocumentContentCacheStore(directory: directory).save(makeEntry(id: olderBuild))
+        DocumentContentCacheStore.moveEarlierBodiesIntoAccountFolder(root: directory, userDefaults: defaults)
+        XCTAssertNil(store.content(for: documentID))
+        XCTAssertNil(store.content(for: olderBuild), "moved once: a later flat file is never claimed")
+    }
+
+    func testEarlierFlatBodiesAreDeletedWhenNoAccountIsKnownAtTheFirstLaunch() {
+        DocumentContentCacheStore(directory: directory).save(makeEntry())
+        let defaults = makeDefaults(signedIn: nil)
+
+        DocumentContentCacheStore.moveEarlierBodiesIntoAccountFolder(root: directory, userDefaults: defaults)
+
+        signIn(accountA, in: defaults)
+        XCTAssertNil(DocumentContentCacheStore(root: directory, userDefaults: defaults).content(for: documentID))
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent("\(documentID.uuidString.lowercased()).json").path))
+    }
 }

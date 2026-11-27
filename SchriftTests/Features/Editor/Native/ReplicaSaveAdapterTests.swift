@@ -507,14 +507,15 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         let original = try XCTUnwrap(f.drafts.draft(for: documentID))
         SignedInUserStore(userDefaults: f.listCache.userDefaults).remember(UUID())
         f.coordinator.resolveConflictKeepingLocal(documentID: documentID)
-        XCTAssertEqual(f.drafts.draft(for: documentID), original)
+        // Not shown to the other account, but kept exactly as it was.
+        XCTAssertEqual(f.drafts.allDraftsOfEveryAccount(), [original])
         XCTAssertTrue(self.isFailed(f.coordinator.state(for: documentID)))
         XCTAssertNotNil(f.coordinator.pendingSave(documentID: documentID))
         do {
             try enqueue(f)
             XCTFail("another account must not queue this raw draft")
         } catch ReplicaSaveError.otherServerOrAccount {}
-        XCTAssertEqual(f.drafts.draft(for: documentID), original)
+        XCTAssertEqual(f.drafts.allDraftsOfEveryAccount(), [original])
         XCTAssertEqual(log.count(ofMethod: "PATCH"), 0)
     }
 

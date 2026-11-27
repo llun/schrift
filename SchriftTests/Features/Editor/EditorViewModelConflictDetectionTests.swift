@@ -318,6 +318,7 @@ final class EditorViewModelConflictDetectionTests: EditorViewModelTestCase {
         let suiteName = "EditorViewModelTests.\(UUID().uuidString)"
         draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(UUID())
         // A legacy draft (no baseline) carrying an unanswered conflict, as left by a previous
         // process. The fresh coordinator rehydrates the conflict; `states` starts empty.
         draftStore.save(
@@ -431,6 +432,7 @@ final class EditorViewModelConflictDetectionTests: EditorViewModelTestCase {
         let suiteName = "EditorViewModelTests.\(UUID().uuidString)"
         draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(UUID())
         // A legacy (baseline-less) draft carrying an unanswered, persisted conflict — and whose
         // own clock is NEWER than the server's, because the user kept typing after the pill
         // appeared. Rule 3 therefore answers `.push`.

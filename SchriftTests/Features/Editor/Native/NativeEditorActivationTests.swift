@@ -2149,7 +2149,11 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertFalse(env.model.saveCoordinator.resolveConflictKeepingServer(documentID: env.documentID))
 
         XCTAssertNotNil(env.model.saveCoordinator.conflict(for: env.documentID))
-        let preservedDraft = try XCTUnwrap(env.model.saveCoordinator.storedDraft(documentID: env.documentID))
+        XCTAssertNil(env.model.saveCoordinator.storedDraft(documentID: env.documentID), "never shown to B")
+        let preservedDraft = try XCTUnwrap(
+            PendingDraftStore(userDefaults: env.defaults).allDraftsOfEveryAccount().first {
+                $0.documentID == env.documentID
+            })
         XCTAssertNotNil(preservedDraft.conflictServerUpdatedAt)
         XCTAssertNotNil(try env.replicaStore.restore(for: aScope))
         XCTAssertEqual(

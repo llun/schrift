@@ -684,7 +684,9 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
             relaunchedNil.saveCoordinator.discardClassicDraft(documentID: env.documentID),
             "Discard must refuse when signedInUser is nil")
         XCTAssertNotNil(env.creates.create(for: local.id), "checkpointed record must stay intact")
-        XCTAssertEqual(env.drafts.draft(for: local.id)?.markdown, "Private other account draft")
+        XCTAssertEqual(
+            env.drafts.allDraftsOfEveryAccount().first { $0.documentID == local.id }?.markdown,
+            "Private other account draft")
 
         let openNilOffline = NativeEditorOpen(preference: { true })
         defer { openNilOffline.close() }
@@ -720,7 +722,9 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         }
         XCTAssertEqual(reopenedSession.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
         XCTAssertNotNil(env.creates.create(for: local.id))
-        XCTAssertEqual(env.drafts.draft(for: local.id)?.markdown, "Private other account draft")
+        XCTAssertEqual(
+            env.drafts.allDraftsOfEveryAccount().first { $0.documentID == local.id }?.markdown,
+            "Private other account draft")
         openNilOnline.close()
 
         // 2. Fresh open as a different KNOWN account (`owner` != `otherOwner`) excludes the record directly.
@@ -733,7 +737,9 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
             relaunchedOther.saveCoordinator.discardClassicDraft(documentID: env.documentID),
             "Discard must refuse for another account's checkpointed create")
         XCTAssertNotNil(env.creates.create(for: local.id), "other account's checkpointed record must stay intact")
-        XCTAssertEqual(env.drafts.draft(for: local.id)?.markdown, "Private other account draft")
+        XCTAssertEqual(
+            env.drafts.allDraftsOfEveryAccount().first { $0.documentID == local.id }?.markdown,
+            "Private other account draft")
 
         let openOther = NativeEditorOpen(preference: { true })
         defer { openOther.close() }
@@ -744,7 +750,9 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         }
         XCTAssertEqual(otherSession.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
         XCTAssertNotNil(env.creates.create(for: local.id))
-        XCTAssertEqual(env.drafts.draft(for: local.id)?.markdown, "Private other account draft")
+        XCTAssertEqual(
+            env.drafts.allDraftsOfEveryAccount().first { $0.documentID == local.id }?.markdown,
+            "Private other account draft")
     }
 
     func testSessionExpiredAndRouteNotFoundLeaveClassicDraftWaiting() async {
@@ -921,9 +929,9 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         let open = NativeEditorOpen(preference: { true })
         defer { open.close() }
         await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
-        guard case .waitingClassicEdits = open.route else {
-            return XCTFail("expected .waitingClassicEdits before resolving conflict")
-        }
+        // With no account known the draft is shown to nobody, so it never routes to its edits.
+        if case .waitingClassicEdits = open.route { return XCTFail("the draft must not be shown") }
+        if case .classic = open.route { return XCTFail("nil account must never open classic") }
 
         await open.resolveConflictKeepingServer(viewModel: env.model, isOffline: false, canUpdate: true)
         guard case .native(let session) = open.route else {

@@ -55,7 +55,9 @@ class DocumentSaveCoordinatorReplayTestCase: XCTestCase {
             ?? {
                 let name = "ReplayTests.\(UUID().uuidString)"
                 suiteNames.append(name)
-                return UserDefaults(suiteName: name)!
+                let fresh = UserDefaults(suiteName: name)!
+                SignedInUserStore(userDefaults: fresh).remember(user)
+                return fresh
             }()
         let drafts = PendingDraftStore(userDefaults: defaults)
         let creates = PendingDocumentCreateStore(userDefaults: defaults)

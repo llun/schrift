@@ -53,7 +53,9 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
             ?? {
                 let name = "AttachReplay.\(UUID().uuidString)"
                 suiteNames.append(name)
-                return UserDefaults(suiteName: name)!
+                let fresh = UserDefaults(suiteName: name)!
+                SignedInUserStore(userDefaults: fresh).remember(owner)
+                return fresh
             }()
         let drafts = PendingDraftStore(userDefaults: defaults)
         let attachments = PendingAttachmentStore(userDefaults: defaults, directory: attachmentDirectory)
@@ -131,7 +133,9 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
     private func makeDefaults() -> UserDefaults {
         let name = "AttachReplay.\(UUID().uuidString)"
         suiteNames.append(name)
-        return UserDefaults(suiteName: name)!
+        let defaults = UserDefaults(suiteName: name)!
+        SignedInUserStore(userDefaults: defaults).remember(owner)
+        return defaults
     }
 
     /// Seeds a queued photo **before** the coordinator is built, so its init mirrors the record.

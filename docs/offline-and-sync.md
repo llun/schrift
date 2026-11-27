@@ -722,10 +722,19 @@ Design decisions:
 
 - **File-based, not UserDefaults.** Content bodies can be large; UserDefaults
   loads its entire plist into memory. Store one JSON file per document in a
-  dedicated directory under Application Support
-  (`.../Application Support/dev.llun.Schrift/ContentCache/<uuid>.json`).
-  Application Support (not Caches) so the copy is durable and not silently
+  dedicated directory under Application Support, one folder per account
+  (`.../Application Support/dev.llun.Schrift/ContentCache/<user id>/<uuid>.json`, both
+  lowercased). Application Support (not Caches) so the copy is durable and not silently
   reclaimed by the OS — "keep local" means it survives.
+- **Account-scoped.** The folder is resolved from `SignedInUserStore` on every call,
+  so an instance built before an account change (the coordinator, a screen that stays
+  alive across the re-login sheet) reads and writes the new account's folder and never
+  the previous one's, and an account change wipes nothing. With no account known
+  (signed out, or a login handover `/users/me/` has not confirmed) it reads nothing
+  and writes nothing. Bodies an earlier build kept flat in `ContentCache/` are moved
+  into the account signed in at the first launch of this build
+  (`moveEarlierBodiesIntoAccountFolder`, from `SchriftApp.init`, once behind a flag),
+  or deleted when none is known — they are re-downloadable.
 - **Not SQLite or Core Data** (considered and rejected). The access pattern is a
   pure key-value store — ≤50 entries, whole-blob reads, single `@MainActor`
   writer — which a directory of files already is, with no schema/migration
@@ -751,8 +760,9 @@ Design decisions:
   instances writing the same directory stay consistent. All call sites are
   `@MainActor`, so synchronous operations never interleave. This is what makes
   production-default construction at each injection site safe (§5).
-- Conventional seams: `init(directory: URL = <default>, fileManager: FileManager
-  = .default)` — tests inject a temp directory. All reads use `try?` and return
+- Conventional seams: `init(directory:root:userDefaults:fileManager:limit:)` — tests
+  inject a temp `directory` (one pinned folder, no account) or a temp `root` with the
+  `userDefaults` their `SignedInUserStore` reads. All reads use `try?` and return
   safe defaults; the store never throws to callers.
 - **Eviction:** keep the N most-recently-synced documents (start at **50**),
   evict the oldest by `syncedAt`. Per the repo's persistence conventions, the
@@ -764,8 +774,8 @@ Design decisions:
   func contentCacheEvictions(index: [ContentCacheIndexEntry], limit: Int) -> [UUID]
   ```
 
-  The store applies it after each `save(_:)` by deleting the returned IDs'
-  files. The index's `syncedAt` values come from the files' **modification
+  The store applies it after each `save(_:)` within that account's folder by deleting
+  the returned IDs' files. The index's `syncedAt` values come from the files' **modification
   dates** (`contentModificationDateKey` resource values) — every path that bumps
   an entry's `syncedAt` rewrites its file at that same moment, so mtime tracks
   `syncedAt` and building the index never requires reading or decoding file
@@ -777,12 +787,13 @@ API:
 
 ```swift
 final class DocumentContentCacheStore {
-    init(directory: URL = <Application Support>/dev.llun.Schrift/ContentCache,
-         fileManager: FileManager = .default)
-    func content(for documentID: UUID) -> CachedDocumentContent?   // synchronous
+    init(directory: URL? = nil,                                    // pinned folder (tests)
+         root: URL = <Application Support>/dev.llun.Schrift/ContentCache,
+         userDefaults: UserDefaults = .standard, fileManager: FileManager = .default, limit: Int = 50)
+    func content(for documentID: UUID) -> CachedDocumentContent?   // synchronous, signed-in account
     func save(_ entry: CachedDocumentContent)                      // + evict
     func remove(documentID: UUID)                                  // delete flow, 404/403 revalidate
-    func removeAll()                                               // sign-out
+    func removeAll()                                               // sign-out: every account's
 }
 ```
 
@@ -803,10 +814,11 @@ see the caption precedence in §4.)
   full document bodies from a private self-hosted instance should not flow into
   iCloud/device backups; unsaved work is still covered by `PendingDraftStore`,
   which backs up as today.
-- **Sign-out clears the cache**: the sign-out flow calls `removeAll()` (§6).
-  The pre-existing `DocumentCacheStore` (metadata) and `PendingDraftStore`
-  (unsaved work) keep their current sign-out behavior (retained) — changing them
-  is out of scope; this is a recorded decision, not an accident.
+- **Sign-out clears the cache**, every account's folder: the sign-out flow calls
+  `removeAll()` (§6). The pre-existing `DocumentCacheStore` (metadata) and
+  `PendingDraftStore` (unsaved work) are retained across sign-out — a recorded
+  decision, not an accident. Drafts are account-scoped instead (see
+  [Drafts belong to an account](#drafts-belong-to-an-account)).
 
 ### 2. Reworked load flow in `EditorViewModel`
 
@@ -1502,6 +1514,35 @@ threaded everywhere as a required parameter): the content store is **stateless**
 consistent, and per-site production defaults keep initializers small. No change
 to what the Home list passes (still a `Document` / id).
 
+#### Drafts belong to an account
+
+Every `PendingDraft` carries `ownerUserID` (Optional on decode, like every field added
+to it). `PendingDraftStore.save` stamps the signed-in account (a native draft keeps its
+replica's `scope.ownerUserID`) and stores it under `<owner>|<document>`, so two
+accounts' drafts of one shared document never replace each other. `draft(for:)`,
+`allDrafts()` and `remove(documentID:)` see only the signed-in account's drafts, and
+nothing while `SignedInUserStore` answers nil — so the editor restore, the local-document
+titles and every replay in `DocumentSaveCoordinator` fail closed exactly as the
+owner-scoped create and delete stores do. A draft saved while no account is known goes to
+a slot of its own for that sign-in (`unknown-<epoch>|<document>`): shown to nobody,
+replayed by nobody, never replacing anyone's work. Nothing ever deletes another account's
+draft; it stays on disk, hidden, until that account signs in again.
+
+Protections that must hold whoever is signed in read
+`allDraftsOfEveryAccount()` instead: the conflict-hold rehydration (a fresh sign-in
+builds the coordinator before `/users/me/` answers), backup protection, the replica
+purge/eviction keep-set, ownership repair and `clearNativeOwnership`, native ownership
+derived from a draft, and whether a queued photo is still referenced.
+
+Drafts from before account scoping carry no owner. `SchriftApp.init` calls
+`assignOwnersToEarlierDrafts()` once (a persisted flag) before any sign-in can name an
+account, so a sign-in that follows a sign-out cannot claim the previous account's work:
+they go to the account signed in at that launch, or — with none known, including a
+login handover not yet confirmed, which may be another account's — they keep their bare
+`<document>` key and are set aside. Drafts an older build writes after that also land on
+a bare key and stay set aside. An older build re-encodes drafts without `ownerUserID`,
+so the store reads the owner back from the key prefix.
+
 ### 6. Delete & sign-out keep local state consistent
 
 - **Local delete** (options sheet): `EditorViewModel` gains
@@ -1515,8 +1556,8 @@ to what the Home list passes (still a `Document` / id).
   because transient revalidation
   failures are swallowed — reads as alive indefinitely. The revalidation-404
   purge (§2) is defense-in-depth for deletes performed on other devices.
-- **Sign-out**: the sign-out flow calls `contentCache.removeAll()` (threaded
-  through the existing sign-out path — e.g. alongside where `SessionStore.signOut`
+- **Sign-out**: the sign-out flow calls `contentCache.removeAll()`, which removes
+  every account's folder (threaded through the existing sign-out path — e.g. alongside where `SessionStore.signOut`
   is invoked in the root flow). Full document bodies must not survive sign-out on
   disk. Covered by a test (sign out → `content(for:)` returns nil).
   `AttachmentCacheStore().removeAll()` sits on the same line for the same reason

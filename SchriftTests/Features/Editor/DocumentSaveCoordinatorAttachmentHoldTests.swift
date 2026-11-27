@@ -52,6 +52,7 @@ final class DocumentSaveCoordinatorAttachmentHoldTests: XCTestCase {
         let name = "AttachmentHoldTests.\(UUID().uuidString)"
         suiteNames.append(name)
         let defaults = UserDefaults(suiteName: name)!
+        SignedInUserStore(userDefaults: defaults).remember(UUID())
         let drafts = PendingDraftStore(userDefaults: defaults)
         let coordinator = DocumentSaveCoordinator(
             client: client,

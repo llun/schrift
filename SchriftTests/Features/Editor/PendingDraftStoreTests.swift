@@ -3,9 +3,14 @@ import XCTest
 @testable import Schrift
 
 final class PendingDraftStoreTests: XCTestCase {
+    private let owner = UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!
+    private let otherAccount = UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!
+
+    /// Signed in as `owner`: drafts are shown only to the account they belong to.
     private func makeStore() -> (PendingDraftStore, UserDefaults) {
         let suiteName = "PendingDraftStoreTests.\(UUID().uuidString)"
         let userDefaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: userDefaults).remember(owner)
         return (PendingDraftStore(userDefaults: userDefaults), userDefaults)
     }
 
@@ -14,7 +19,15 @@ final class PendingDraftStoreTests: XCTestCase {
         markdown: String = "# Draft",
         updatedAt: Date = Date(timeIntervalSince1970: 1_000)
     ) -> PendingDraft {
-        PendingDraft(documentID: UUID(uuidString: id)!, title: "Doc", markdown: markdown, updatedAt: updatedAt)
+        PendingDraft(
+            documentID: UUID(uuidString: id)!, title: "Doc", markdown: markdown, updatedAt: updatedAt,
+            ownerUserID: owner)
+    }
+
+    private func signIn(_ account: UUID?, in defaults: UserDefaults) {
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.clear()
+        signedIn.remember(account)
     }
 
     func testDraftIsNilWhenNothingStored() {
@@ -86,7 +99,8 @@ final class PendingDraftStoreTests: XCTestCase {
                 serverUpdatedAt: Date(timeIntervalSince1970: 900), markdown: "# Server", title: "Server Doc"),
             lastPushedMarkdown: "# Pushed",
             // Safety-critical: this is what makes an unanswered conflict hold survive a relaunch.
-            conflictServerUpdatedAt: Date(timeIntervalSince1970: 1_500))
+            conflictServerUpdatedAt: Date(timeIntervalSince1970: 1_500),
+            ownerUserID: owner)
 
         store.save(draft)
 
@@ -114,6 +128,7 @@ final class PendingDraftStoreTests: XCTestCase {
             "baseline":{"serverUpdatedAt":900000,"markdown":"# Server"}}}
             """
         userDefaults.set(Data(legacy.utf8), forKey: "dev.llun.Schrift.pendingDrafts")
+        store.assignOwnersToEarlierDrafts()
 
         let loaded = store.draft(for: documentID)
 
@@ -134,6 +149,7 @@ final class PendingDraftStoreTests: XCTestCase {
             {"\(id)": {"documentID": "\(id)", "title": "Doc", "markdown": "# Legacy", "updatedAt": 1000000}}
             """
         userDefaults.set(Data(legacyJSON.utf8), forKey: "dev.llun.Schrift.pendingDrafts")
+        store.assignOwnersToEarlierDrafts()
 
         let draft = store.draft(for: UUID(uuidString: id)!)
         XCTAssertEqual(draft?.markdown, "# Legacy")
@@ -241,6 +257,7 @@ final class PendingDraftStoreTests: XCTestCase {
     func testRemovingThePersistentDomainAfterAMemoizedReadIsSeen() {
         let suiteName = "PendingDraftStoreTests.\(UUID().uuidString)"
         let userDefaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: userDefaults).remember(owner)
         let store = PendingDraftStore(userDefaults: userDefaults)
         let draft = makeDraft()
         store.save(draft)
@@ -258,7 +275,7 @@ final class PendingDraftStoreTests: XCTestCase {
         store.save(old)
         XCTAssertNil(PendingDraftStore(userDefaults: defaults).draft(for: old.documentID)?.replica)
         let scope = ReplicaScope(
-            serverOrigin: "https://docs.example", ownerUserID: UUID(), org: "docs", documentID: old.documentID)
+            serverOrigin: "https://docs.example", ownerUserID: owner, org: "docs", documentID: old.documentID)
         let manifest = ReplicaManifest(
             formatVersion: 1, scope: scope, generation: UUID(), revision: 0,
             checkpointSequence: 0,
@@ -268,10 +285,130 @@ final class PendingDraftStoreTests: XCTestCase {
         let reference = ReplicaDraftReference(manifest: manifest, markdown: old.markdown)
         let native = PendingDraft(
             documentID: old.documentID, title: old.title, markdown: old.markdown,
-            updatedAt: old.updatedAt, replica: reference)
+            updatedAt: old.updatedAt, replica: reference, ownerUserID: owner)
         store.save(native)
         XCTAssertEqual(PendingDraftStore(userDefaults: defaults).draft(for: old.documentID), native)
         XCTAssertTrue(reference.matches(markdown: old.markdown))
         XCTAssertFalse(reference.matches(markdown: "other"))
+    }
+
+    // MARK: - Account scoping
+
+    func testADraftIsShownOnlyToTheAccountThatSavedIt() {
+        let (store, defaults) = makeStore()
+        let documentID = UUID()
+        store.save(PendingDraft(documentID: documentID, title: "A", markdown: "# A's", updatedAt: Date()))
+        XCTAssertEqual(store.draft(for: documentID)?.ownerUserID, owner, "stamped with the signed-in account")
+
+        signIn(otherAccount, in: defaults)
+        XCTAssertNil(store.draft(for: documentID), "another account never sees it")
+        XCTAssertTrue(store.allDrafts().isEmpty)
+
+        store.save(PendingDraft(documentID: documentID, title: "B", markdown: "# B's", updatedAt: Date()))
+        XCTAssertEqual(store.draft(for: documentID)?.markdown, "# B's")
+        store.remove(documentID: documentID)
+        XCTAssertNil(store.draft(for: documentID))
+
+        signIn(owner, in: defaults)
+        XCTAssertEqual(
+            store.draft(for: documentID)?.markdown, "# A's",
+            "neither the other account's save nor its remove touched this draft")
+    }
+
+    func testWithNoKnownAccountNoDraftIsShownAndNoneIsReplaced() {
+        let (store, defaults) = makeStore()
+        let documentID = UUID()
+        store.save(PendingDraft(documentID: documentID, title: "A", markdown: "# A's", updatedAt: Date()))
+
+        signIn(nil, in: defaults)
+        XCTAssertNil(store.draft(for: documentID))
+        XCTAssertTrue(store.allDrafts().isEmpty)
+        store.remove(documentID: documentID)
+        store.save(PendingDraft(documentID: documentID, title: "?", markdown: "# Unknown", updatedAt: Date()))
+        XCTAssertNil(store.draft(for: documentID), "a draft saved with no account is shown to nobody")
+        XCTAssertEqual(store.allDraftsOfEveryAccount().count, 2, "but it is kept")
+
+        signIn(owner, in: defaults)
+        XCTAssertEqual(store.draft(for: documentID)?.markdown, "# A's")
+        XCTAssertEqual(store.allDrafts().count, 1)
+    }
+
+    func testANativeDraftBelongsToItsReplicasAccount() throws {
+        let (store, defaults) = makeStore()
+        let documentID = UUID()
+        let scope = ReplicaScope(
+            serverOrigin: "https://docs.example", ownerUserID: otherAccount, org: "docs", documentID: documentID)
+        let manifest = ReplicaManifest(
+            formatVersion: 1, scope: scope, generation: UUID(), revision: 0, checkpointSequence: 0,
+            checkpoint: ReplicaFile(
+                name: "\(UUID().uuidString).bin", byteCount: 2, digest: replicaDigest(Data([0, 0]))),
+            journal: [], outbox: [], httpAcknowledgedThrough: 0, projectionCacheVersion: 1)
+        store.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Native", updatedAt: Date(),
+                replica: ReplicaDraftReference(manifest: manifest, markdown: "# Native")))
+
+        XCTAssertNil(store.draft(for: documentID))
+        signIn(otherAccount, in: defaults)
+        XCTAssertEqual(store.draft(for: documentID)?.ownerUserID, otherAccount)
+    }
+
+    /// An older build decodes drafts without `ownerUserID` and writes them all back without it.
+    func testAnOwnerDroppedByAnOlderBuildIsReadBackFromTheKey() throws {
+        let (store, defaults) = makeStore()
+        let draft = makeDraft()
+        store.save(draft)
+        let key = "dev.llun.Schrift.pendingDrafts"
+        var blob = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try XCTUnwrap(defaults.data(forKey: key))) as? [String: [String: Any]])
+        for entry in blob.keys { blob[entry]?["ownerUserID"] = nil }
+        defaults.set(try JSONSerialization.data(withJSONObject: blob), forKey: key)
+
+        XCTAssertEqual(store.draft(for: draft.documentID), draft)
+    }
+
+    // MARK: - Drafts from before account scoping
+
+    private func storeLegacyDraft(_ documentID: UUID, markdown: String, in defaults: UserDefaults) throws {
+        let key = "dev.llun.Schrift.pendingDrafts"
+        var blob =
+            defaults.data(forKey: key).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        blob[documentID.uuidString] = [
+            "documentID": documentID.uuidString, "title": "Doc", "markdown": markdown, "updatedAt": 1_000_000,
+        ]
+        defaults.set(try JSONSerialization.data(withJSONObject: blob), forKey: key)
+    }
+
+    func testEarlierDraftsGoToTheAccountSignedInAtTheFirstLaunchOnly() throws {
+        let (store, defaults) = makeStore()
+        let earlier = UUID()
+        try storeLegacyDraft(earlier, markdown: "# Earlier", in: defaults)
+        XCTAssertNil(store.draft(for: earlier), "unowned until assigned")
+
+        store.assignOwnersToEarlierDrafts()
+        XCTAssertEqual(store.draft(for: earlier)?.markdown, "# Earlier")
+        XCTAssertEqual(store.draft(for: earlier)?.ownerUserID, owner)
+
+        signIn(otherAccount, in: defaults)
+        XCTAssertNil(store.draft(for: earlier))
+        let olderBuild = UUID()
+        try storeLegacyDraft(olderBuild, markdown: "# Older build", in: defaults)
+        PendingDraftStore(userDefaults: defaults).assignOwnersToEarlierDrafts()
+        XCTAssertNil(store.draft(for: olderBuild), "assigned once: a later unowned draft is set aside")
+        XCTAssertTrue(store.allDraftsOfEveryAccount().contains { $0.documentID == olderBuild }, "and kept")
+    }
+
+    func testEarlierDraftsAreSetAsideWhenNoAccountIsKnownAtTheFirstLaunch() throws {
+        let (store, defaults) = makeStore()
+        signIn(nil, in: defaults)
+        let earlier = UUID()
+        try storeLegacyDraft(earlier, markdown: "# Earlier", in: defaults)
+
+        store.assignOwnersToEarlierDrafts()
+        signIn(owner, in: defaults)
+        store.assignOwnersToEarlierDrafts()
+
+        XCTAssertNil(store.draft(for: earlier), "the next sign-in may be another account: never claimed")
+        XCTAssertEqual(store.allDraftsOfEveryAccount().map(\.markdown), ["# Earlier"], "kept on disk")
     }
 }

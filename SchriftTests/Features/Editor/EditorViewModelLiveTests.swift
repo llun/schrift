@@ -45,6 +45,7 @@ final class EditorViewModelLiveTests: XCTestCase {
         let suiteName = "EditorViewModelLiveTests.\(UUID().uuidString)"
         draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(UUID())
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
         let coordinator = DocumentSaveCoordinator(
