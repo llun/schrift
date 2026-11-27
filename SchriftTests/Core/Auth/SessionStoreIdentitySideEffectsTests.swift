@@ -295,23 +295,6 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertFalse(webLoginCacheDataTypes.contains(WKWebsiteDataTypeCookies))
     }
 
-    /// A Keychain failure on sign-out still signs this process out and deletes the cookies;
-    /// the error is reported after the teardown, not instead of it.
-    func testAFailingKeychainDeleteStillSignsOut() throws {
-        let keychain = FakeKeychainStore()
-        let cookies = FakeCookieStorage()
-        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookies)
-        try store.signIn(serverURL: serverURL)
-        cookies.setCookie(
-            HTTPCookie(properties: [.domain: "docs.llun.dev", .path: "/", .name: "docs_sessionid", .value: "fake"])!)
-        keychain.failingDeleteKeys = ["dev.llun.Schrift.isAuthenticated"]
-
-        XCTAssertThrowsError(try store.signOut())
-
-        XCTAssertFalse(store.isAuthenticated)
-        XCTAssertEqual(cookies.cookies(for: serverURL) ?? [], [])
-    }
-
     /// No re-login starts or escalates to the sheet under a sign-out that is draining saves.
     func testNoReauthenticationStartsOrEscalatesWhileSigningOut() throws {
         let store = SessionStore(

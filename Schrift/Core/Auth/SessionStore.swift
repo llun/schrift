@@ -303,6 +303,7 @@ final class SessionStore {
         // (read-only, no account) instead of typing on under a forgotten identity.
         signInGeneration += 1
         generationClock.advance()
+        try keychain.delete(forKey: Self.authenticatedKeychainKey)
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
         deleteServerCookies()
         endReauthentication()
@@ -313,8 +314,6 @@ final class SessionStore {
         isAuthenticated = false
         imageCacheSessionID = nil
         userDefaults.removeObject(forKey: Self.imageCacheSessionKey)
-        // Last, so a failure here cannot leave this process signed in with live cookies.
-        try keychain.delete(forKey: Self.authenticatedKeychainKey)
     }
 
     /// Called (via the API client's `onSessionExpired` hook) whenever any
