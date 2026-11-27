@@ -426,4 +426,14 @@ final class DocsAPIClientTests: XCTestCase {
         let url = await makeClient().absoluteServerURL(for: "/media/../../evil")
         XCTAssertEqual(url?.host, "docs.example.org")
     }
+
+    /// `URLCache` keys a response by URL alone, so the API session keeps none: the next account on
+    /// the device is never answered from the previous one's cached document or attachment.
+    func testTheDefaultSessionKeepsNoHTTPCacheButSharesTheCookieStore() {
+        let configuration = DocsAPIClient.uncachedSession.configuration
+        XCTAssertNil(configuration.urlCache)
+        XCTAssertEqual(configuration.requestCachePolicy, .reloadIgnoringLocalCacheData)
+        XCTAssertTrue(configuration.httpCookieStorage === HTTPCookieStorage.shared, "sign-in cookies still apply")
+        XCTAssertTrue(configuration.httpShouldSetCookies)
+    }
 }

@@ -11,6 +11,11 @@
   configuration, https-only redirects, streamed to disk with a 200 MB cap. Never
   hand `AVPlayer`/`AVURLAsset` a remote URL — it sends the shared storage's
   session cookies whatever `AVURLAssetHTTPCookiesKey` says.)
+- The client's default session (`DocsAPIClient.uncachedSession`) uses the shared
+  cookie store but **no HTTP cache**: `URLCache` keys responses by URL alone, so a
+  cached document or attachment could answer the next account without a server
+  check. Account-scoped data lives in the app's own caches; launch purges
+  `URLCache.shared` for responses earlier builds stored.
 - `performRequest` retries a `GET` **once** on `URLError.networkConnectionLost`
   (-1005: a pooled connection that went stale while the app slept, common on the
   first request after a resume). Unsafe methods are never retried, since the server

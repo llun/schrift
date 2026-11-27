@@ -55,9 +55,20 @@ actor DocsAPIClient {
     /// is not account-scoped. `users/me/` is deliberately **not** shared: see `currentUser()`.
     var inFlightServerConfig: Task<ServerConfig, any Error>?
 
+    /// The app's API session: the shared cookie store, but no HTTP cache. `URLCache` keys a
+    /// response by URL only, so one account's document or attachment could be answered from disk
+    /// to the next account on the device without a server access check; the app keeps its own
+    /// account-scoped caches instead.
+    static let uncachedSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration)
+    }()
+
     init(
         baseURL: URL,
-        session: URLSession = .shared,
+        session: URLSession = DocsAPIClient.uncachedSession,
         cookieProvider: (@Sendable () -> [HTTPCookie])? = nil,
         onSessionExpired: @escaping @Sendable (ContinuousClock.Instant) -> Void = { _ in },
         onRequestFailure: @escaping @Sendable (RequestFailure) -> Void = { _ in },
