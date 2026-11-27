@@ -37,8 +37,7 @@ struct ReauthenticationSheetView: View {
                     onCookiesWillChange: { viewModel.cookiesWillChange() },
                     onLoginComplete: {
                         Task {
-                            await viewModel.handleLoginComplete()
-                            if viewModel.errorKey == nil {
+                            if await viewModel.handleLoginComplete() {
                                 onAuthenticated()
                             }
                         }

@@ -149,4 +149,44 @@ final class ReauthenticationViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.sessionStore.needsReauthentication)
         XCTAssertNil(SignedInUserStore(userDefaults: userDefaults).userID)
     }
+
+    /// A sign-out while a silent re-login's `/users/me/` is on the wire wins: the stale login
+    /// must not sign the session back in after it.
+    func testASignOutDuringTheConfirmationIsNotUndone() async throws {
+        let requestStarted = expectation(description: "confirmation on the wire")
+        let release = DispatchSemaphore(value: 0)
+        let viewModel = try makeViewModel { _ in
+            requestStarted.fulfill()
+            release.wait()
+            return .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
+        }
+
+        let login = Task { await viewModel.handleLoginComplete() }
+        await fulfillment(of: [requestStarted], timeout: 10)
+        try viewModel.sessionStore.signOut()
+        release.signal()
+        let signedIn = await login.value
+
+        XCTAssertFalse(signedIn)
+        XCTAssertNil(viewModel.errorKey, "nothing failed; the login was superseded")
+        XCTAssertFalse(viewModel.sessionStore.isAuthenticated)
+        XCTAssertFalse(viewModel.isConfirming)
+    }
+
+    /// RootView's sign-out drains saves before it calls `signOut`; a re-login completing in
+    /// that window would move `signInGeneration` and make RootView drop the sign-out.
+    func testNoReLoginCompletesWhileASignOutIsDraining() async throws {
+        let viewModel = try makeViewModel { _ in
+            .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
+        }
+        let generation = viewModel.sessionStore.signInGeneration
+        viewModel.sessionStore.beginSignOut()
+
+        let signedIn = await viewModel.handleLoginComplete()
+
+        XCTAssertFalse(signedIn)
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertEqual(viewModel.sessionStore.signInGeneration, generation, "RootView's sign-out guard still holds")
+        XCTAssertTrue(viewModel.sessionStore.needsReauthentication, "nothing was signed back in")
+    }
 }

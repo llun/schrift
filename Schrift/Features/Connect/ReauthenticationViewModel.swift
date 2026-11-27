@@ -39,12 +39,19 @@ final class ReauthenticationViewModel {
         sessionStore.noteSessionCookiesWillChange()
     }
 
-    func handleLoginComplete() async {
+    /// Whether this login signed the session back in. False without an error when a sign-out
+    /// is under way or the session changed hands while the confirmation was on the wire (a
+    /// sign-out, another login): this login is stale and must not undo that.
+    @discardableResult
+    func handleLoginComplete() async -> Bool {
+        // The sign-out about to run deletes these cookies and forgets the account anyway.
+        guard !sessionStore.isSigningOut else { return false }
         // Before the confirmation, not after it. The web view has already put this login's
         // cookies in the shared storage, so whoever was signed in a moment ago may no longer be
         // whose session this is — and the confirmation below can fail, leaving a perfectly
         // valid session that never 401s again to correct it. See `noteSessionCookiesReplaced`.
         sessionStore.noteSessionCookiesReplaced()
+        let generation = sessionStore.signInGeneration
         isConfirming = true
         errorKey = nil
         defer { isConfirming = false }
@@ -52,9 +59,14 @@ final class ReauthenticationViewModel {
         let client = apiClientFactory(serverURL)
         do {
             let userID = try await client.confirmSession()
+            guard sessionStore.isAuthenticated, !sessionStore.isSigningOut,
+                sessionStore.signInGeneration == generation
+            else { return false }
             try sessionStore.signIn(serverURL: serverURL, userID: userID)
+            return true
         } catch {
             errorKey = .reauth_error_sign_in_failed
+            return false
         }
     }
 }

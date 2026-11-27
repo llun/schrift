@@ -37,8 +37,7 @@ struct SilentReauthenticationView: View {
             onCookiesWillChange: { viewModel.cookiesWillChange() },
             onLoginComplete: {
                 Task {
-                    await viewModel.handleLoginComplete()
-                    let succeeded = viewModel.errorKey == nil
+                    let succeeded = await viewModel.handleLoginComplete()
                     attempt.confirmationFinished(succeeded: succeeded)
                     if succeeded { onAuthenticated() }
                 }

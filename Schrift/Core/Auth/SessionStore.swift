@@ -74,6 +74,10 @@ final class SessionStore {
     /// stays off until it (or `signOut`) runs; `needsReauthentication` alone is not enough,
     /// because cancelling the sheet clears it while those cookies are still live.
     private var cookiesAwaitingConfirmation = false
+    /// RootView's sign-out is draining native saves before it calls `signOut`. A re-login
+    /// finishing in that window would bump `signInGeneration` and RootView would drop the
+    /// sign-out, so no re-login may complete until it ends (`endSignOut` or `signOut`).
+    private(set) var isSigningOut = false
     private let now: () -> ContinuousClock.Instant
     /// Bumped by `signIn` and by `noteSessionCookiesReplaced` — the two moments the session
     /// underneath a live screen can become a different account's — so a screen already on
@@ -272,7 +276,13 @@ final class SessionStore {
         cachedUser.clear()
     }
 
+    func beginSignOut() { isSigningOut = true }
+
+    /// The sign-out finished or was abandoned.
+    func endSignOut() { isSigningOut = false }
+
     func signOut() throws {
+        isSigningOut = false
         // Belt-and-braces beside `RootView`'s own clear: a second sign-out path added later
         // should not have to remember this one.
         forgetSignedInIdentity()
