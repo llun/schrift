@@ -42,8 +42,9 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
     }
 
     /// A sign-in change reopens a waiting-classic drain and a native session opened while the
-    /// account was unconfirmed (no input row); a mounted native editor keeps its session.
-    func testASignInChangeReopensOnlyAWaitingDrainOrAnUnconfirmedNativeSession() async {
+    /// account was unconfirmed (no input row) or a preserved-unavailable page; a mounted native
+    /// editor keeps its session.
+    func testASignInChangeReopensAWaitingDrainAnUnconfirmedSessionOrAPreservedPage() async {
         let env = makeEnvironment()
         defer { env.clean() }
         let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState("Server body"))

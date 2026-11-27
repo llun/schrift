@@ -1580,7 +1580,10 @@ follow its own session; an edit filed under another session drops what that sess
 so the newer draft wins. The live-collaboration replicas and sockets remember the account they
 were opened for: once another account is known to be signed in (a re-login, or a `/users/me/`
 retried after a failed confirmation) theirs are closed, held ones too; the same account
-confirming a silent re-login keeps its live sessions. Sign-out closes them all. The holds are
+confirming a silent re-login keeps its live sessions. A reconnect or foreground resume rebuilds a
+session only for the known account it was opened for; with another account or no account known it
+closes the socket and its replica, and the screen asks again with a fresh replica from the server.
+Sign-out closes them all. The holds are
 rehydrated at start from every account's drafts, each under its owner, because a fresh sign-in
 builds the coordinator before `/users/me/` answers.
 
