@@ -18,6 +18,11 @@ final class SessionStore {
     private static let serverURLKey = "dev.llun.Schrift.serverURL"
     private static let authenticatedKeychainKey = "dev.llun.Schrift.isAuthenticated"
     private static let sessionCookiesKeychainKey = "dev.llun.Schrift.sessionCookies"
+    /// The account the last confirmed sign-in named, and how many web logins have handed over
+    /// cookies since: together they tell `signIn` whether the login web view's site data can
+    /// still be the same account's. Persisted, because an unconfirmed handover outlives a relaunch.
+    private static let webLoginConfirmedUserKey = "dev.llun.Schrift.webLoginConfirmedUser"
+    private static let webLoginsSinceConfirmKey = "dev.llun.Schrift.webLoginsSinceConfirm"
 
     private let userDefaults: UserDefaults
     private let keychain: KeychainStoring
@@ -36,9 +41,6 @@ final class SessionStore {
     private let endMediaPlayback: () -> Void
     private let clearWebCache: () -> Void
     private let clearWebSiteData: (_ includingCookies: Bool) -> Void
-    /// Who was signed in before a web login handed over its cookies, so `signIn` can tell a
-    /// re-login by the same account from an account change.
-    private var userIDBeforeHandover: UUID?
     private let clearDiagnostics: () -> Void
     var imageCacheScope: String? { imageCacheSessionID?.uuidString }
 
@@ -160,6 +162,10 @@ final class SessionStore {
             keychain.upgradeAccessibility(forKey: Self.authenticatedKeychainKey)
             keychain.upgradeAccessibility(forKey: Self.sessionCookiesKeychainKey)
             restoreSessionCookies()
+        } else {
+            // Signed out at launch: nobody's login may linger in the web view, including one an
+            // earlier build left at its sign-out (it kept those cookies) or an abandoned sign-in.
+            clearWebSiteData(true)
         }
     }
 
@@ -169,13 +175,16 @@ final class SessionStore {
     func signIn(serverURL: URL, userID: UUID? = nil) throws {
         userDefaults.set(serverURL, forKey: Self.serverURLKey)
         try keychain.save(Data([1]), forKey: Self.authenticatedKeychainKey)
-        let previousUserID = signedInUser.userID ?? userIDBeforeHandover
-        // A re-login that cannot be shown to be the same account drops the previous one's
-        // site data in the login web view; cookies stay, for single sign-on.
-        if isAuthenticated, previousUserID == nil || previousUserID != userID {
+        // Unless this is provably the account whose session the login web view last held, with
+        // no other web login in between, drop that view's site data; cookies stay, for single
+        // sign-on. A first sign-in (one web login, signed out) has nothing to drop.
+        let confirmedUserID = userDefaults.string(forKey: Self.webLoginConfirmedUserKey).flatMap(UUID.init)
+        let webLogins = userDefaults.integer(forKey: Self.webLoginsSinceConfirmKey)
+        if webLogins > 1 || (isAuthenticated && (confirmedUserID == nil || confirmedUserID != userID)) {
             clearWebSiteData(false)
         }
-        userIDBeforeHandover = nil
+        userDefaults.set(userID?.uuidString, forKey: Self.webLoginConfirmedUserKey)
+        userDefaults.removeObject(forKey: Self.webLoginsSinceConfirmKey)
         // Invalidate the old disk namespace before saving replacement cookies,
         // so an interruption cannot restore new credentials with old images.
         forgetSignedInIdentity()
@@ -260,6 +269,7 @@ final class SessionStore {
     }
 
     func noteSessionCookiesReplaced() {
+        noteWebLoginHandedOver()
         cookiesAwaitingConfirmation = true
         forgetSignedInIdentity()
         // The identity may have changed under screens that survived the sheet, exactly as at
@@ -271,7 +281,6 @@ final class SessionStore {
     /// Everything that answers *whose session is this*, forgotten together. One body, so a
     /// later piece of account-scoped state has one place to be added rather than three.
     private func forgetSignedInIdentity() {
-        if let id = signedInUser.userID { userIDBeforeHandover = id }
         let namespace = UUID()
         imageCacheSessionID = namespace
         // Cookie handover precedes /users/me confirmation. Keep its new
@@ -300,11 +309,17 @@ final class SessionStore {
     /// sign-out under way. Signed out, they are deleted.
     func discardStaleLoginCookies() {
         guard isAuthenticated else {
-            deleteServerCookies()
+            cookieStorage.removeCookies(since: .distantPast)
             return
         }
+        noteWebLoginHandedOver()
         cookiesAwaitingConfirmation = true
         forgetSignedInIdentity()
+    }
+
+    private func noteWebLoginHandedOver() {
+        userDefaults.set(
+            userDefaults.integer(forKey: Self.webLoginsSinceConfirmKey) + 1, forKey: Self.webLoginsSinceConfirmKey)
     }
 
     /// The sign-out finished or was abandoned.
@@ -315,17 +330,19 @@ final class SessionStore {
         // Belt-and-braces beside `RootView`'s own clear: a second sign-out path added later
         // should not have to remember this one.
         forgetSignedInIdentity()
-        userIDBeforeHandover = nil
         // An intentional sign-out: everything the login web view keeps, cookies and the IdP's
         // single sign-on included, so the next person on the device has to sign in themselves.
         clearWebSiteData(true)
+        userDefaults.removeObject(forKey: Self.webLoginConfirmedUserKey)
+        userDefaults.removeObject(forKey: Self.webLoginsSinceConfirmKey)
         // A session change like any other: a native editor still mounted closes and reopens
         // (read-only, no account) instead of typing on under a forgotten identity.
         signInGeneration += 1
         generationClock.advance()
         try keychain.delete(forKey: Self.authenticatedKeychainKey)
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
-        deleteServerCookies()
+        // The IdP's cookies too: the login copies every WebKit cookie into this storage.
+        cookieStorage.removeCookies(since: .distantPast)
         endReauthentication()
         silentReauthenticationExhausted = false
         lastSilentSignIn = nil
@@ -437,12 +454,6 @@ final class SessionStore {
         syncCookies(validStoredCookies(stored).compactMap(\.httpCookie), into: cookieStorage)
     }
 
-    private func deleteServerCookies() {
-        guard let serverURL else { return }
-        for cookie in cookieStorage.cookies(for: serverURL) ?? [] {
-            cookieStorage.deleteCookie(cookie)
-        }
-    }
 }
 
 /// The sign-in generation as a value any thread can read synchronously

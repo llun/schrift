@@ -312,9 +312,9 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertFalse(store.isReauthenticationInteractive, "no sheet over a sign-out")
     }
 
-    /// Sign-out clears everything the login web view keeps, cookies too; a re-login clears its
-    /// site data (not cookies) unless it is provably the same account; a silent re-login by the
-    /// same account and a fresh sign-in clear nothing.
+    /// Sign-out (and a signed-out launch) clears everything the login web view keeps, cookies
+    /// too; a re-login clears its site data (not cookies) unless it is provably the same account;
+    /// a silent re-login by the same account and a first sign-in clear nothing.
     func testWebSiteDataIsClearedAtSignOutAndOnAnAccountChange() throws {
         let accountA = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
         let accountB = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
@@ -322,22 +322,45 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         let store = SessionStore(
             userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage(),
             clearWebSiteData: { clears.append($0) })
+        XCTAssertEqual(clears, [true], "a signed-out launch")
 
-        try store.signIn(serverURL: serverURL, userID: accountA)
-        XCTAssertEqual(clears, [], "a fresh sign-in")
         store.noteSessionCookiesReplaced()
         try store.signIn(serverURL: serverURL, userID: accountA)
-        XCTAssertEqual(clears, [], "the same account re-logging in keeps single sign-on and its site data")
+        XCTAssertEqual(clears, [true], "a first sign-in")
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL, userID: accountA)
+        XCTAssertEqual(clears, [true], "the same account re-logging in keeps single sign-on and its site data")
         store.noteSessionCookiesReplaced()
         try store.signIn(serverURL: serverURL, userID: accountB)
-        XCTAssertEqual(clears, [false], "an account change: site data, not cookies")
+        XCTAssertEqual(clears, [true, false], "an account change: site data, not cookies")
         store.noteSessionCookiesReplaced()
         try store.signIn(serverURL: serverURL, userID: nil)
-        XCTAssertEqual(clears, [false, false], "an account nobody can name counts as a change")
+        XCTAssertEqual(clears, [true, false, false], "an account nobody can name counts as a change")
         try store.signOut()
-        XCTAssertEqual(clears, [false, false, true], "sign-out: everything, cookies included")
+        XCTAssertEqual(clears, [true, false, false, true], "sign-out: everything, cookies included")
+        store.noteSessionCookiesReplaced()
         try store.signIn(serverURL: serverURL, userID: accountB)
-        XCTAssertEqual(clears, [false, false, true], "signing in after a sign-out")
+        XCTAssertEqual(clears, [true, false, false, true], "signing in after a sign-out")
+    }
+
+    /// Another account's web login in between — confirmed or not, even across a relaunch — means
+    /// the same account signing in again is no proof the site data is still its own.
+    func testAnUnconfirmedLoginInBetweenStillClearsTheSiteData() throws {
+        let accountA = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        var clears: [Bool] = []
+        let keychain = FakeKeychainStore()
+        let first = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: FakeCookieStorage())
+        first.noteSessionCookiesReplaced()
+        try first.signIn(serverURL: serverURL, userID: accountA)
+        first.noteSessionCookiesReplaced()  // another account's login, never confirmed
+
+        let relaunched = SessionStore(
+            userDefaults: userDefaults, keychain: keychain, cookieStorage: FakeCookieStorage(),
+            clearWebSiteData: { clears.append($0) })
+        relaunched.noteSessionCookiesReplaced()
+        try relaunched.signIn(serverURL: serverURL, userID: accountA)
+
+        XCTAssertEqual(clears, [false])
     }
 
     func testTheSiteDataClearKeepsCookiesOnlyOnAnAccountChange() {

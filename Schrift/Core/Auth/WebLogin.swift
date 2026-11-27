@@ -20,6 +20,7 @@ protocol CookieStoring {
     func setCookie(_ cookie: HTTPCookie)
     func cookies(for url: URL) -> [HTTPCookie]?
     func deleteCookie(_ cookie: HTTPCookie)
+    func removeCookies(since date: Date)
 }
 
 extension HTTPCookieStorage: CookieStoring {}

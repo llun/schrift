@@ -38,7 +38,7 @@ final class SessionStoreCookiesTests: SessionStoreTestCase {
         XCTAssertFalse(stored.contains { $0.domain.contains("idp.example.org") })
     }
 
-    func testSignOutDeletesOnlyServerCookiesNotIdPCookies() throws {
+    func testSignOutDeletesServerAndIdPCookies() throws {
         let keychain = FakeKeychainStore()
         let cookieStorage = FakeCookieStorage()
         cookieStorage.setCookie(makeCookie())
@@ -48,9 +48,8 @@ final class SessionStoreCookiesTests: SessionStoreTestCase {
 
         try store.signOut()
 
-        // Only the server's cookie is cleared; the IdP-host cookie is left for
-        // WebKit's own store to manage.
-        XCTAssertEqual(cookieStorage.storedCookies.map(\.name), ["idp_session"])
+        // The IdP's cookie goes too: an intentional sign-out ends its single sign-on.
+        XCTAssertEqual(cookieStorage.storedCookies.map(\.name), [])
     }
 
     func testInitRestoresPersistedCookiesWhenAuthenticated() throws {
