@@ -131,7 +131,7 @@ final class AttachmentLoaderTests: XCTestCase {
     func testAnAlreadyCachedAttachmentIssuesNoRequest() async throws {
         let cache = makeCache()
         let display = try makeDisplay()
-        _ = cache.store(Data([1, 2, 3]), for: display)
+        _ = cache.store(Data([1, 2, 3]), for: display, ifGeneration: cache.generation)
         let log = RequestRecorder()
         stub(Data([9]), log: log)
 
@@ -244,7 +244,7 @@ final class AttachmentLoaderTests: XCTestCase {
     func testAnAlreadyCachedAttachmentIsFoundWhileOfflineWithoutARequest() async throws {
         let cache = makeCache()
         let display = try makeDisplay()
-        _ = cache.store(Data([1, 2, 3]), for: display)
+        _ = cache.store(Data([1, 2, 3]), for: display, ifGeneration: cache.generation)
         let log = RequestRecorder()
         stub(Data([9]), log: log)
 

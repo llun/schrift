@@ -169,8 +169,9 @@ final class VideoPosterLoader {
     }
 
     private func resetForScopeChange() {
+        // Not the attachment cache: SessionStore clears it on every account change, and a clear here
+        // would refuse every attachment download started since (its generation moves).
         memory.removeAllObjects()
-        attachmentCache.removeAll()
         aspectRatios.removeAll()
         transportFailures.removeAll()
         oversizeSkipped.removeAll()
@@ -352,6 +353,8 @@ final class VideoPosterLoader {
         // Priority 3: bounded 20 MB download to local file, then AVAssetImageGenerator.
         let sameOrigin = policy == .allow
         let cookies = sameOrigin ? cookieProvider(url) : []
+        // Read before the fetch: an account change that clears the attachment cache meanwhile refuses the copy.
+        let attachmentGeneration = attachmentCache.generation
         do {
             let (data, mimeType) = try await fetch(url, cookies)
             guard !Task.isCancelled, resolvedScope() == scope else { return nil }
@@ -368,7 +371,7 @@ final class VideoPosterLoader {
             let attachmentPayload = parseAttachmentLink(
                 "[video](\(url.absoluteString))", serverOrigin: scope.serverOrigin
             )
-            .map { (display: $0, data: data) }
+            .map { (display: $0, data: data, generation: attachmentGeneration) }
             return await extractAndCachePoster(
                 fromFileURL: scratchURL,
                 mimeType: mimeType,
@@ -399,7 +402,7 @@ final class VideoPosterLoader {
         url: URL,
         key: Key,
         scope: ImageCacheScope,
-        attachmentCachePayload: (display: AttachmentDisplay, data: Data)? = nil
+        attachmentCachePayload: (display: AttachmentDisplay, data: Data, generation: Int)? = nil
     ) async -> UIImage? {
         guard fileURL.isFileURL, resolvedScope() == scope else { return nil }
         let jpegData = await limiter.withPermit {
@@ -412,7 +415,7 @@ final class VideoPosterLoader {
         }
         guard resolvedScope() == scope else { return nil }
         if let payload = attachmentCachePayload {
-            _ = attachmentCache.store(payload.data, for: payload.display)
+            _ = attachmentCache.store(payload.data, for: payload.display, ifGeneration: payload.generation)
         }
         oversizeSkipped.remove(key)
         failedPosters.remove(key)

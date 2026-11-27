@@ -1536,9 +1536,12 @@ directory, never throwing to callers, cleared on sign-out — with three
 deliberate differences, and one guard: a write that started before a clear (a
 download still on the wire at sign-out or an account switch) is refused, because
 the file name carries no account and a late write would hand the next account
-this one's bytes. `removeAll` bumps a per-directory generation shared by every
-instance; `AttachmentLoader` reads it when a download starts and the store
-compares it under the same lock right before writing.
+this one's bytes. `removeAll` bumps a per-folder generation shared by every
+instance (keyed by the symlink-resolved path); every writer (`AttachmentLoader`,
+`VideoPosterLoader`'s copy, the upload seed) reads it before its first await and
+passes it as the required `ifGeneration`, which the store compares under the same
+lock right before writing. Only account changes clear it (`SessionStore`,
+`RootView`), never a lazy observer, or downloads started since would be refused.
 
 - **Recency is last *use*, not last write.** `cachedFileURL(for:)` bumps the
   file's mtime on a hit. Attachments are read-hot: a write-recency cache would

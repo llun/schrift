@@ -297,7 +297,8 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
 
         // Confirmed session relaunch preserves offline attachment cache.
         let confirmedCache = AttachmentCacheStore(directory: cacheDir)
-        XCTAssertNotNil(confirmedCache.store(Data("account-a".utf8), for: display))
+        XCTAssertNotNil(
+            confirmedCache.store(Data("account-a".utf8), for: display, ifGeneration: confirmedCache.generation))
         let confirmedRelaunch = SessionStore(
             userDefaults: userDefaults,
             keychain: keychain,
@@ -309,7 +310,9 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         // Unconfirmed cookie handover drops the persisted session key; B writes to AttachmentCacheStore before relaunch.
         confirmedRelaunch.noteSessionCookiesReplaced()
         let unconfirmedCache = AttachmentCacheStore(directory: cacheDir)
-        XCTAssertNotNil(unconfirmedCache.store(Data("account-b-secret".utf8), for: display))
+        XCTAssertNotNil(
+            unconfirmedCache.store(
+                Data("account-b-secret".utf8), for: display, ifGeneration: unconfirmedCache.generation))
         XCTAssertNotNil(unconfirmedCache.cachedFileURL(for: display))
 
         // Relaunch restores A's cookies and mints a new session key; AttachmentCacheStore MUST be cleared.
@@ -366,6 +369,61 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
             XCTAssertEqual(loader.state(for: display), .failed, change)
             XCTAssertNil(AttachmentCacheStore(directory: cacheDir).cachedFileURL(for: display), change)
         }
+    }
+
+    /// A silent same-account re-login clears the attachment cache at once; a download started after it must
+    /// still land when a video scrolls in later and the poster loader first notices the new scope.
+    func testAPosterLoaderSeeingTheNewScopeDoesNotFailADownloadStartedAfterTheReLogin() async throws {
+        let cacheDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SessionStorePosterScope-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: cacheDir) }
+        addTeardownBlock { MockURLProtocol.reset() }
+        let origin = serverURL.absoluteString
+        let display = try XCTUnwrap(
+            parseAttachmentLink(
+                "[Report.pdf](\(origin)/media/11111111-2222-4333-8444-555555555555/attachments/"
+                    + "66666666-7777-4888-8999-aaaaaaaaaaaa.pdf)",
+                serverOrigin: origin))
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage(),
+            clearAttachmentCache: { AttachmentCacheStore(directory: cacheDir).removeAll() })
+        try store.signIn(serverURL: serverURL)
+        let posters = VideoPosterLoader(
+            cache: ImageCacheStore(directory: cacheDir.appendingPathComponent("posters", isDirectory: true)),
+            attachmentCache: AttachmentCacheStore(directory: cacheDir),
+            fetch: { _, _ in throw URLError(.notConnectedToInternet) },
+            cookieProvider: { _ in [] },
+            scopeProvider: { store.imageCacheScope.map { ImageCacheScope(serverOrigin: origin, sessionID: $0) } },
+            scratchDirectory: cacheDir.appendingPathComponent("scratch", isDirectory: true))
+        let video = try XCTUnwrap(URL(string: "\(origin)/media/clip.mp4"))
+        _ = posters.poster(for: video)
+        let previous = AttachmentCacheStore(directory: cacheDir)
+        XCTAssertNotNil(previous.store(Data("before".utf8), for: display, ifGeneration: previous.generation))
+
+        try store.signIn(serverURL: serverURL)
+        XCTAssertNil(
+            AttachmentCacheStore(directory: cacheDir).cachedFileURL(for: display),
+            "SessionStore clears the attachment cache synchronously at the account change")
+
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: Data("after".utf8), error: nil, releasedBy: gate)
+        }
+        let loader = AttachmentLoader(
+            client: DocsAPIClient(
+                baseURL: serverURL.appendingPathComponent("api/v1.0/"),
+                session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
+            serverOrigin: origin, cache: AttachmentCacheStore(directory: cacheDir))
+        let load = Task { await loader.loadIfNeeded(display) }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        _ = posters.poster(for: video)
+        gate.open()
+        await load.value
+
+        guard case .cached(let url) = loader.state(for: display) else {
+            return XCTFail("Expected .cached, got \(String(describing: loader.state(for: display)))")
+        }
+        XCTAssertEqual(try Data(contentsOf: url), Data("after".utf8))
     }
 
     func testDiagnosticsStoreResetsOnEveryAccountChange() throws {

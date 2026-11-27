@@ -364,10 +364,10 @@ private struct AttachmentCardCatalog: View {
             directory: FileManager.default.temporaryDirectory
                 .appendingPathComponent("SchriftPreviewAttachmentCards", isDirectory: true))
         if let pdf = display(ext: "pdf", label: "Q3 report.pdf") {
-            _ = cache.store(Data("%PDF-1.4\n%preview\n".utf8), for: pdf)
+            _ = cache.store(Data("%PDF-1.4\n%preview\n".utf8), for: pdf, ifGeneration: cache.generation)
         }
         if let markup = display(ext: "html", label: "export.html", file: markupFileUUID) {
-            _ = cache.store(Data("<html></html>".utf8), for: markup)
+            _ = cache.store(Data("<html></html>".utf8), for: markup, ifGeneration: cache.generation)
         }
         return AttachmentLoader(
             client: DocsAPIClient(baseURL: URL(string: "\(origin)/api/v1.0/")!),

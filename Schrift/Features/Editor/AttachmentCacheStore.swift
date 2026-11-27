@@ -73,6 +73,8 @@ final class AttachmentCacheStore {
     private static let generations = Mutex<[String: Int]>([:])
 
     private let directory: URL
+    /// The `generations` key: one folder spelled two ways (a symlink, a `..`) must share one generation.
+    private let generationKey: String
     private let fileManager: FileManager
     private let countLimit: Int
     private let byteLimit: Int
@@ -89,6 +91,7 @@ final class AttachmentCacheStore {
             ?? fileManager
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("dev.llun.Schrift/AttachmentCache", isDirectory: true)
+        self.generationKey = Self.canonicalPath(of: self.directory, fileManager: fileManager)
         self.countLimit = countLimit
         self.byteLimit = byteLimit
     }
@@ -105,13 +108,13 @@ final class AttachmentCacheStore {
     }
 
     /// Read when a write starts that `store` finishes later (a download), and passed back as `ifGeneration`.
-    var generation: Int { Self.generations.withLock { $0[directory.path, default: 0] } }
+    var generation: Int { Self.generations.withLock { $0[generationKey, default: 0] } }
 
     /// Writes the bytes and returns the file they landed in, or nil if the write
     /// failed (a full disk, a name the store refuses) or `ifGeneration` predates
     /// a `removeAll`. A nil return is not an error the user needs to see: the
     /// bytes are still in memory for this render, only the offline copy is lost.
-    func store(_ data: Data, for display: AttachmentDisplay, ifGeneration generation: Int? = nil) -> URL? {
+    func store(_ data: Data, for display: AttachmentDisplay, ifGeneration generation: Int) -> URL? {
         guard let url = fileURL(for: display),
             write(ifGeneration: generation, { (try? data.write(to: url, options: .atomic)) != nil })
         else { return nil }
@@ -121,7 +124,7 @@ final class AttachmentCacheStore {
 
     /// `store` for bytes already on disk (a streamed video or audio download): moves the file in.
     /// The source is consumed either way.
-    func store(movingFileAt source: URL, for display: AttachmentDisplay, ifGeneration generation: Int? = nil) -> URL? {
+    func store(movingFileAt source: URL, for display: AttachmentDisplay, ifGeneration generation: Int) -> URL? {
         guard let url = fileURL(for: display),
             write(
                 ifGeneration: generation,
@@ -139,17 +142,29 @@ final class AttachmentCacheStore {
 
     func removeAll() {
         Self.generations.withLock {
-            $0[directory.path, default: 0] += 1
+            $0[generationKey, default: 0] += 1
             try? fileManager.removeItem(at: directory)
         }
     }
 
     // MARK: - Private
 
+    /// `url` with symlinks resolved, though it may not exist yet (`removeAll` deletes it, and
+    /// `resolvingSymlinksInPath` leaves a missing path untouched): resolves its deepest existing ancestor.
+    private static func canonicalPath(of url: URL, fileManager: FileManager) -> String {
+        var existing = url.standardizedFileURL
+        var missing: [String] = []
+        while !fileManager.fileExists(atPath: existing.path), existing.pathComponents.count > 1 {
+            missing.insert(existing.lastPathComponent, at: 0)
+            existing.deleteLastPathComponent()
+        }
+        return missing.reduce(existing.resolvingSymlinksInPath()) { $0.appendingPathComponent($1) }.path
+    }
+
     /// Runs `write` under the generation lock, unless the cache was cleared since `generation` was read.
-    private func write(ifGeneration generation: Int?, _ write: () -> Bool) -> Bool {
+    private func write(ifGeneration generation: Int, _ write: () -> Bool) -> Bool {
         Self.generations.withLock { generations in
-            guard generation == nil || generation == generations[directory.path, default: 0] else { return false }
+            guard generation == generations[generationKey, default: 0] else { return false }
             ensureDirectory()
             return write()
         }
