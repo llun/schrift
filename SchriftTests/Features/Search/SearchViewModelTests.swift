@@ -14,6 +14,7 @@ final class SearchViewModelTests: XCTestCase {
     private func makeStore() -> RecentSearchesStore {
         let suiteName = "SearchViewModelTests.\(UUID().uuidString)"
         let userDefaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: userDefaults).remember(UUID())
         return RecentSearchesStore(userDefaults: userDefaults)
     }
 
@@ -315,5 +316,41 @@ final class SearchViewModelTests: XCTestCase {
             excerpt: nil, abilities: DocumentAbilities(), linkReach: .restricted, linkRole: .reader,
             isFavorite: false, depth: 1, numchild: 0, path: "0001",
             createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
+    }
+
+    /// An account change clears the stored searches from another instance; the screen's next
+    /// session shows that, not the previous account's list.
+    func testANewSessionRereadsRecentSearches() {
+        let suiteName = "SearchViewModelTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        SignedInUserStore(userDefaults: userDefaults).remember(UUID())
+        RecentSearchesStore(userDefaults: userDefaults).add("Roadmap")
+        let viewModel = makeViewModel(store: RecentSearchesStore(userDefaults: userDefaults))
+        XCTAssertEqual(viewModel.recentSearches, ["Roadmap"])
+
+        RecentSearchesStore(userDefaults: userDefaults).clear()
+        viewModel.beginSession(signInGeneration: 1)
+
+        XCTAssertTrue(viewModel.recentSearches.isEmpty)
+    }
+
+    /// The account id learned after the session began makes its list readable again.
+    func testRecentSearchesReloadOnceTheAccountIsKnown() {
+        let suiteName = "SearchViewModelTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let signedInUser = SignedInUserStore(userDefaults: userDefaults)
+        let account = UUID()
+        signedInUser.remember(account)
+        RecentSearchesStore(userDefaults: userDefaults).add("Roadmap")
+        signedInUser.clear()
+        let viewModel = makeViewModel(store: RecentSearchesStore(userDefaults: userDefaults))
+        XCTAssertEqual(viewModel.recentSearches, [])
+
+        signedInUser.remember(account)
+        viewModel.reloadRecentSearches()
+
+        XCTAssertEqual(viewModel.recentSearches, ["Roadmap"])
     }
 }

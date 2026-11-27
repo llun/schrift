@@ -16,6 +16,7 @@ final class NativeNavigationTests: NativeEditingTestCase {
     override func setUp() async throws {
         try await super.setUp()
         defaults = UserDefaults(suiteName: suite)
+        SignedInUserStore(userDefaults: defaults).remember(UUID())  // positions belong to an account
     }
 
     override func tearDown() async throws {

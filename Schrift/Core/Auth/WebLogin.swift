@@ -20,6 +20,7 @@ protocol CookieStoring {
     func setCookie(_ cookie: HTTPCookie)
     func cookies(for url: URL) -> [HTTPCookie]?
     func deleteCookie(_ cookie: HTTPCookie)
+    func removeCookies(since date: Date)
 }
 
 extension HTTPCookieStorage: CookieStoring {}
@@ -38,4 +39,32 @@ let webLoginCacheDataTypes: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsite
 @MainActor
 func clearWebLoginCache() {
     WKWebsiteDataStore.default().removeData(ofTypes: webLoginCacheDataTypes, modifiedSince: .distantPast) {}
+}
+
+/// Everything the login web view stores: on a sign-out, cookies too (the IdP's single sign-on
+/// with them, so the next sign-in asks for a password); on an account change, all but cookies.
+@MainActor
+func webLoginSiteDataTypes(includingCookies: Bool) -> Set<String> {
+    var types = WKWebsiteDataStore.allWebsiteDataTypes()
+    if !includingCookies { types.remove(WKWebsiteDataTypeCookies) }
+    return types
+}
+
+/// The latest wipe of the login web view's store, until it finishes: a sign-in started right
+/// after a sign-out waits for it, so the old IdP session cannot answer that login.
+@MainActor private(set) var pendingWebLoginDataClear: Task<Void, Never>?
+
+@MainActor
+func clearWebLoginSiteData(includingCookies: Bool) {
+    let types = webLoginSiteDataTypes(includingCookies: includingCookies)
+    let previous = pendingWebLoginDataClear
+    let clear = Task { @MainActor in
+        await previous?.value
+        await WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: .distantPast)
+    }
+    pendingWebLoginDataClear = clear
+    Task { @MainActor in
+        await clear.value
+        if pendingWebLoginDataClear == clear { pendingWebLoginDataClear = nil }
+    }
 }

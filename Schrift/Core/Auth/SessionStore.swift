@@ -18,6 +18,11 @@ final class SessionStore {
     private static let serverURLKey = "dev.llun.Schrift.serverURL"
     private static let authenticatedKeychainKey = "dev.llun.Schrift.isAuthenticated"
     private static let sessionCookiesKeychainKey = "dev.llun.Schrift.sessionCookies"
+    /// The account the last confirmed sign-in named, and how many web logins have handed over
+    /// cookies since: together they tell `signIn` whether the login web view's site data can
+    /// still be the same account's. Persisted, because an unconfirmed handover outlives a relaunch.
+    private static let webLoginConfirmedUserKey = "dev.llun.Schrift.webLoginConfirmedUser"
+    private static let webLoginsSinceConfirmKey = "dev.llun.Schrift.webLoginsSinceConfirm"
 
     private let userDefaults: UserDefaults
     private let keychain: KeychainStoring
@@ -35,6 +40,10 @@ final class SessionStore {
     private let clearMediaDropStaging: () -> Void
     private let endMediaPlayback: () -> Void
     private let clearWebCache: () -> Void
+    private let clearWebSiteData: (_ includingCookies: Bool) -> Void
+    /// Recent searches are what one person typed: every list is cleared on an account change
+    /// and sign-out.
+    private let clearRecentSearches: () -> Void
     private let clearDiagnostics: () -> Void
     var imageCacheScope: String? { imageCacheSessionID?.uuidString }
 
@@ -77,6 +86,9 @@ final class SessionStore {
     /// A web login's cookies are in the shared storage and no confirmation has accepted them
     /// yet, so the account they belong to is not known.
     var isAwaitingConfirmation: Bool { cookiesAwaitingConfirmation }
+    /// The Keychain could not be read at launch (locked), so "signed out" here is not a known
+    /// sign-out: the next sign-in treats the login web view's site data as someone else's.
+    private var launchedWithUnreadableMarker = false
     /// RootView's sign-out is draining native saves before it calls `signOut`. A re-login
     /// finishing in that window would bump `signInGeneration` and RootView would drop the
     /// sign-out, so no re-login may complete until it ends (`endSignOut` or `signOut`).
@@ -103,6 +115,16 @@ final class SessionStore {
     /// image bytes survive offline relaunch; rotated whenever cookies change hands.
     private(set) var imageCacheSessionID: UUID?
 
+    /// A definite "no sign-in marker": a Keychain read that fails (the device locked) is not
+    /// one. `SchriftApp.init` clears the login web view's store on it, once per launch — not
+    /// here, since SwiftUI may construct this store again while a sign-in is under way.
+    static func hasNoSignInMarker(keychain: KeychainStoring = KeychainStore()) -> Bool {
+        if case .success(nil) = Result(catching: { try keychain.load(forKey: authenticatedKeychainKey) }) {
+            return true
+        }
+        return false
+    }
+
     init(
         userDefaults: UserDefaults = .standard,
         keychain: KeychainStoring = KeychainStore(),
@@ -113,6 +135,10 @@ final class SessionStore {
         clearMediaDropStaging: @escaping () -> Void = { NativeMediaDropPaste.removeStagingRoot() },
         endMediaPlayback: @escaping () -> Void = { NativeMediaPresenter.endSession() },
         clearWebCache: @escaping () -> Void = { clearWebLoginCache() },
+        clearWebSiteData: @escaping (_ includingCookies: Bool) -> Void = {
+            clearWebLoginSiteData(includingCookies: $0)
+        },
+        clearRecentSearches: (() -> Void)? = nil,
         clearDiagnostics: @escaping () -> Void = { NativeEditorDiagnosticsStore.shared.reset() },
         now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
@@ -121,6 +147,8 @@ final class SessionStore {
         self.clearMediaDropStaging = clearMediaDropStaging
         self.endMediaPlayback = endMediaPlayback
         self.clearWebCache = clearWebCache
+        self.clearWebSiteData = clearWebSiteData
+        self.clearRecentSearches = clearRecentSearches ?? { RecentSearchesStore(userDefaults: userDefaults).clear() }
         self.clearDiagnostics = clearDiagnostics
         self.now = now
         self.userDefaults = userDefaults
@@ -131,7 +159,9 @@ final class SessionStore {
         self.signedInUser = signedInUser ?? SignedInUserStore(userDefaults: userDefaults)
         self.cachedUser = CurrentUserCacheStore(userDefaults: userDefaults)
         self.serverURL = userDefaults.url(forKey: Self.serverURLKey)
-        self.isAuthenticated = (try? keychain.load(forKey: Self.authenticatedKeychainKey)) != nil
+        let marker = Result { try keychain.load(forKey: Self.authenticatedKeychainKey) }
+        self.isAuthenticated = (try? marker.get()) != nil
+        if case .failure = marker { launchedWithUnreadableMarker = true }
         // Synchronous, so the cookies are back in the shared storage before
         // RootView builds the API client and the first request fires.
         if isAuthenticated {
@@ -164,6 +194,24 @@ final class SessionStore {
     func signIn(serverURL: URL, userID: UUID? = nil) throws {
         userDefaults.set(serverURL, forKey: Self.serverURLKey)
         try keychain.save(Data([1]), forKey: Self.authenticatedKeychainKey)
+        // Unless this is provably the account whose session the login web view last held, with
+        // no other web login in between, drop that view's site data; cookies stay, for single
+        // sign-on. Signed out, only a confirmed sign-in still on record (no sign-out ran, e.g. a
+        // launch that could not read the Keychain) can differ; after a sign-out there is none.
+        let confirmedUserID = userDefaults.string(forKey: Self.webLoginConfirmedUserKey).flatMap(UUID.init)
+        let webLogins = userDefaults.integer(forKey: Self.webLoginsSinceConfirmKey)
+        let hasConfirmedRecord = userDefaults.object(forKey: Self.webLoginConfirmedUserKey) != nil
+        let provablySameAccount = confirmedUserID != nil && confirmedUserID == userID
+        if webLogins > 1
+            || (!provablySameAccount && (isAuthenticated || hasConfirmedRecord || launchedWithUnreadableMarker))
+        {
+            clearWebSiteData(false)
+            clearRecentSearches()
+        }
+        // "" records a confirmed sign-in by an account nobody can name.
+        userDefaults.set(userID?.uuidString ?? "", forKey: Self.webLoginConfirmedUserKey)
+        userDefaults.removeObject(forKey: Self.webLoginsSinceConfirmKey)
+        launchedWithUnreadableMarker = false
         // Invalidate the old disk namespace before saving replacement cookies,
         // so an interruption cannot restore new credentials with old images.
         forgetSignedInIdentity()
@@ -248,6 +296,7 @@ final class SessionStore {
     }
 
     func noteSessionCookiesReplaced() {
+        noteWebLoginHandedOver()
         cookiesAwaitingConfirmation = true
         forgetSignedInIdentity()
         // The identity may have changed under screens that survived the sheet, exactly as at
@@ -279,7 +328,12 @@ final class SessionStore {
         cachedUser.clear()
     }
 
-    func beginSignOut() { isSigningOut = true }
+    /// Also unmounts any re-login web view now, so none is still answering the IdP when the
+    /// sign-out wipes the web view's store (an abandoned sign-out re-raises on the next 401).
+    func beginSignOut() {
+        isSigningOut = true
+        endReauthentication()
+    }
 
     /// A stale re-login (see `ReauthenticationViewModel`) has already written its cookies.
     /// Signed in, they are treated as an unconfirmed handover — the identity is forgotten, as
@@ -287,11 +341,21 @@ final class SessionStore {
     /// sign-out under way. Signed out, they are deleted.
     func discardStaleLoginCookies() {
         guard isAuthenticated else {
-            deleteServerCookies()
+            // Landed after the sign-out: undo what it wrote, in the web view's store too. Even
+            // if a new sign-in is under way: it fails and is retried, which beats keeping a
+            // stale account's session under the new one.
+            cookieStorage.removeCookies(since: .distantPast)
+            clearWebSiteData(true)
             return
         }
+        noteWebLoginHandedOver()
         cookiesAwaitingConfirmation = true
         forgetSignedInIdentity()
+    }
+
+    private func noteWebLoginHandedOver() {
+        userDefaults.set(
+            userDefaults.integer(forKey: Self.webLoginsSinceConfirmKey) + 1, forKey: Self.webLoginsSinceConfirmKey)
     }
 
     /// The sign-out finished or was abandoned.
@@ -302,13 +366,22 @@ final class SessionStore {
         // Belt-and-braces beside `RootView`'s own clear: a second sign-out path added later
         // should not have to remember this one.
         forgetSignedInIdentity()
+        // An intentional sign-out: everything the login web view keeps, cookies and the IdP's
+        // single sign-on included, so the next person on the device has to sign in themselves.
+        clearWebSiteData(true)
+        clearRecentSearches()
+        // The IdP's cookies too: the login copies every WebKit cookie into this storage.
+        cookieStorage.removeCookies(since: .distantPast)
+        userDefaults.removeObject(forKey: Self.webLoginConfirmedUserKey)
+        userDefaults.removeObject(forKey: Self.webLoginsSinceConfirmKey)
         // A session change like any other: a native editor still mounted closes and reopens
         // (read-only, no account) instead of typing on under a forgotten identity.
         signInGeneration += 1
         generationClock.advance()
-        try keychain.delete(forKey: Self.authenticatedKeychainKey)
+        // The cookie snapshot first, and the sign-out finishes even if the marker delete fails:
+        // a relaunch then finds the marker but no cookies, and asks for a password.
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
-        deleteServerCookies()
+        let markerDelete = Result { try keychain.delete(forKey: Self.authenticatedKeychainKey) }
         endReauthentication()
         silentReauthenticationExhausted = false
         lastSilentSignIn = nil
@@ -317,6 +390,7 @@ final class SessionStore {
         isAuthenticated = false
         imageCacheSessionID = nil
         userDefaults.removeObject(forKey: Self.imageCacheSessionKey)
+        try markerDelete.get()
     }
 
     /// Called (via the API client's `onSessionExpired` hook) whenever any
@@ -420,12 +494,6 @@ final class SessionStore {
         syncCookies(validStoredCookies(stored).compactMap(\.httpCookie), into: cookieStorage)
     }
 
-    private func deleteServerCookies() {
-        guard let serverURL else { return }
-        for cookie in cookieStorage.cookies(for: serverURL) ?? [] {
-            cookieStorage.deleteCookie(cookie)
-        }
-    }
 }
 
 /// The sign-in generation as a value any thread can read synchronously

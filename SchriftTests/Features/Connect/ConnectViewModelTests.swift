@@ -39,6 +39,7 @@ final class ConnectViewModelTests: XCTestCase {
     private func makeViewModel(
         serverCapabilities: ServerCapabilityStore? = nil,
         serverConfigStore: ServerConfigStore? = nil,
+        pendingWebDataClear: @escaping () -> Task<Void, Never>? = { nil },
         stub: @escaping @Sendable (URLRequest) -> MockURLProtocol.Stub
     ) -> ConnectViewModel {
         MockURLProtocol.stubHandler = stub
@@ -55,7 +56,8 @@ final class ConnectViewModelTests: XCTestCase {
                     session: MockURLProtocol.makeSession(),
                     cookieProvider: { [] }
                 )
-            }
+            },
+            pendingWebDataClear: pendingWebDataClear
         )
     }
 
@@ -259,5 +261,43 @@ final class ConnectViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.sessionStore.isAuthenticated)
         XCTAssertNil(viewModel.errorKey)
         XCTAssertNil(capabilities.capability(forServerOrigin: "https://docs.llun.dev"))
+    }
+
+    /// A sign-in started while the sign-out's wipe of the web view's store is still running
+    /// opens the login only after it, so the previous IdP session cannot answer it.
+    func testTheWebLoginWaitsForAWipeStillUnderWay() async throws {
+        let gate = AsyncStream<Void>.makeStream()
+        defer { gate.continuation.finish() }
+        let clear = Task { for await _ in gate.stream { return } }
+        let viewModel = makeViewModel(pendingWebDataClear: { clear }) { _ in
+            .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
+        }
+        viewModel.serverURLInput = "https://docs.llun.dev"
+
+        viewModel.startSignIn()
+        await waitAndConfirmNever { viewModel.isPresentingWebLogin }
+
+        gate.continuation.yield()
+        await waitUntil { viewModel.isPresentingWebLogin }
+        XCTAssertTrue(viewModel.isPresentingWebLogin)
+    }
+
+    /// Correcting the address to something invalid while waiting cancels the earlier wait.
+    func testAnInvalidRetryWhileWaitingOpensNoLogin() async throws {
+        let gate = AsyncStream<Void>.makeStream()
+        defer { gate.continuation.finish() }
+        let clear = Task { for await _ in gate.stream { return } }
+        let viewModel = makeViewModel(pendingWebDataClear: { clear }) { _ in
+            .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
+        }
+        viewModel.serverURLInput = "https://docs.llun.dev"
+        viewModel.startSignIn()
+        viewModel.serverURLInput = "not a server"
+        viewModel.startSignIn()
+
+        gate.continuation.yield()
+        await clear.value
+        await waitAndConfirmNever { viewModel.isPresentingWebLogin }
+        XCTAssertEqual(viewModel.errorKey, .connect_error_invalid_server)
     }
 }

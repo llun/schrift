@@ -20,6 +20,12 @@ struct SchriftApp: App {
         // account, so they go to the one signed in now, and nobody's when none is known.
         PendingDraftStore().assignOwnersToEarlierDrafts()
         DocumentContentCacheStore.moveEarlierBodiesIntoAccountFolder()
+        // Signed out at launch: nobody's login may linger in the web view, including one an
+        // earlier build left at its sign-out (it kept those cookies) or an abandoned sign-in.
+        if SessionStore.hasNoSignInMarker() {
+            clearWebLoginSiteData(includingCookies: true)
+            HTTPCookieStorage.shared.removeCookies(since: .distantPast)  // the login's copies
+        }
     }
 
     var body: some Scene {

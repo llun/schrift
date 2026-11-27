@@ -14,6 +14,7 @@ final class ReadingPositionTests: XCTestCase {
         super.setUp()
         suiteName = "ReadingPositionTests.\(UUID().uuidString)"
         userDefaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: userDefaults).remember(accountA)
     }
 
     override func tearDown() {
@@ -120,6 +121,25 @@ final class ReadingPositionTests: XCTestCase {
     }
 
     // MARK: - Store
+
+    private let accountA = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+
+    /// Another account never resumes where this one left off, and with no known account
+    /// nothing is read or saved.
+    func testStoreScopesPositionsByAccount() {
+        let store = ReadingPositionStore(userDefaults: userDefaults)
+        let id = UUID()
+        store.save(blockID: UUID(), fingerprint: "abc", blockIndex: 4, serverOrigin: origin, documentID: id)
+        let signedInUser = SignedInUserStore(userDefaults: userDefaults)
+
+        signedInUser.remember(UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
+        XCTAssertNil(store.position(serverOrigin: origin, documentID: id))
+        signedInUser.clear()
+        XCTAssertNil(store.position(serverOrigin: origin, documentID: id))
+        store.save(blockID: UUID(), fingerprint: "x", blockIndex: 9, serverOrigin: origin, documentID: id)
+        signedInUser.remember(accountA)
+        XCTAssertEqual(store.position(serverOrigin: origin, documentID: id)?.fingerprint, "abc")
+    }
 
     func testStoreRoundTripsAPosition() {
         let store = ReadingPositionStore(userDefaults: userDefaults, now: { Date(timeIntervalSince1970: 1234.567) })
@@ -335,6 +355,63 @@ final class ReadingPositionTests: XCTestCase {
         return session.takeRestoreScroll(
             presentedBlockIDs: Set(blocks.map(\.id)), laidOutBlockIDs: Set(blocks.map(\.id)),
             voiceOverEnabled: voiceOverEnabled)
+    }
+
+    /// An editor left open across a re-login as another account neither restores nor saves
+    /// under the new account.
+    @MainActor func testASessionOpenedForOneAccountWritesNothingForAnother() {
+        let (session, store, documentID) = makeSession()
+        let blocks = (0..<6).map { EditorBlock(kind: .paragraph, text: "paragraph \($0)") }
+        session.beginRestore(blocks: blocks, userHasScrolled: false)
+        SignedInUserStore(userDefaults: userDefaults).remember(
+            UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
+
+        session.persist(blocks: blocks, topVisibleBlockID: blocks[4].id)
+
+        XCTAssertNil(store.position(serverOrigin: origin, documentID: documentID))
+    }
+
+    @MainActor func testASessionOpenedForOneAccountRestoresNothingForAnother() {
+        let (session, store, documentID) = makeSession()
+        let blocks = (0..<6).map { EditorBlock(kind: .paragraph, text: "paragraph \($0)") }
+        // The other account has a position here; the open document is still the first one's.
+        SignedInUserStore(userDefaults: userDefaults).remember(
+            UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
+        store.save(
+            blockID: blocks[4].id, fingerprint: readingPositionFingerprint(of: blocks[4]), blockIndex: 4,
+            serverOrigin: origin, documentID: documentID)
+
+        XCTAssertNil(session.beginRestore(blocks: blocks, userHasScrolled: false))
+    }
+
+    /// Opened while no account was known, the session belongs to the first account named.
+    @MainActor func testASessionOpenedWithNoAccountSavesForTheFirstOneNamed() {
+        let signedInUser = SignedInUserStore(userDefaults: userDefaults)
+        signedInUser.clear()
+        let (session, store, documentID) = makeSession()
+        let blocks = (0..<6).map { EditorBlock(kind: .paragraph, text: "paragraph \($0)") }
+        session.beginRestore(blocks: blocks, userHasScrolled: false)
+        signedInUser.remember(accountA)
+
+        session.persist(blocks: blocks, topVisibleBlockID: blocks[4].id)
+
+        XCTAssertEqual(store.position(serverOrigin: origin, documentID: documentID)?.blockIndex, 4)
+    }
+
+    /// Opened with no account, then another handover: the session belongs to nobody, so the
+    /// account named after it never receives this open's position.
+    @MainActor func testASessionOpenedWithNoAccountAdoptsNobodyAfterAnotherHandover() {
+        let signedInUser = SignedInUserStore(userDefaults: userDefaults)
+        signedInUser.clear()
+        let (session, store, documentID) = makeSession()
+        let blocks = (0..<6).map { EditorBlock(kind: .paragraph, text: "paragraph \($0)") }
+        session.beginRestore(blocks: blocks, userHasScrolled: false)
+        signedInUser.clear()  // a handover to someone else
+        signedInUser.remember(accountA)
+
+        session.persist(blocks: blocks, topVisibleBlockID: blocks[4].id)
+
+        XCTAssertNil(store.position(serverOrigin: origin, documentID: documentID))
     }
 
     @MainActor func testSessionRestoresOnceAndOffersBackToTop() {
