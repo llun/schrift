@@ -474,11 +474,11 @@ enum ReferenceCharacterMarkdownPaste {
 
         private func indentAt(path: [Int]) -> Int? {
             guard !path.isEmpty else { return nil }
-            guard let root = listRoots.first, path[0] < listRoots.count else {
+            guard path[0] < listRoots.count else {
                 XCTFail("list path \(path) is outside the \(listRoots.count)-root list tree")
                 return nil
             }
-            var current = root
+            var current = listRoots[path[0]]
             for step in path.dropFirst() {
                 guard step < current.children.count else {
                     XCTFail("list path \(path) is outside the list tree")
@@ -491,11 +491,11 @@ enum ReferenceCharacterMarkdownPaste {
 
         private func lastSiblingNode(atParentPath path: [Int]) -> String? {
             if path.isEmpty { return listRoots.last?.node }
-            guard let root = listRoots.first, path[0] < listRoots.count else {
+            guard path[0] < listRoots.count else {
                 XCTFail("list path \(path) is outside the \(listRoots.count)-root list tree")
                 return nil
             }
-            var current = root
+            var current = listRoots[path[0]]
             for step in path.dropFirst() {
                 guard step < current.children.count else {
                     XCTFail("list path \(path) is outside the list tree")

@@ -389,8 +389,9 @@ final class MockURLProtocol: URLProtocol {
         }
 
         guard
+            let url = request.url,
             let response = HTTPURLResponse(
-                url: request.url!,
+                url: url,
                 statusCode: stub.statusCode,
                 httpVersion: "HTTP/1.1",
                 headerFields: stub.headers
