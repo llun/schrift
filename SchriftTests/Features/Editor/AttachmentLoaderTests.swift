@@ -131,7 +131,7 @@ final class AttachmentLoaderTests: XCTestCase {
     func testAnAlreadyCachedAttachmentIssuesNoRequest() async throws {
         let cache = makeCache()
         let display = try makeDisplay()
-        _ = cache.store(Data([1, 2, 3]), for: display)
+        _ = cache.store(Data([1, 2, 3]), for: display, ifGeneration: cache.generation)
         let log = RequestRecorder()
         stub(Data([9]), log: log)
 
@@ -244,7 +244,7 @@ final class AttachmentLoaderTests: XCTestCase {
     func testAnAlreadyCachedAttachmentIsFoundWhileOfflineWithoutARequest() async throws {
         let cache = makeCache()
         let display = try makeDisplay()
-        _ = cache.store(Data([1, 2, 3]), for: display)
+        _ = cache.store(Data([1, 2, 3]), for: display, ifGeneration: cache.generation)
         let log = RequestRecorder()
         stub(Data([9]), log: log)
 
@@ -488,6 +488,48 @@ final class AttachmentLoaderTests: XCTestCase {
         XCTAssertNotEqual(bURL, cURL)
         XCTAssertEqual(try Data(contentsOf: bURL), Data([0xB, 0xB]))
         XCTAssertEqual(try Data(contentsOf: cURL), Data([0xC, 0xC]))
+    }
+
+    // MARK: - Sign-out
+
+    /// Holds the download on the wire, optionally clears the cache the way sign-out does (a fresh
+    /// instance's `removeAll`), then lets the response land.
+    private func loadAcrossAClear(_ display: AttachmentDisplay, clears: Bool) async {
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: Data([0xA, 0xA]), error: nil, releasedBy: gate)
+        }
+        let loader = makeLoader()
+        let load = Task { await loader.loadIfNeeded(display) }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        if clears { makeCache().removeAll() }
+        gate.open()
+        await load.value
+        if clears {
+            XCTAssertEqual(loader.state(for: display), .failed, "a refused write must not read as cached")
+            XCTAssertNil(
+                makeCache().cachedFileURL(for: display),
+                "a download that outlives sign-out must not refill the next account's cache")
+        } else {
+            guard case .cached(let url) = loader.state(for: display) else {
+                return XCTFail("Expected .cached, got \(String(describing: loader.state(for: display)))")
+            }
+            XCTAssertEqual(try? Data(contentsOf: url), Data([0xA, 0xA]))
+        }
+    }
+
+    func testADocumentDownloadThatOutlivesACacheClearIsNotCached() async throws {
+        await loadAcrossAClear(try makeDisplay(), clears: true)
+    }
+
+    func testAVideoDownloadThatOutlivesACacheClearIsNotCached() async throws {
+        await loadAcrossAClear(try makeVideo(), clears: true)
+    }
+
+    func testAHeldDownloadWithNoClearStillCaches() async throws {
+        await loadAcrossAClear(try makeDisplay(), clears: false)
+        MockURLProtocol.reset()
+        await loadAcrossAClear(try makeVideo(), clears: false)
     }
 
     // MARK: - Origin

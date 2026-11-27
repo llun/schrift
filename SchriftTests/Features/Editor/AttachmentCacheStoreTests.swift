@@ -124,7 +124,7 @@ final class AttachmentCacheStoreTests: XCTestCase {
         let display = try makeDisplay()
         let payload = Data([0x25, 0x50, 0x44, 0x46, 0x00, 0xFF])
 
-        XCTAssertNotNil(store.store(payload, for: display))
+        XCTAssertNotNil(store.store(payload, for: display, ifGeneration: store.generation))
 
         let url = try XCTUnwrap(store.cachedFileURL(for: display))
         XCTAssertEqual(try Data(contentsOf: url), payload)
@@ -138,14 +138,14 @@ final class AttachmentCacheStoreTests: XCTestCase {
         // Stateless over its directory, like the content cache: the loader and a
         // sign-out clear may hold different instances.
         let display = try makeDisplay()
-        _ = makeStore().store(Data([1, 2, 3]), for: display)
+        _ = makeStore().store(Data([1, 2, 3]), for: display, ifGeneration: makeStore().generation)
         XCTAssertNotNil(makeStore().cachedFileURL(for: display))
     }
 
     func testRemoveAllClearsEverything() throws {
         let store = makeStore()
         let display = try makeDisplay()
-        _ = store.store(Data([1]), for: display)
+        _ = store.store(Data([1]), for: display, ifGeneration: store.generation)
 
         store.removeAll()
 
@@ -153,11 +153,52 @@ final class AttachmentCacheStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
 
+    /// The file name carries no account: a write that began before a sign-out's clear (through a separate
+    /// instance, as `SessionStore` does) would hand the next account this one's bytes with no access check.
+    func testAWriteThatStartedBeforeAClearIsRefused() throws {
+        let store = makeStore()
+        let display = try makeDisplay()
+        let video = try makeDisplay(ext: "mp4", label: "Clip.mp4")
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AttachmentCacheStoreTests.source.\(UUID().uuidString)", isDirectory: false)
+        addTeardownBlock { try? FileManager.default.removeItem(at: source) }
+        try Data([7]).write(to: source)
+        let started = store.generation
+
+        makeStore().removeAll()
+
+        XCTAssertNil(store.store(Data([1]), for: display, ifGeneration: started))
+        XCTAssertNil(store.store(movingFileAt: source, for: video, ifGeneration: started))
+        XCTAssertNil(makeStore().cachedFileURL(for: display), "refused bytes must not reach the cache")
+        XCTAssertNil(makeStore().cachedFileURL(for: video), "refused bytes must not reach the cache")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path), "the refused download is deleted")
+        XCTAssertNotNil(store.store(Data([2]), for: display, ifGeneration: store.generation), "a write after it lands")
+    }
+
+    /// The generation is per folder, not per spelling: a write through a symlinked path must still see a clear
+    /// made through the real one, even while the cache folder itself does not exist (`removeAll` deletes it).
+    func testOneFolderSpelledTwoWaysSharesOneGeneration() throws {
+        let real = directory.appendingPathComponent("real", isDirectory: true)
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        let link = directory.appendingPathComponent("link", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        let viaReal = AttachmentCacheStore(directory: real.appendingPathComponent("Cache", isDirectory: true))
+        let viaLink = AttachmentCacheStore(directory: link.appendingPathComponent("../link/Cache", isDirectory: true))
+        let started = viaLink.generation
+
+        viaReal.removeAll()
+
+        XCTAssertEqual(viaLink.generation, started + 1, "both spellings name one folder, so one generation")
+        XCTAssertNil(
+            viaLink.store(Data([1]), for: try makeDisplay(), ifGeneration: started),
+            "a write started before the clear must be refused whichever spelling it came through")
+    }
+
     func testStoringAgainReplacesTheBytes() throws {
         let store = makeStore()
         let display = try makeDisplay()
-        _ = store.store(Data([1, 2, 3]), for: display)
-        _ = store.store(Data([9]), for: display)
+        _ = store.store(Data([1, 2, 3]), for: display, ifGeneration: store.generation)
+        _ = store.store(Data([9]), for: display, ifGeneration: store.generation)
 
         let url = try XCTUnwrap(store.cachedFileURL(for: display))
         XCTAssertEqual(try Data(contentsOf: url), Data([9]))
@@ -169,7 +210,7 @@ final class AttachmentCacheStoreTests: XCTestCase {
     func testFileIsNamedForTheServerKeyNotTheAuthorsLabel() throws {
         let store = makeStore()
         let display = try makeDisplay(label: "../../etc/passwd")
-        _ = store.store(Data([1]), for: display)
+        _ = store.store(Data([1]), for: display, ifGeneration: store.generation)
 
         XCTAssertEqual(try contents(), ["\(documentUUID)_22222222-2222-4222-8222-222222222222.pdf"])
     }
@@ -189,7 +230,7 @@ final class AttachmentCacheStoreTests: XCTestCase {
             isUnsafeKey: false,
             fileExtension: "pdf")
 
-        XCTAssertNil(store.store(Data([1]), for: hostile))
+        XCTAssertNil(store.store(Data([1]), for: hostile, ifGeneration: store.generation))
         XCTAssertNil(store.cachedFileURL(for: hostile))
         XCTAssertFalse(FileManager.default.fileExists(atPath: "/tmp/pwned.pdf"))
     }
@@ -205,8 +246,8 @@ final class AttachmentCacheStoreTests: XCTestCase {
                     + "22222222-2222-4222-8222-222222222222.pdf)",
                 serverOrigin: serverOrigin))
 
-        _ = store.store(Data([1]), for: first)
-        _ = store.store(Data([2]), for: second)
+        _ = store.store(Data([1]), for: first, ifGeneration: store.generation)
+        _ = store.store(Data([2]), for: second, ifGeneration: store.generation)
 
         XCTAssertEqual(try contents().count, 2)
         XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(store.cachedFileURL(for: first))), Data([1]))
@@ -215,8 +256,8 @@ final class AttachmentCacheStoreTests: XCTestCase {
 
     func testUnsafeKeysGetTheirOwnFile() throws {
         let store = makeStore()
-        _ = store.store(Data([1]), for: try makeDisplay(ext: "docx"))
-        _ = store.store(Data([2]), for: try makeDisplay(suffix: "-unsafe", ext: "docx"))
+        _ = store.store(Data([1]), for: try makeDisplay(ext: "docx"), ifGeneration: store.generation)
+        _ = store.store(Data([2]), for: try makeDisplay(suffix: "-unsafe", ext: "docx"), ifGeneration: store.generation)
 
         XCTAssertEqual(
             try contents(),
@@ -228,8 +269,10 @@ final class AttachmentCacheStoreTests: XCTestCase {
 
     func testTwoAttachmentsGetTwoFiles() throws {
         let store = makeStore()
-        _ = store.store(Data([1]), for: try makeDisplay())
-        _ = store.store(Data([2]), for: try makeDisplay(fileUUID: "33333333-3333-4333-8333-333333333333"))
+        _ = store.store(Data([1]), for: try makeDisplay(), ifGeneration: store.generation)
+        _ = store.store(
+            Data([2]), for: try makeDisplay(fileUUID: "33333333-3333-4333-8333-333333333333"),
+            ifGeneration: store.generation)
 
         XCTAssertEqual(try contents().count, 2)
     }
@@ -242,11 +285,11 @@ final class AttachmentCacheStoreTests: XCTestCase {
         let second = try makeDisplay(fileUUID: "44444444-4444-4444-8444-444444444444")
         let third = try makeDisplay(fileUUID: "55555555-5555-4555-8555-555555555555")
 
-        _ = store.store(Data([1]), for: first)
+        _ = store.store(Data([1]), for: first, ifGeneration: store.generation)
         try touch(first, secondsAgo: 300)
-        _ = store.store(Data([2]), for: second)
+        _ = store.store(Data([2]), for: second, ifGeneration: store.generation)
         try touch(second, secondsAgo: 200)
-        _ = store.store(Data([3]), for: third)
+        _ = store.store(Data([3]), for: third, ifGeneration: store.generation)
 
         XCTAssertNil(store.cachedFileURL(for: first))
         XCTAssertNotNil(store.cachedFileURL(for: second))
@@ -258,9 +301,9 @@ final class AttachmentCacheStoreTests: XCTestCase {
         let first = try makeDisplay(fileUUID: "33333333-3333-4333-8333-333333333333")
         let second = try makeDisplay(fileUUID: "44444444-4444-4444-8444-444444444444")
 
-        _ = store.store(Data(repeating: 0, count: 15), for: first)
+        _ = store.store(Data(repeating: 0, count: 15), for: first, ifGeneration: store.generation)
         try touch(first, secondsAgo: 300)
-        _ = store.store(Data(repeating: 0, count: 15), for: second)
+        _ = store.store(Data(repeating: 0, count: 15), for: second, ifGeneration: store.generation)
 
         XCTAssertNil(store.cachedFileURL(for: first))
         XCTAssertNotNil(store.cachedFileURL(for: second))
@@ -274,14 +317,14 @@ final class AttachmentCacheStoreTests: XCTestCase {
         let idle = try makeDisplay(fileUUID: "44444444-4444-4444-8444-444444444444")
         let fresh = try makeDisplay(fileUUID: "55555555-5555-4555-8555-555555555555")
 
-        _ = store.store(Data([1]), for: reopened)
+        _ = store.store(Data([1]), for: reopened, ifGeneration: store.generation)
         try touch(reopened, secondsAgo: 300)
-        _ = store.store(Data([2]), for: idle)
+        _ = store.store(Data([2]), for: idle, ifGeneration: store.generation)
         try touch(idle, secondsAgo: 200)
 
         // The user reopens the older one, then a third attachment arrives.
         XCTAssertNotNil(store.cachedFileURL(for: reopened))
-        _ = store.store(Data([3]), for: fresh)
+        _ = store.store(Data([3]), for: fresh, ifGeneration: store.generation)
 
         XCTAssertNotNil(store.cachedFileURL(for: reopened), "a re-read entry must outrank an idle newer one")
         XCTAssertNil(store.cachedFileURL(for: idle))
@@ -291,7 +334,7 @@ final class AttachmentCacheStoreTests: XCTestCase {
 
     func testTheCacheDirectoryIsExcludedFromBackup() throws {
         let store = makeStore()
-        _ = store.store(Data([1]), for: try makeDisplay())
+        _ = store.store(Data([1]), for: try makeDisplay(), ifGeneration: store.generation)
 
         let values = try directory.resourceValues(forKeys: [.isExcludedFromBackupKey])
         XCTAssertEqual(values.isExcludedFromBackup, true)

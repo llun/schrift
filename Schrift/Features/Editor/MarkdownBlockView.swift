@@ -439,7 +439,7 @@ private struct MarkdownBlockCatalog: View {
         directory: FileManager.default.temporaryDirectory
             .appendingPathComponent("SchriftPreviewAttachments", isDirectory: true))
     if let display = parseAttachmentLink("[preview](\(ready))", serverOrigin: origin) {
-        _ = cache.store(Data("%PDF-1.4\n%preview\n".utf8), for: display)
+        _ = cache.store(Data("%PDF-1.4\n%preview\n".utf8), for: display, ifGeneration: cache.generation)
     }
     return AttachmentLoader(
         client: DocsAPIClient(baseURL: URL(string: "\(origin)/api/v1.0/")!),

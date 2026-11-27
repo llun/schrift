@@ -76,11 +76,12 @@
   else); the full bodies in `DocumentContentCacheStore` are, and so is the account
   profile in `CurrentUserCacheStore` (next bullet — cleared, like the account id
   beside it, in `SessionStore` itself and not only in RootView, because it has to go
-  on sign-*in* too, which only `SessionStore` sees). **The content caches are the
-  ones with the RootView-only rule**: `DocumentContentCacheStore().removeAll()` and
-  `AttachmentCacheStore().removeAll()` live in RootView's `onSignOut` closure and
-  **not** inside `SessionStore.signOut()`, so a new sign-out path must call them
-  explicitly. Displayed image bytes are also cleared at cookie handover, sign-in
+  on sign-*in* too, which only `SessionStore` sees). **The content cache is the
+  one with the RootView-only rule**: `DocumentContentCacheStore().removeAll()` lives in
+  RootView's `onSignOut` closure and **not** inside `SessionStore.signOut()`, so a new
+  sign-out path must call it explicitly. `AttachmentCacheStore().removeAll()` runs there
+  and also from `SessionStore`'s injected `clearAttachmentCache` (sign-in, cookie
+  handover, sign-out); a download that started before a clear is never written back. Displayed image bytes are also cleared at cookie handover, sign-in
   and sign-out through SessionStore's injected `clearImageCache` callback; keep
   that stronger account-isolation lifecycle. See [`docs/offline-and-sync.md`](../offline-and-sync.md).
 - **The account's displayed profile is cached too** (`CurrentUserCacheStore`,

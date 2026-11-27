@@ -947,7 +947,7 @@ private enum MediaPlayFixture {
         let cache = AttachmentCacheStore(
             directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("NativeMediaPlayFixture", isDirectory: true))
-        _ = cache.store(Data(repeating: 0, count: 64), for: display)
+        _ = cache.store(Data(repeating: 0, count: 64), for: display, ifGeneration: cache.generation)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [OfflineURLProtocol.self]
         return AttachmentLoader(

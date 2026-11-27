@@ -1879,6 +1879,8 @@ final class DocumentSaveCoordinator {
         guard let record = pendingAttachments[localID], let target = record.native, record.failedAt == nil,
             isNativeReplayable(record), isCurrent?() != false
         else { return }
+        // Read before any await: a sign-out that clears the attachment cache meanwhile refuses the seed below.
+        let attachmentGeneration = attachmentCache.generation
         var resolved = record.uploadedURLString
         var uploadedBytes: Data?
         if resolved == nil {
@@ -1928,7 +1930,7 @@ final class DocumentSaveCoordinator {
             let display = parseAttachmentLink("[video](\(url))", serverOrigin: client.serverOrigin),
             let bytes = uploadedBytes ?? attachmentStore.data(for: localID)
         {
-            _ = attachmentCache.store(bytes, for: display)
+            _ = attachmentCache.store(bytes, for: display, ifGeneration: attachmentGeneration)
         }
         let props = [
             ProjectedProp(key: "name", value: .string(target.fileName)), ProjectedProp(key: "url", value: .string(url)),

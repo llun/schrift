@@ -1520,8 +1520,10 @@ to what the Home list passes (still a `Document` / id).
   is invoked in the root flow). Full document bodies must not survive sign-out on
   disk. Covered by a test (sign out → `content(for:)` returns nil).
   `AttachmentCacheStore().removeAll()` sits on the same line for the same reason
-  (see below). Both are called from `RootView`'s `onSignOut` closure, **not**
-  from `SessionStore.signOut()` — a new sign-out path must call them explicitly.
+  (see below). The content cache is cleared from `RootView`'s `onSignOut` closure,
+  **not** from `SessionStore.signOut()` — a new sign-out path must call it
+  explicitly; the attachment cache is cleared there and also by `SessionStore`
+  itself (`clearAttachmentCache`, on sign-in, cookie handover and sign-out).
 
 ### 7. Attachment bytes: `AttachmentCacheStore` (2026-08-07)
 
@@ -1531,7 +1533,15 @@ online stays fully readable offline, previews included. It follows
 `Application Support/dev.llun.Schrift/AttachmentCache/`, `isExcludedFromBackup`
 (the bytes are re-downloadable from the user's own server), stateless over its
 directory, never throwing to callers, cleared on sign-out — with three
-deliberate differences:
+deliberate differences, and one guard: a write that started before a clear (a
+download still on the wire at sign-out or an account switch) is refused, because
+the file name carries no account and a late write would hand the next account
+this one's bytes. `removeAll` bumps a per-folder generation shared by every
+instance (keyed by the symlink-resolved path); every writer (`AttachmentLoader`,
+`VideoPosterLoader`'s copy, the upload seed) reads it before its first await and
+passes it as the required `ifGeneration`, which the store compares under the same
+lock right before writing. Only account changes clear it (`SessionStore`,
+`RootView`), never a lazy observer, or downloads started since would be refused.
 
 - **Recency is last *use*, not last write.** `cachedFileURL(for:)` bumps the
   file's mtime on a hit. Attachments are read-hot: a write-recency cache would

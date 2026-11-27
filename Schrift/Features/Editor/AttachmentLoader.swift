@@ -31,7 +31,9 @@ enum AttachmentLoadState: Equatable, Sendable {
 /// screen in more than one place, and a per-view loader would race two downloads
 /// of the same bytes and let two writers fight over one cache file. One owner
 /// gives in-flight de-duplication and a single disk authority for free. It dies
-/// with the session, which is also when its cache is cleared.
+/// with the session, which is also when its cache is cleared — but a download
+/// still on the wire finishes first (and an account switch through the re-login
+/// sheet keeps it), so the cache refuses any write that started before a clear.
 ///
 /// State is keyed by the attachment's **url string**, not by block identity:
 /// `applyLiveRemoteChange` reuses a surviving `EditorBlock.id` across a content
@@ -174,20 +176,22 @@ enum AttachmentLoadState: Equatable, Sendable {
         }
 
         states[key] = .downloading
+        // Read before the GET: a sign-out that clears the cache while it is on the wire makes the store refuse it.
+        let generation = cache.generation
         let task = Task { [weak self] () -> Void in
-            await self?.fetch(display, path: path, isAutomaticRetry: isAutomaticRetry)
+            await self?.fetch(display, path: path, generation: generation, isAutomaticRetry: isAutomaticRetry)
         }
         inFlight[key] = task
         await task.value
         inFlight[key] = nil
     }
 
-    private func fetch(_ display: AttachmentDisplay, path: String, isAutomaticRetry: Bool) async {
+    private func fetch(_ display: AttachmentDisplay, path: String, generation: Int, isAutomaticRetry: Bool) async {
         let key = display.urlString
         do {
-            // A cache write that fails (a full disk) costs the offline copy, not
-            // the download: `.failed` so the card offers a retry rather than
-            // claiming a file that isn't there.
+            // A cache write that fails (a full disk, or a sign-out since the GET
+            // started) costs the offline copy, not the download: `.failed` so the
+            // card offers a retry rather than claiming a file that isn't there.
             if UTType(filenameExtension: display.fileExtension)?.conforms(to: .audiovisualContent) == true {
                 // Video and audio can be large: streamed to disk and capped, never whole in memory.
                 let download = FileManager.default.temporaryDirectory
@@ -195,10 +199,12 @@ enum AttachmentLoadState: Equatable, Sendable {
                 defer { try? FileManager.default.removeItem(at: download) }
                 try await client.mediaFile(path: path, to: download, byteLimit: mediaByteLimit)
                 states[key] =
-                    cache.store(movingFileAt: download, for: display).map(AttachmentLoadState.cached) ?? .failed
+                    cache.store(movingFileAt: download, for: display, ifGeneration: generation)
+                    .map(AttachmentLoadState.cached) ?? .failed
             } else {
                 let data = try await client.mediaData(path: path)
-                states[key] = cache.store(data, for: display).map(AttachmentLoadState.cached) ?? .failed
+                states[key] =
+                    cache.store(data, for: display, ifGeneration: generation).map(AttachmentLoadState.cached) ?? .failed
             }
             transportFailures.remove(key)
         } catch {

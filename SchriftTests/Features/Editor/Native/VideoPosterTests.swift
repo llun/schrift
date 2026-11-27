@@ -338,7 +338,7 @@ final class VideoPosterTests: NativeEditingTestCase {
 
         let attachmentDir = tempDir("attachments")
         let attachments = AttachmentCacheStore(directory: attachmentDir)
-        XCTAssertNotNil(attachments.store(mp4, for: display))
+        XCTAssertNotNil(attachments.store(mp4, for: display, ifGeneration: attachments.generation))
 
         let transport = StubTransport { _ in throw URLError(.notConnectedToInternet) }
         let (loader, _, _) = makeLoader(scope: scope(), attachmentDir: attachmentDir, transport: transport)
@@ -550,7 +550,7 @@ final class VideoPosterTests: NativeEditingTestCase {
 
         // Once QuickLook / AttachmentCacheStore populates the local file, poster resolves without network.
         let display = try XCTUnwrap(parseAttachmentLink("[video](\(attachmentURL))", serverOrigin: Self.origin))
-        XCTAssertNotNil(attachments.store(mp4, for: display))
+        XCTAssertNotNil(attachments.store(mp4, for: display, ifGeneration: attachments.generation))
         let recovered = await loader.loadIfNeeded(URL(string: attachmentURL)!)
         XCTAssertNotNil(recovered)
         XCTAssertEqual(transport.urls.count, 1)
@@ -741,7 +741,7 @@ final class VideoPosterTests: NativeEditingTestCase {
 
     // MARK: - S2 & S3 Security Tests
 
-    func testS2MemoryCacheIsScopedByOriginAndSessionAndSwitchClearsAttachmentCache() async throws {
+    func testS2MemoryCacheIsScopedByOriginAndSessionAndSwitchLeavesAttachmentCacheToSessionStore() async throws {
         let mp4 = try await Self.makeTestVideoData(width: 160, height: 120)
         let attachmentURLString =
             "\(Self.origin)/media/\(Self.documentID.uuidString.lowercased())/attachments/\(Self.fileID.uuidString.lowercased()).mp4"
@@ -774,10 +774,13 @@ final class VideoPosterTests: NativeEditingTestCase {
         XCTAssertNotNil(attachments.cachedFileURL(for: display))
         XCTAssertEqual(fetchCount, 1)
 
-        // Switching to a different session on the same origin must NOT hit Account A's memory or attachment cache.
+        // Switching to a different session on the same origin must NOT hit Account A's memory cache. The
+        // attachment cache is SessionStore's to clear (synchronously, at the account change): a clear here, at the
+        // first video rendered afterwards, would refuse every attachment download started since.
+        let generation = attachments.generation
         activeScope = scopeB
         XCTAssertNil(loader.poster(for: attachmentURL), "memory cache must be isolated by sessionID")
-        XCTAssertNil(attachments.cachedFileURL(for: display), "attachment cache must not persist across scope switch")
+        XCTAssertEqual(attachments.generation, generation, "a scope change seen by the poster loader must not clear")
 
         // Switching back to a different origin with the same sessionID also must not hit memory cache.
         activeScope = scopeA
@@ -856,7 +859,7 @@ final class VideoPosterTests: NativeEditingTestCase {
 
         let attachmentDir = tempDir("attachments-m3u8")
         let attachments = AttachmentCacheStore(directory: attachmentDir)
-        XCTAssertNotNil(attachments.store(playlist, for: m3u8Display))
+        XCTAssertNotNil(attachments.store(playlist, for: m3u8Display, ifGeneration: attachments.generation))
 
         let transport = StubTransport { _ in (playlist, "application/vnd.apple.mpegurl") }
         let (loader, _, _) = makeLoader(scope: scope(), attachmentDir: attachmentDir, transport: transport)
@@ -892,7 +895,7 @@ final class VideoPosterTests: NativeEditingTestCase {
 
         let attachmentDir = tempDir("attachments-3gp")
         let attachments = AttachmentCacheStore(directory: attachmentDir)
-        XCTAssertNotNil(attachments.store(video3GP, for: display3GP))
+        XCTAssertNotNil(attachments.store(video3GP, for: display3GP, ifGeneration: attachments.generation))
 
         let transport = StubTransport { _ in
             XCTFail("cached .3gp video must not hit network")
