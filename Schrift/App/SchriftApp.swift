@@ -11,6 +11,8 @@ struct SchriftApp: App {
         // Before any reader: the native editor is on unless the user turned it off.
         NativeEditorPreference.registerDefault()
         NativeMediaDropPaste.removeStagingRoot()
+        // Responses earlier builds cached through `URLSession.shared` (not account-scoped).
+        URLCache.shared.removeAllCachedResponses()
     }
 
     var body: some Scene {

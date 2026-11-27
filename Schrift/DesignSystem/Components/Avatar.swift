@@ -62,6 +62,8 @@ struct Avatar: View {
     /// it MUST be origin-gated first: an off-origin `AsyncImage` leaks the
     /// viewer's IP/User-Agent/timing on render, exactly as `imageLoadPolicy`
     /// (`Features/Editor/ImageLoadPolicy.swift`) prevents for document images.
+    /// It must also load through `ImageTransport`, not `AsyncImage`: that uses
+    /// `URLSession.shared`, whose cookies and URL cache aren't account-scoped.
     var imageURL: URL? = nil
     var size: CGFloat = 36
     /// Supplied by `AvatarGroup` so a stacked row measures everything — the
