@@ -65,8 +65,10 @@ func readingRestoreScrollStep(
     @ObservationIgnored private var offerTask: Task<Void, Never>?
     /// The account this open belongs to: an editor left on screen across a re-login as someone
     /// else must not read or write that account's positions. Opened while no account was known,
-    /// it belongs to the first one named (that open began under the new session's cookies).
+    /// it belongs to the first one named in the same identity epoch (the open began under that
+    /// session's cookies); after another handover it belongs to nobody.
     @ObservationIgnored private var owner: UUID?
+    @ObservationIgnored private let openedEpoch: Int
 
     init(
         store: ReadingPositionStore = ReadingPositionStore(), serverOrigin: String, documentID: UUID,
@@ -74,6 +76,7 @@ func readingRestoreScrollStep(
     ) {
         self.store = store
         self.owner = store.currentUserID
+        self.openedEpoch = store.currentEpoch
         self.serverOrigin = serverOrigin
         self.documentID = documentID
         self.offerDuration = offerDuration
@@ -179,7 +182,7 @@ func readingRestoreScrollStep(
 
     private var isOwnersSession: Bool {
         guard let current = store.currentUserID else { return false }
-        if owner == nil { owner = current }
+        if owner == nil, store.currentEpoch == openedEpoch { owner = current }
         return current == owner
     }
 }

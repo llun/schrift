@@ -214,6 +214,8 @@ final class ReadingPositionStore {
 
     /// The account whose positions this store reads and writes now.
     var currentUserID: UUID? { signedInUser.userID }
+    /// Moves whenever the signed-in identity is forgotten (a handover, sign-in or sign-out).
+    var currentEpoch: Int { signedInUser.epoch }
 
     private func accountKey(serverOrigin: String, documentID: UUID) -> String? {
         guard let owner = currentUserID else { return nil }

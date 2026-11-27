@@ -374,11 +374,12 @@ final class ReadingPositionTests: XCTestCase {
     @MainActor func testASessionOpenedForOneAccountRestoresNothingForAnother() {
         let (session, store, documentID) = makeSession()
         let blocks = (0..<6).map { EditorBlock(kind: .paragraph, text: "paragraph \($0)") }
+        // The other account has a position here; the open document is still the first one's.
+        SignedInUserStore(userDefaults: userDefaults).remember(
+            UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
         store.save(
             blockID: blocks[4].id, fingerprint: readingPositionFingerprint(of: blocks[4]), blockIndex: 4,
             serverOrigin: origin, documentID: documentID)
-        SignedInUserStore(userDefaults: userDefaults).remember(
-            UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
 
         XCTAssertNil(session.beginRestore(blocks: blocks, userHasScrolled: false))
     }
@@ -395,6 +396,22 @@ final class ReadingPositionTests: XCTestCase {
         session.persist(blocks: blocks, topVisibleBlockID: blocks[4].id)
 
         XCTAssertEqual(store.position(serverOrigin: origin, documentID: documentID)?.blockIndex, 4)
+    }
+
+    /// Opened with no account, then another handover: the session belongs to nobody, so the
+    /// account named after it never receives this open's position.
+    @MainActor func testASessionOpenedWithNoAccountAdoptsNobodyAfterAnotherHandover() {
+        let signedInUser = SignedInUserStore(userDefaults: userDefaults)
+        signedInUser.clear()
+        let (session, store, documentID) = makeSession()
+        let blocks = (0..<6).map { EditorBlock(kind: .paragraph, text: "paragraph \($0)") }
+        session.beginRestore(blocks: blocks, userHasScrolled: false)
+        signedInUser.clear()  // a handover to someone else
+        signedInUser.remember(accountA)
+
+        session.persist(blocks: blocks, topVisibleBlockID: blocks[4].id)
+
+        XCTAssertNil(store.position(serverOrigin: origin, documentID: documentID))
     }
 
     @MainActor func testSessionRestoresOnceAndOffersBackToTop() {
