@@ -73,13 +73,28 @@ enum NativeMediaPresenter {
     private(set) static weak var activePlayer: AVPlayerViewController?
     private static var activeLoad: Task<Void, Never>?
     private static var activePlayerFile: URL?
+    /// Held strongly: a player in picture in picture outlives its dismissed controller, and
+    /// sign-out or the next tap must still be able to stop it.
+    private static var activeAVPlayer: AVPlayer?
+
+    /// Tests: treat `player` as the presented one, as `play` does.
+    static func adoptForTesting(_ player: AVPlayerViewController) { activePlayer = player }
+
+    /// Stops whatever is playing (on screen or in picture in picture).
+    private static func stopActivePlayback() {
+        activeLoad?.cancel()
+        activeLoad = nil
+        activeAVPlayer?.pause()
+        activeAVPlayer?.replaceCurrentItem(with: nil)
+        activeAVPlayer = nil
+    }
     /// Staged files an open QuickLook preview still reads.
     static var openPreviewFiles = Set<URL>()
 
     /// Deletes staged files nothing on screen still shows.
     static func pruneStaging() {
         var open = openPreviewFiles
-        if activePlayer != nil, let activePlayerFile { open.insert(activePlayerFile) }
+        if activeAVPlayer != nil, let activePlayerFile { open.insert(activePlayerFile) }
         let manager = FileManager.default
         let files = (try? manager.contentsOfDirectory(at: stagingDirectory, includingPropertiesForKeys: nil)) ?? []
         let kept = Set(open.map { $0.standardizedFileURL.path })
@@ -116,6 +131,9 @@ enum NativeMediaPresenter {
     private static func play(_ source: NativeMediaSource, on host: UIViewController, controls: NativeBlockControls) {
         // Playback, so sound plays with the Ring/Silent switch set to silent.
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        // One playback at a time: a video left in picture in picture stops for the new one.
+        stopActivePlayback()
+        activePlayerFile = nil
         let player = AVPlayerViewController()
         player.view.accessibilityIdentifier = playerIdentifier
         // Up at once: a download can take a while and the player shows it is loading.
@@ -140,15 +158,16 @@ enum NativeMediaPresenter {
         let asset = AVURLAsset(
             url: file, options: [AVURLAssetReferenceRestrictionsKey: AVAssetReferenceRestrictions.forbidAll.rawValue])
         if player === activePlayer { activePlayerFile = file }
-        player.player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
-        player.player?.play()
+        let playback = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        if player === activePlayer { activeAVPlayer = playback }
+        player.player = playback
+        playback.play()
     }
 
     /// Sign-out or an account switch: the player stops and closes, a download it waits for is
     /// cancelled, and staged copies are deleted.
     static func endSession() {
-        activeLoad?.cancel()
-        activeLoad = nil
+        stopActivePlayback()
         activePlayer?.player?.pause()
         activePlayer?.player?.replaceCurrentItem(with: nil)
         activePlayer?.dismiss(animated: false)

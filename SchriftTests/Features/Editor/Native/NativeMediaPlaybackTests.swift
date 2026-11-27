@@ -467,4 +467,23 @@ final class NativeMediaPlaybackTests: NativeEditingTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: first.path), "a closed preview's file is pruned")
         withExtendedLifetime(preview) {}
     }
+
+    /// A video left playing (as in picture in picture, after its controller went away) stops at sign-out.
+    func testEndingTheSessionStopsAPlayerWhoseControllerIsGone() throws {
+        NativeMediaPresenter.endSession()
+        let file = try XCTUnwrap(NativeMediaPresenter.stage(Data([0]), fileExtension: "mp4"))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        let player = AVPlayerViewController()
+        host.present(player, animated: false)
+        NativeMediaPresenter.adoptForTesting(player)
+        NativeMediaPresenter.start(file, in: player)
+        let playback = try XCTUnwrap(player.player)
+        player.player = nil
+        host.dismiss(animated: false)
+        NativeMediaPresenter.endSession()
+        XCTAssertNil(playback.currentItem, "the detached player was stopped and emptied")
+    }
 }
