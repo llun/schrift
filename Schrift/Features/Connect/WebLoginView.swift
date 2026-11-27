@@ -38,6 +38,12 @@ struct WebLoginView: UIViewRepresentable {
 
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
+    /// A login view leaving mid-redirect (a sign-out, a dismissed sheet) must not keep writing
+    /// cookies or site data into the store behind it.
+    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        uiView.stopLoading()
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(
             serverHost: serverHost, onLoginComplete: onLoginComplete, onProgress: onProgress,

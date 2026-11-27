@@ -312,6 +312,171 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertFalse(store.isReauthenticationInteractive, "no sheet over a sign-out")
     }
 
+    /// Sign-out clears everything the login web view keeps, cookies too; a re-login clears its
+    /// site data (not cookies) unless it is provably the same account;
+    /// a silent re-login by the same account and a first sign-in clear nothing.
+    func testWebSiteDataIsClearedAtSignOutAndOnAnAccountChange() throws {
+        let accountA = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let accountB = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        var clears: [Bool] = []
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage(),
+            clearWebSiteData: { clears.append($0) })
+        XCTAssertEqual(clears, [], "constructing the store clears nothing; SchriftApp does at launch")
+
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL, userID: accountA)
+        XCTAssertEqual(clears, [], "a first sign-in")
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL, userID: accountA)
+        XCTAssertEqual(clears, [], "the same account re-logging in keeps single sign-on and its site data")
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL, userID: accountB)
+        XCTAssertEqual(clears, [false], "an account change: site data, not cookies")
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL, userID: nil)
+        XCTAssertEqual(clears, [false, false], "an account nobody can name counts as a change")
+        try store.signOut()
+        XCTAssertEqual(clears, [false, false, true], "sign-out: everything, cookies included")
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL, userID: accountB)
+        XCTAssertEqual(clears, [false, false, true], "signing in after a sign-out")
+    }
+
+    /// Another account's web login in between — confirmed or not, even across a relaunch — means
+    /// the same account signing in again is no proof the site data is still its own.
+    func testAnUnconfirmedLoginInBetweenStillClearsTheSiteData() throws {
+        let accountA = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        var clears: [Bool] = []
+        let keychain = FakeKeychainStore()
+        let first = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: FakeCookieStorage())
+        first.noteSessionCookiesReplaced()
+        try first.signIn(serverURL: serverURL, userID: accountA)
+        first.noteSessionCookiesReplaced()  // another account's login, never confirmed
+
+        let relaunched = SessionStore(
+            userDefaults: userDefaults, keychain: keychain, cookieStorage: FakeCookieStorage(),
+            clearWebSiteData: { clears.append($0) })
+        relaunched.noteSessionCookiesReplaced()
+        try relaunched.signIn(serverURL: serverURL, userID: accountA)
+
+        XCTAssertEqual(clears, [false])
+    }
+
+    /// A stale login landing after the sign-out undoes what it wrote, in both cookie stores.
+    func testAStaleLoginAfterTheSignOutClearsEverythingAgain() throws {
+        var clears: [Bool] = []
+        let cookies = FakeCookieStorage()
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: cookies,
+            clearWebSiteData: { clears.append($0) })
+        try store.signIn(serverURL: serverURL)
+        try store.signOut()
+        clears = []
+        cookies.setCookie(
+            HTTPCookie(properties: [.domain: "idp.example.org", .path: "/", .name: "idp_session", .value: "fake"])!)
+
+        store.discardStaleLoginCookies()
+
+        XCTAssertEqual(clears, [true])
+        XCTAssertEqual(cookies.storedCookies, [])
+    }
+
+    /// Starting a sign-out unmounts a re-login in progress, so none answers the IdP mid-wipe.
+    func testBeginningASignOutEndsAReauthenticationInProgress() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: serverURL)
+        store.noteSessionExpired()
+        XCTAssertTrue(store.needsReauthentication)
+
+        store.beginSignOut()
+
+        XCTAssertFalse(store.needsReauthentication)
+    }
+
+    /// A launch that could not read the Keychain shows Connect without a sign-out having run;
+    /// another account signing in there still drops the previous one's site data.
+    func testASignInAfterAnUnreadableLaunchStillClearsAnotherAccountsSiteData() throws {
+        let accountB = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        // The account before the locked launch: a named one, and one nobody could name.
+        for previous in [UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, nil] {
+            userDefaults.removePersistentDomain(forName: suiteName)
+            let keychain = FakeKeychainStore()
+            let first = SessionStore(
+                userDefaults: userDefaults, keychain: keychain, cookieStorage: FakeCookieStorage())
+            first.noteSessionCookiesReplaced()
+            try first.signIn(serverURL: serverURL, userID: previous)
+            keychain.failingLoadKeys = ["dev.llun.Schrift.isAuthenticated"]
+            var clears: [Bool] = []
+            let locked = SessionStore(
+                userDefaults: userDefaults, keychain: keychain, cookieStorage: FakeCookieStorage(),
+                clearWebSiteData: { clears.append($0) })
+            XCTAssertFalse(locked.isAuthenticated)
+            XCTAssertFalse(SessionStore.hasNoSignInMarker(keychain: keychain), "a failed read is not a sign-out")
+            keychain.failingLoadKeys = []
+
+            locked.noteSessionCookiesReplaced()
+            try locked.signIn(serverURL: serverURL, userID: accountB)
+
+            XCTAssertEqual(clears, [false], "\(String(describing: previous))")
+        }
+    }
+
+    /// Signed in on a build that kept no confirmed record, then a launch that cannot read the
+    /// Keychain: the next sign-in on Connect still drops the web view's site data.
+    func testASignInAfterAnUnreadableLaunchWithNoRecordStillClears() throws {
+        let keychain = FakeKeychainStore()
+        try keychain.save(Data([1]), forKey: "dev.llun.Schrift.isAuthenticated")
+        keychain.failingLoadKeys = ["dev.llun.Schrift.isAuthenticated"]
+        var clears: [Bool] = []
+        let locked = SessionStore(
+            userDefaults: userDefaults, keychain: keychain, cookieStorage: FakeCookieStorage(),
+            clearWebSiteData: { clears.append($0) })
+        keychain.failingLoadKeys = []
+
+        locked.noteSessionCookiesReplaced()
+        try locked.signIn(serverURL: serverURL, userID: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
+
+        XCTAssertEqual(clears, [false])
+    }
+
+    /// A sign-out whose marker delete fails still signs this process out and clears the cookies
+    /// and their snapshot, so a relaunch cannot restore the session without a password.
+    func testAFailedMarkerDeleteAtSignOutLeavesNoSessionToRestore() throws {
+        let keychain = FakeKeychainStore()
+        let cookies = FakeCookieStorage()
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookies)
+        cookies.setCookie(
+            HTTPCookie(properties: [.domain: "docs.llun.dev", .path: "/", .name: "docs_sessionid", .value: "fake"])!)
+        try store.signIn(serverURL: serverURL)
+        keychain.failingDeleteKeys = ["dev.llun.Schrift.isAuthenticated"]
+
+        XCTAssertThrowsError(try store.signOut())
+
+        XCTAssertFalse(store.isAuthenticated, "this process is signed out all the same")
+        XCTAssertEqual(cookies.storedCookies, [])
+        let relaunchedCookies = FakeCookieStorage()
+        _ = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: relaunchedCookies)
+        XCTAssertEqual(relaunchedCookies.storedCookies, [], "nothing to restore")
+    }
+
+    func testOnlyAMissingMarkerCountsAsSignedOutAtLaunch() throws {
+        let keychain = FakeKeychainStore()
+        XCTAssertTrue(SessionStore.hasNoSignInMarker(keychain: keychain))
+        try keychain.save(Data([1]), forKey: "dev.llun.Schrift.isAuthenticated")
+        XCTAssertFalse(SessionStore.hasNoSignInMarker(keychain: keychain))
+    }
+
+    func testTheSiteDataClearKeepsCookiesOnlyOnAnAccountChange() {
+        XCTAssertFalse(webLoginSiteDataTypes(includingCookies: false).contains(WKWebsiteDataTypeCookies))
+        XCTAssertTrue(webLoginSiteDataTypes(includingCookies: true).contains(WKWebsiteDataTypeCookies))
+        XCTAssertTrue(
+            webLoginSiteDataTypes(includingCookies: false).isSuperset(of: [
+                WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeIndexedDBDatabases, WKWebsiteDataTypeDiskCache,
+            ]))
+    }
+
     /// The default wiring: sign-out deletes a media preview's staged copy.
     func testSignOutDeletesStagedMediaPreviews() throws {
         let store = SessionStore(

@@ -16,6 +16,12 @@ struct SchriftApp: App {
         // Every launch, not only after the upgrade: the login web view caches pages on each sign-in,
         // and a cold login page costs nothing outside one. Its cookies stay.
         clearWebLoginCache()
+        // Signed out at launch: nobody's login may linger in the web view, including one an
+        // earlier build left at its sign-out (it kept those cookies) or an abandoned sign-in.
+        if SessionStore.hasNoSignInMarker() {
+            clearWebLoginSiteData(includingCookies: true)
+            HTTPCookieStorage.shared.removeCookies(since: .distantPast)  // the login's copies
+        }
     }
 
     var body: some Scene {

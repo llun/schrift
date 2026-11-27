@@ -25,4 +25,8 @@ final class FakeCookieStorage: CookieStoring {
     func deleteCookie(_ cookie: HTTPCookie) {
         storedCookies.removeAll { $0.name == cookie.name && $0.domain == cookie.domain && $0.path == cookie.path }
     }
+
+    func removeCookies(since date: Date) {
+        storedCookies.removeAll()
+    }
 }
