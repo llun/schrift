@@ -106,6 +106,16 @@ final class SessionStore {
     /// image bytes survive offline relaunch; rotated whenever cookies change hands.
     private(set) var imageCacheSessionID: UUID?
 
+    /// A definite "no sign-in marker": a Keychain read that fails (the device locked) is not
+    /// one. `SchriftApp.init` clears the login web view's store on it, once per launch — not
+    /// here, since SwiftUI may construct this store again while a sign-in is under way.
+    static func hasNoSignInMarker(keychain: KeychainStoring = KeychainStore()) -> Bool {
+        if case .success(nil) = Result(catching: { try keychain.load(forKey: authenticatedKeychainKey) }) {
+            return true
+        }
+        return false
+    }
+
     init(
         userDefaults: UserDefaults = .standard,
         keychain: KeychainStoring = KeychainStore(),
@@ -138,8 +148,7 @@ final class SessionStore {
         self.signedInUser = signedInUser ?? SignedInUserStore(userDefaults: userDefaults)
         self.cachedUser = CurrentUserCacheStore(userDefaults: userDefaults)
         self.serverURL = userDefaults.url(forKey: Self.serverURLKey)
-        let authenticatedMarker = Result { try keychain.load(forKey: Self.authenticatedKeychainKey) }
-        self.isAuthenticated = (try? authenticatedMarker.get()) != nil
+        self.isAuthenticated = (try? keychain.load(forKey: Self.authenticatedKeychainKey)) != nil
         // Synchronous, so the cookies are back in the shared storage before
         // RootView builds the API client and the first request fires.
         if isAuthenticated {
@@ -163,13 +172,6 @@ final class SessionStore {
             keychain.upgradeAccessibility(forKey: Self.authenticatedKeychainKey)
             keychain.upgradeAccessibility(forKey: Self.sessionCookiesKeychainKey)
             restoreSessionCookies()
-        } else if case .success(nil) = authenticatedMarker {
-            // Signed out at launch: nobody's login may linger, including one an earlier build
-            // left at its sign-out (it kept those cookies) or an abandoned sign-in. Only on a
-            // definite "no marker": a Keychain read failing while locked is not a sign-out.
-            // (Not `cookieStorage`: the app never sends the IdP's copies anywhere, and a
-            // sign-in may already be writing its own there.)
-            clearWebSiteData(true)
         }
     }
 
@@ -181,10 +183,12 @@ final class SessionStore {
         try keychain.save(Data([1]), forKey: Self.authenticatedKeychainKey)
         // Unless this is provably the account whose session the login web view last held, with
         // no other web login in between, drop that view's site data; cookies stay, for single
-        // sign-on. A first sign-in (one web login, signed out) has nothing to drop.
+        // sign-on. Signed out, only a confirmed account still on record (no sign-out ran, e.g. a
+        // launch that could not read the Keychain) can differ; after a sign-out there is none.
         let confirmedUserID = userDefaults.string(forKey: Self.webLoginConfirmedUserKey).flatMap(UUID.init)
         let webLogins = userDefaults.integer(forKey: Self.webLoginsSinceConfirmKey)
-        if webLogins > 1 || (isAuthenticated && (confirmedUserID == nil || confirmedUserID != userID)) {
+        let provablySameAccount = confirmedUserID != nil && confirmedUserID == userID
+        if webLogins > 1 || (!provablySameAccount && (isAuthenticated || confirmedUserID != nil)) {
             clearWebSiteData(false)
         }
         userDefaults.set(userID?.uuidString, forKey: Self.webLoginConfirmedUserKey)
@@ -318,7 +322,9 @@ final class SessionStore {
     /// sign-out under way. Signed out, they are deleted.
     func discardStaleLoginCookies() {
         guard isAuthenticated else {
-            // Landed after the sign-out: undo what it wrote, in the web view's store too.
+            // Landed after the sign-out: undo what it wrote, in the web view's store too —
+            // unless a new sign-in has handed over since, whose cookies these now are.
+            guard userDefaults.integer(forKey: Self.webLoginsSinceConfirmKey) == 0 else { return }
             cookieStorage.removeCookies(since: .distantPast)
             clearWebSiteData(true)
             return
