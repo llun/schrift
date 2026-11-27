@@ -38,7 +38,8 @@ struct SilentReauthenticationView: View {
             onLoginComplete: {
                 Task {
                     let succeeded = await viewModel.handleLoginComplete()
-                    attempt.confirmationFinished(succeeded: succeeded)
+                    // A stale login (false, no error) is not a failure to escalate to the sheet.
+                    attempt.confirmationFinished(succeeded: succeeded || viewModel.errorKey == nil)
                     if succeeded { onAuthenticated() }
                 }
             },

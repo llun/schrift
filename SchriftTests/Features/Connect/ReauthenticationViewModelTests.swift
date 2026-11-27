@@ -179,6 +179,8 @@ final class ReauthenticationViewModelTests: XCTestCase {
         let viewModel = try makeViewModel { _ in
             .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
         }
+        let signedInUser = SignedInUserStore(userDefaults: userDefaults)
+        signedInUser.remember(UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
         let generation = viewModel.sessionStore.signInGeneration
         viewModel.sessionStore.beginSignOut()
 
@@ -188,5 +190,27 @@ final class ReauthenticationViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorKey)
         XCTAssertEqual(viewModel.sessionStore.signInGeneration, generation, "RootView's sign-out guard still holds")
         XCTAssertTrue(viewModel.sessionStore.needsReauthentication, "nothing was signed back in")
+        XCTAssertNil(signedInUser.userID, "the written cookies may be another account's")
+    }
+
+    /// The web view's cookie callback can land after the sign-out finished: the cookies it just
+    /// wrote are deleted, and nothing is signed in.
+    func testALoginLandingAfterTheSignOutDeletesItsCookies() async throws {
+        let cookieStorage = FakeCookieStorage()
+        let viewModel = try makeViewModel(cookieStorage: cookieStorage) { _ in
+            .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
+        }
+        viewModel.cookiesWillChange()
+        try viewModel.sessionStore.signOut()
+        cookieStorage.setCookie(
+            HTTPCookie(properties: [
+                .domain: "docs.llun.dev", .path: "/", .name: "docs_sessionid", .value: "fake-late-session",
+            ])!)
+
+        let signedIn = await viewModel.handleLoginComplete()
+
+        XCTAssertFalse(signedIn)
+        XCTAssertFalse(viewModel.sessionStore.isAuthenticated)
+        XCTAssertEqual(cookieStorage.cookies(for: serverURL) ?? [], [])
     }
 }

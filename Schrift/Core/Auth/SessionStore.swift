@@ -278,6 +278,19 @@ final class SessionStore {
 
     func beginSignOut() { isSigningOut = true }
 
+    /// A stale re-login (see `ReauthenticationViewModel`) has already written its cookies.
+    /// Signed in, they are treated as an unconfirmed handover — the identity is forgotten, as
+    /// at `noteSessionCookiesReplaced`, without the generation bump that would cancel a
+    /// sign-out under way. Signed out, they are deleted.
+    func discardStaleLoginCookies() {
+        guard isAuthenticated else {
+            deleteServerCookies()
+            return
+        }
+        cookiesAwaitingConfirmation = true
+        forgetSignedInIdentity()
+    }
+
     /// The sign-out finished or was abandoned.
     func endSignOut() { isSigningOut = false }
 
