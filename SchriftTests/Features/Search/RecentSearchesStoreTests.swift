@@ -48,6 +48,33 @@ final class RecentSearchesStorePersistenceTests: XCTestCase {
         super.setUp()
         userDefaults = UserDefaults(suiteName: suiteName)
         userDefaults.removePersistentDomain(forName: suiteName)
+        SignedInUserStore(userDefaults: userDefaults).remember(accountA)
+    }
+
+    private let accountA = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+
+    /// Each account has its own list; with no known account nothing is shown or stored; clear
+    /// empties every account's list.
+    func testListsBelongToTheSignedInAccount() {
+        let store = RecentSearchesStore(userDefaults: userDefaults)
+        store.add("roadmap")
+        let signedInUser = SignedInUserStore(userDefaults: userDefaults)
+
+        signedInUser.remember(UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
+        XCTAssertEqual(store.searches, [])
+        store.add("budget")
+        signedInUser.clear()
+        XCTAssertEqual(store.searches, [])
+        store.add("ignored")
+        signedInUser.remember(accountA)
+        XCTAssertEqual(store.searches, ["roadmap"])
+
+        userDefaults.set(["shared"], forKey: "dev.llun.Schrift.recentSearches")  // an earlier build's list
+        store.clear()
+        XCTAssertEqual(store.searches, [])
+        XCTAssertNil(userDefaults.object(forKey: "dev.llun.Schrift.recentSearches"))
+        signedInUser.remember(UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
+        XCTAssertEqual(store.searches, [], "every account's list goes")
     }
 
     override func tearDown() {

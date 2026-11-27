@@ -30,6 +30,7 @@ final class SearchScreenNavigationTests: XCTestCase {
         MockURLProtocol.stubHandler = { _ in
             .init(statusCode: 200, headers: [:], body: Data("{\"count\":0,\"results\":[]}".utf8), error: nil)
         }
+        SignedInUserStore(userDefaults: defaults).remember(UUID())  // recent searches belong to an account
         let viewModel = SearchViewModel(client: client, store: RecentSearchesStore(userDefaults: defaults))
         viewModel.query = "Roadmap"
         viewModel.recordSearch()

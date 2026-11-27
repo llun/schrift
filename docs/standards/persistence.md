@@ -263,7 +263,9 @@
 - **"Continue reading" positions** (`ReadingPositionStore`,
   `dev.llun.Schrift.readingPositions`, one JSON blob in UserDefaults) remember which
   block was at the top of the screen when a document was left, so reopening scrolls
-  back to it. Keyed by `readingPositionKey(serverOrigin:documentID:)`, capped to 200
+  back to it. Keyed by the signed-in account's id plus
+  `readingPositionKey(serverOrigin:documentID:)` (no account known: nothing read or
+  saved), capped to 200
   documents by the pure `recordingReadingPosition` (least recently saved evicted; the
   entry being written always survives), dates in milliseconds. A position is a block id
   plus `readingPositionFingerprint` — an FNV-1a hash of the block's normalised first 160
@@ -285,3 +287,10 @@
   tracked continuously in `EditorScrollAnchorStore.lastTopVisibleBlockID` because a
   disappearing screen reports no frames. No deep link addresses a position inside a
   document today; one would need to bypass the restore.
+- **Recent searches** (`RecentSearchesStore`, `dev.llun.Schrift.recentSearches.<user id>`)
+  are what one person typed: one list per account, nothing shown or stored while the
+  account is unknown, and `SessionStore` clears every list on an account change (the same
+  "not provably the same account" rule as the login web view's site data) and at sign-out —
+  from `signIn` and `signOut`, **not** `forgetSignedInIdentity()`, which also runs when the
+  same account re-logs in and would empty the list every time.
+  The search screen re-reads the list when the session changes.

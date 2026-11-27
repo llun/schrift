@@ -468,6 +468,26 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertFalse(SessionStore.hasNoSignInMarker(keychain: keychain))
     }
 
+    /// Recent searches go with an account change and a sign-out; the same account
+    /// re-logging in keeps them.
+    func testRecentSearchesAreClearedOnAnAccountChangeAndSignOut() throws {
+        let accountA = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        var clears = 0
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage(),
+            clearWebSiteData: { _ in }, clearRecentSearches: { clears += 1 })
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL, userID: accountA)
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL, userID: accountA)
+        XCTAssertEqual(clears, 0, "a first sign-in and the same account re-logging in")
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL, userID: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
+        XCTAssertEqual(clears, 1, "an account change")
+        try store.signOut()
+        XCTAssertEqual(clears, 2, "sign-out")
+    }
+
     func testTheSiteDataClearKeepsCookiesOnlyOnAnAccountChange() {
         XCTAssertFalse(webLoginSiteDataTypes(includingCookies: false).contains(WKWebsiteDataTypeCookies))
         XCTAssertTrue(webLoginSiteDataTypes(includingCookies: true).contains(WKWebsiteDataTypeCookies))

@@ -78,6 +78,11 @@ struct SearchScreen: View {
         .onChange(of: signInGeneration) {
             viewModel.beginSession(signInGeneration: signInGeneration)
         }
+        // The account id can arrive after the session began (`/users/me/` without one at
+        // sign-in, learned later); its recent searches are only readable once it does.
+        .onChange(of: viewModel.signedInUserID) {
+            viewModel.reloadRecentSearches()
+        }
         .task(id: SearchSessionID(availability: viewModel.availability.token, signInGeneration: signInGeneration)) {
             await viewModel.loadQuickAccess(signInGeneration: signInGeneration)
         }
