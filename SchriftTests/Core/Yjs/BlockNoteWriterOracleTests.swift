@@ -29,7 +29,8 @@ final class BlockNoteWriterOracleTests: XCTestCase {
         differs: (Int, _ web: YUpdate, _ ours: YUpdate) -> Void = { _, _, _ in },
         author: (BlockNoteWriter, Int) throws -> Data
     ) throws {
-        let seed = try YUpdateDecoder.decode(try XCTUnwrap(Data(base64Encoded: checkpoints[0].updateBase64)))
+        let seed = try YUpdateDecoder.decode(
+            try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(checkpoints.first).updateBase64)))
         let doc = YDoc(clientID: 2, gc: false)
         let replica = YDoc(clientID: 3, gc: false)
         defer {

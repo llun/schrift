@@ -15,7 +15,11 @@ final class MarkdownYjsTests: XCTestCase {
         MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: serverOrigin).map(\.node)
     }
     private func firstBlock(_ markdown: String) -> BlockNoteBlock {
-        MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: serverOrigin)[0]
+        guard let block = MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: serverOrigin).first else {
+            XCTFail("markdown must map to at least one block: \(markdown)")
+            return BlockNoteBlock(node: "", props: [], runs: [], id: "")
+        }
+        return block
     }
     private func prop(_ block: BlockNoteBlock, _ key: String) -> YAnyValue? {
         block.props.first { $0.key == key }?.value

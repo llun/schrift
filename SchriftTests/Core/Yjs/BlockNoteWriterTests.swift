@@ -5,7 +5,8 @@ import XCTest
 final class BlockNoteWriterTests: XCTestCase {
     private func seeded(_ checkpoints: [(label: String, updateBase64: String, xml: String)]) throws -> YDoc {
         let doc = YDoc(clientID: 2, gc: false)
-        try doc.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(Data(base64Encoded: checkpoints[0].updateBase64))))
+        try doc.applyUpdate(
+            YUpdateDecoder.decode(try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(checkpoints.first).updateBase64))))
         return doc
     }
 

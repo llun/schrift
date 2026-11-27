@@ -154,15 +154,15 @@ final class BlockTextFocusTests: XCTestCase {
 
     private func checkImmediateTypingAfterReturn(text source: String, expectedKind: BlockKind) async throws {
         try await withRow(text: source) { vm, host, text, _ in
-            let sourceID = vm.blocks[0].id
+            let sourceID = try XCTUnwrap(vm.blocks.first).id
             text.selectedRange = NSRange(location: (source as NSString).length, length: 0)
             type("\n", in: text)
             let targetID = try XCTUnwrap(vm.focusedBlockID)
             type("a", in: text)
             type("f", in: text)
             XCTAssertEqual(vm.blocks.map(\.id), [sourceID, targetID])
-            XCTAssertEqual(vm.blocks[0].kind, expectedKind)
-            XCTAssertEqual(vm.blocks[0].text, expectedKind == .divider ? "" : source)
+            XCTAssertEqual(try XCTUnwrap(vm.blocks.first).kind, expectedKind)
+            XCTAssertEqual(try XCTUnwrap(vm.blocks.first).text, expectedKind == .divider ? "" : source)
             XCTAssertEqual(try XCTUnwrap(vm.blocks.last).text, "af")
             XCTAssertEqual(vm.cursorRequest?.offset, 2)
             XCTAssertEqual(vm.selection, NSRange(location: 2, length: 0))

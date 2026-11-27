@@ -1,4 +1,5 @@
 import Foundation
+import XCTest
 
 @testable import Schrift
 
@@ -473,15 +474,35 @@ enum ReferenceCharacterMarkdownPaste {
 
         private func indentAt(path: [Int]) -> Int? {
             guard !path.isEmpty else { return nil }
+            guard path[0] < listRoots.count else {
+                XCTFail("list path \(path) is outside the \(listRoots.count)-root list tree")
+                return nil
+            }
             var current = listRoots[path[0]]
-            for step in path.dropFirst() { current = current.children[step] }
+            for step in path.dropFirst() {
+                guard step < current.children.count else {
+                    XCTFail("list path \(path) is outside the list tree")
+                    return nil
+                }
+                current = current.children[step]
+            }
             return current.indent
         }
 
         private func lastSiblingNode(atParentPath path: [Int]) -> String? {
             if path.isEmpty { return listRoots.last?.node }
+            guard path[0] < listRoots.count else {
+                XCTFail("list path \(path) is outside the \(listRoots.count)-root list tree")
+                return nil
+            }
             var current = listRoots[path[0]]
-            for step in path.dropFirst() { current = current.children[step] }
+            for step in path.dropFirst() {
+                guard step < current.children.count else {
+                    XCTFail("list path \(path) is outside the list tree")
+                    return nil
+                }
+                current = current.children[step]
+            }
             return current.children.last?.node
         }
 

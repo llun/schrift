@@ -33,9 +33,9 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
 
     // MARK: - Helpers
 
-    private func privatePasteboard() -> UIPasteboard {
+    private func privatePasteboard() throws -> UIPasteboard {
         let name = UIPasteboard.Name("test.drop-paste.\(UUID().uuidString)")
-        let pb = UIPasteboard(name: name, create: true)!
+        let pb = try XCTUnwrap(UIPasteboard(name: name, create: true))
         addTeardownBlock { UIPasteboard.remove(withName: name) }
         return pb
     }
@@ -307,7 +307,7 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         let harness = try await makeHarness([paragraph("p1", "")])
         addTeardownBlock { await harness.close() }
         let env = try makeUploadEnv(for: harness)
-        let pb = privatePasteboard()
+        let pb = try privatePasteboard()
         harness.input.pasteboard = pb
         let png = try makePNGData()
 
@@ -398,7 +398,7 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
     // MARK: - 3. canPerformAction Gating Across Surfaces (Private Pasteboard Only)
 
     func testCanPerformActionPasteGatingAcrossSurfaces() async throws {
-        let pb = privatePasteboard()
+        let pb = try privatePasteboard()
         let png = try makePNGData()
         let pasteAction = #selector(UIResponderStandardEditActions.paste(_:))
 
@@ -463,7 +463,7 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         ])
         addTeardownBlock { await harness.close() }
         _ = try makeUploadEnv(for: harness, online: false)
-        let pb = privatePasteboard()
+        let pb = try privatePasteboard()
         harness.input.pasteboard = pb
         let png = try makePNGData()
         pb.setItems([[UTType.png.identifier: png]])
@@ -788,7 +788,7 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         XCTAssertTrue(env.attachments.allAttachments().isEmpty)
 
         // Paste 11 items via private pasteboard -> refused before any Yjs or queue write.
-        let pb = privatePasteboard()
+        let pb = try privatePasteboard()
         harness.input.pasteboard = pb
         pb.setItems((0..<11).map { _ in [UTType.png.identifier: png] })
         XCTAssertFalse(harness.input.pasteFromPasteboard())
@@ -857,7 +857,7 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
             UIDropOperation.forbidden)
         XCTAssertFalse(localDrop.isShowingDropIndicator)
 
-        let pb = privatePasteboard()
+        let pb = try privatePasteboard()
         localHarness.input.pasteboard = pb
         pb.setItems([[UTType.png.identifier: png]])
         XCTAssertFalse(localHarness.input.pasteFromPasteboard())
@@ -963,7 +963,7 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         let harness = try await makeHarness([paragraph("p1", "")])
         addTeardownBlock { await harness.close() }
         let env = try makeUploadEnv(for: harness)
-        let pb = privatePasteboard()
+        let pb = try privatePasteboard()
         harness.input.pasteboard = pb
         let png = try makePNGData()
 
@@ -1166,7 +1166,7 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         let env = try makeUploadEnv(for: harness, online: false)
         _ = hostInWindow(harness.view)
 
-        let pb = privatePasteboard()
+        let pb = try privatePasteboard()
         harness.input.pasteboard = pb
 
         // Capture a valid BlockNoteSubtreePayload before triggering the barrier.

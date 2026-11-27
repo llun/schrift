@@ -27,14 +27,14 @@ final class DocumentPinStaleFetchTests: DocumentPinTestCase {
             pins.resolve(pinned: [], recent: [row()], ownerUserID: owner, fetchedAt: pins.revision).pinned.isEmpty)
     }
 
-    func testPendingPinSurvivesAnActualStaleHomeFetchAndAnAgreeingFetchCannotSettleIt() async {
+    func testPendingPinSurvivesAnActualStaleHomeFetchAndAnAgreeingFetchCannotSettleIt() async throws {
         let gate = MockURLProtocol.ResponseGate()
         defer { gate.open() }
         defaults.set(true, forKey: "schrift.workOffline")
         let (coordinator, home, _, _, _) = environment()
         home.fetchedRecentDocuments = [row()]
-        let oldPage = Self.page([row()])
-        let empty = Self.page([])
+        let oldPage = try Self.page([row()])
+        let empty = try Self.page([])
         let log = RequestRecorder()
         let user = Data("{\"id\":\"\(owner.uuidString)\"}".utf8)
         MockURLProtocol.stubHandler = { request in
@@ -59,7 +59,7 @@ final class DocumentPinStaleFetchTests: DocumentPinTestCase {
         XCTAssertTrue(home.recentDocuments.isEmpty)
         XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allPins().count, 1)
         XCTAssertFalse(home.isLoading)
-        let agreeing = Self.page([row(pinned: true)])
+        let agreeing = try Self.page([row(pinned: true)])
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: agreeing, error: nil) }
         await home.load()
         XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allPins().count, 1)

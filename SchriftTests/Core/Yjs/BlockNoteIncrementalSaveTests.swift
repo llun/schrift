@@ -328,7 +328,9 @@ final class BlockNoteIncrementalSaveTests: XCTestCase {
     ) throws {
         let stored = newBlocks("Intro\n\n" + markdown)
         var serverBlocks = stored
-        serverBlocks[1].children[0].runs = serverChildRuns
+        let parent = try XCTUnwrap(serverBlocks.indices.dropFirst().first)
+        let childIndex = try XCTUnwrap(serverBlocks[parent].children.indices.first)
+        serverBlocks[parent].children[childIndex].runs = serverChildRuns
         let state = BlockNoteYjs.encode(serverBlocks, clientID: 1)
 
         let update = try BlockNoteIncrementalSave.update(
@@ -343,7 +345,7 @@ final class BlockNoteIncrementalSaveTests: XCTestCase {
         XCTAssertEqual(
             after.blocks.map(\.id), stored.map(\.id), "the list item kept its container", file: file, line: line)
         XCTAssertEqual(after.blocks.first?.runs, [InlineRun("TEST")], file: file, line: line)
-        let child = try BlockNoteWriter(doc: server).find(stored[1].children[0].id).element
+        let child = try BlockNoteWriter(doc: server).find(stored[parent].children[childIndex].id).element
         XCTAssertEqual(
             text(of: child), serverChildRuns.map(\.text).joined(), "the child kept its own text", file: file, line: line
         )

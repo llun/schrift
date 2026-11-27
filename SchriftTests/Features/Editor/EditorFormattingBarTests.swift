@@ -19,7 +19,7 @@ final class EditorFormattingBarTests: XCTestCase {
             saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop, sleep: neverSleep))
         viewModel.mode = .blocks
         viewModel.blocks = [EditorBlock(kind: .paragraph, text: "text")]
-        if focused { viewModel.focusedBlockID = viewModel.blocks[0].id }
+        if focused { viewModel.focusedBlockID = viewModel.blocks.first?.id }
         return viewModel
     }
 

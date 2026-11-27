@@ -226,13 +226,13 @@ final class OptionsViewModelTests: XCTestCase {
     /// record still names a live document, and discarding the local trace here would strand
     /// it permanently. Queueing would be worse — it would promise a replay the server has
     /// already refused.
-    func testAServerDeleteRejectedOnTheMeritsKeepsTheRecordAndReports() async {
+    func testAServerDeleteRejectedOnTheMeritsKeepsTheRecordAndReports() async throws {
         MockURLProtocol.stubHandler = { _ in
             .init(statusCode: 403, headers: [:], body: Data(), error: nil)
         }
         let env = makeLocalEnvironment()
         let serverID = UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
-        let viewModel = checkpointedViewModel(env, serverID: serverID)
+        let viewModel = try checkpointedViewModel(env, serverID: serverID)
 
         await viewModel.delete()
 
@@ -253,8 +253,8 @@ final class OptionsViewModelTests: XCTestCase {
             signedIn: SignedInUserStore, client: DocsAPIClient
         ),
         serverID: UUID
-    ) -> OptionsViewModel {
-        var record = env.creates.create(for: env.document.id)!
+    ) throws -> OptionsViewModel {
+        var record = try XCTUnwrap(env.creates.create(for: env.document.id))
         record.syncedServerID = serverID
         env.creates.save(record)
         // Rebuilt so the mirror picks the checkpoint up, exactly as a relaunch would.
@@ -372,13 +372,13 @@ final class OptionsViewModelTests: XCTestCase {
     /// A **checkpointed** record queues under its `syncedServerID` — the id that exists —
     /// and keeps every local trace, because those are what the undo restores.
     /// `completePendingDelete` removes them once the DELETE has really landed.
-    func testAQueuedDeletionOfACheckpointedRecordKeepsTheRecordAndDraft() async {
+    func testAQueuedDeletionOfACheckpointedRecordKeepsTheRecordAndDraft() async throws {
         MockURLProtocol.stubHandler = { _ in
             .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
         }
         let env = makeLocalEnvironment()
         let serverID = UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
-        let viewModel = checkpointedViewModel(env, serverID: serverID)
+        let viewModel = try checkpointedViewModel(env, serverID: serverID)
 
         await viewModel.delete()
 
