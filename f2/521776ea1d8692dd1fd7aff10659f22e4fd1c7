@@ -1,0 +1,29 @@
+Schrift/App/SchriftApp.swift
+  s_4fb28ab57323fe::t_a06261cc55fdba 19-21
+Schrift/Core/Auth/SessionStore.swift
+  s_4fb28ab57323fe::t_252868850192b0 113-115
+  s_4fb28ab57323fe::t_a06261cc55fdba 109-111,116-118,151,186-187,190-191,325-327
+  s_4fb28ab57323fe::t_629a0216e50bd2 112
+SchriftTests/Core/Auth/FakeKeychainStore.swift
+  s_4fb28ab57323fe::t_a06261cc55fdba 7,22
+  s_4fb28ab57323fe::t_80cf5a21366f31 23
+SchriftTests/Core/Auth/SessionStoreIdentitySideEffectsTests.swift
+  s_4fb28ab57323fe::t_629a0216e50bd2 315,324,328,331,334,337,339,342,397-446
+  s_4fb28ab57323fe::t_ad1b601c19f6c3 447
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f2521776ea1d8692dd1fd7aff10659f22e4fd1c7",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
