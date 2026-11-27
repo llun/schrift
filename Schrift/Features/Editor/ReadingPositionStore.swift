@@ -213,8 +213,11 @@ final class ReadingPositionStore {
         userDefaults.removeObject(forKey: Self.key)
     }
 
+    /// The account whose positions this store reads and writes now.
+    var currentUserID: UUID? { signedInUser.userID }
+
     private func accountKey(serverOrigin: String, documentID: UUID) -> String? {
-        guard let owner = signedInUser.userID else { return nil }
+        guard let owner = currentUserID else { return nil }
         return "\(owner.uuidString.lowercased())|"
             + readingPositionKey(serverOrigin: serverOrigin, documentID: documentID)
     }

@@ -11,23 +11,39 @@ func addingRecentSearch(_ query: String, to existing: [String], limit: Int = 8) 
     return updated
 }
 
+/// One list per signed-in account (`<prefix>.<user id>`); with no known account nothing is
+/// shown or stored, so a session whose account is not yet confirmed never sees, or adds to,
+/// someone else's list. `SessionStore` clears every list on an account change and sign-out.
 final class RecentSearchesStore {
-    private static let key = "dev.llun.Schrift.recentSearches"
+    private static let keyPrefix = "dev.llun.Schrift.recentSearches"
 
     private let userDefaults: UserDefaults
-    /// Read from storage each time: `SessionStore` clears it from another instance on an
-    /// account change, and the search screen re-reads it when the session changes.
-    var searches: [String] { userDefaults.array(forKey: Self.key) as? [String] ?? [] }
+    private let signedInUser: SignedInUserStore
+
+    /// Read from storage each time: the search screen re-reads it when the session changes.
+    var searches: [String] {
+        guard let key else { return [] }
+        return userDefaults.array(forKey: key) as? [String] ?? []
+    }
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
+        self.signedInUser = SignedInUserStore(userDefaults: userDefaults)
     }
 
     func add(_ query: String) {
-        userDefaults.set(addingRecentSearch(query, to: searches), forKey: Self.key)
+        guard let key else { return }
+        userDefaults.set(addingRecentSearch(query, to: searches), forKey: key)
     }
 
+    /// Every account's list, and the one earlier builds kept for everyone.
     func clear() {
-        userDefaults.removeObject(forKey: Self.key)
+        for key in userDefaults.dictionaryRepresentation().keys where key.hasPrefix(Self.keyPrefix) {
+            userDefaults.removeObject(forKey: key)
+        }
+    }
+
+    private var key: String? {
+        signedInUser.userID.map { "\(Self.keyPrefix).\($0.uuidString.lowercased())" }
     }
 }

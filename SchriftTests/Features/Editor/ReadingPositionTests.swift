@@ -357,6 +357,20 @@ final class ReadingPositionTests: XCTestCase {
             voiceOverEnabled: voiceOverEnabled)
     }
 
+    /// An editor left open across a re-login as another account neither restores nor saves
+    /// under the new account.
+    @MainActor func testASessionOpenedForOneAccountWritesNothingForAnother() {
+        let (session, store, documentID) = makeSession()
+        let blocks = (0..<6).map { EditorBlock(kind: .paragraph, text: "paragraph \($0)") }
+        session.beginRestore(blocks: blocks, userHasScrolled: false)
+        SignedInUserStore(userDefaults: userDefaults).remember(
+            UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
+
+        session.persist(blocks: blocks, topVisibleBlockID: blocks[4].id)
+
+        XCTAssertNil(store.position(serverOrigin: origin, documentID: documentID))
+    }
+
     @MainActor func testSessionRestoresOnceAndOffersBackToTop() {
         let blocks = paragraphs(10)
         let (session, store, id) = makeSession()

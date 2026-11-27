@@ -63,12 +63,16 @@ func readingRestoreScrollStep(
     /// The block a decided restore will scroll to once its row is laid out.
     @ObservationIgnored private var pendingScrollBlockID: UUID?
     @ObservationIgnored private var offerTask: Task<Void, Never>?
+    /// The account this open belongs to: an editor left on screen across a re-login as someone
+    /// else must not read or write that account's positions.
+    @ObservationIgnored private let owner: UUID?
 
     init(
         store: ReadingPositionStore = ReadingPositionStore(), serverOrigin: String, documentID: UUID,
         offerDuration: Duration = .seconds(6)
     ) {
         self.store = store
+        self.owner = store.currentUserID
         self.serverOrigin = serverOrigin
         self.documentID = documentID
         self.offerDuration = offerDuration
@@ -86,7 +90,7 @@ func readingRestoreScrollStep(
     func beginRestore(blocks: [EditorBlock], userHasScrolled: Bool) -> UUID? {
         guard !hasDecidedRestore, !blocks.isEmpty else { return nil }
         hasDecidedRestore = true
-        guard !userHasScrolled else { return nil }
+        guard !userHasScrolled, isOwnersSession else { return nil }
         let saved = store.position(serverOrigin: serverOrigin, documentID: documentID)
         guard case .restore(let blockID) = readingPositionRestore(saved: saved, blocks: blocks) else { return nil }
         pendingScrollBlockID = blockID
@@ -159,7 +163,7 @@ func readingRestoreScrollStep(
     /// Nothing is written while a restore is still waiting to scroll: the page is at the top
     /// until it does, and saving that would replace the position about to be restored.
     func persist(blocks: [EditorBlock], topVisibleBlockID: UUID?) {
-        guard hasDecidedRestore, pendingScrollBlockID == nil else { return }
+        guard hasDecidedRestore, pendingScrollBlockID == nil, isOwnersSession else { return }
         switch readingPositionUpdate(topVisibleBlockID: topVisibleBlockID, blocks: blocks) {
         case .keep:
             break
@@ -171,4 +175,6 @@ func readingRestoreScrollStep(
                 serverOrigin: serverOrigin, documentID: documentID)
         }
     }
+
+    private var isOwnersSession: Bool { owner != nil && store.currentUserID == owner }
 }

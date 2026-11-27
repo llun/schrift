@@ -14,6 +14,7 @@ final class SearchViewModelTests: XCTestCase {
     private func makeStore() -> RecentSearchesStore {
         let suiteName = "SearchViewModelTests.\(UUID().uuidString)"
         let userDefaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: userDefaults).remember(UUID())
         return RecentSearchesStore(userDefaults: userDefaults)
     }
 
@@ -323,6 +324,7 @@ final class SearchViewModelTests: XCTestCase {
         let suiteName = "SearchViewModelTests.\(UUID().uuidString)"
         let userDefaults = UserDefaults(suiteName: suiteName)!
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        SignedInUserStore(userDefaults: userDefaults).remember(UUID())
         RecentSearchesStore(userDefaults: userDefaults).add("Roadmap")
         let viewModel = makeViewModel(store: RecentSearchesStore(userDefaults: userDefaults))
         XCTAssertEqual(viewModel.recentSearches, ["Roadmap"])

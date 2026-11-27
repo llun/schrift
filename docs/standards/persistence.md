@@ -275,10 +275,6 @@
   index among equals), else nothing, and nothing when the block is within the first two.
   **Cleared on sign-out** in RootView's `onSignOut` beside the content caches (it is
   reading history, not unsynced work, so unlike drafts it does not outlive the session).
-- **Recent searches** (`RecentSearchesStore`, `dev.llun.Schrift.recentSearches`) are what
-  one person typed: `SessionStore` clears them on an account change (the same "not provably
-  the same account" rule as the login web view's site data) and at sign-out, and the
-  search screen re-reads them when the session changes.
   `ReadingPositionSession` (in `EditorView`'s `@State`) decides the restore once per open
   and **writes nothing until it has** — before then the viewport is at the top and
   persisting would overwrite the very position about to be restored. Deciding and scrolling
@@ -291,3 +287,8 @@
   tracked continuously in `EditorScrollAnchorStore.lastTopVisibleBlockID` because a
   disappearing screen reports no frames. No deep link addresses a position inside a
   document today; one would need to bypass the restore.
+- **Recent searches** (`RecentSearchesStore`, `dev.llun.Schrift.recentSearches.<user id>`)
+  are what one person typed: one list per account, nothing shown or stored while the
+  account is unknown, and `SessionStore` clears every list on an account change (the same
+  "not provably the same account" rule as the login web view's site data) and at sign-out.
+  The search screen re-reads the list when the session changes.

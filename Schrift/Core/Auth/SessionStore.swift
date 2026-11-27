@@ -41,7 +41,8 @@ final class SessionStore {
     private let endMediaPlayback: () -> Void
     private let clearWebCache: () -> Void
     private let clearWebSiteData: (_ includingCookies: Bool) -> Void
-    /// Recent searches are what one person typed: cleared on an account change and sign-out.
+    /// Recent searches are what one person typed: every list is cleared on an account change
+    /// and sign-out.
     private let clearRecentSearches: () -> Void
     private let clearDiagnostics: () -> Void
     var imageCacheScope: String? { imageCacheSessionID?.uuidString }
@@ -134,7 +135,7 @@ final class SessionStore {
         clearWebSiteData: @escaping (_ includingCookies: Bool) -> Void = {
             clearWebLoginSiteData(includingCookies: $0)
         },
-        clearRecentSearches: @escaping () -> Void = { RecentSearchesStore().clear() },
+        clearRecentSearches: (() -> Void)? = nil,
         clearDiagnostics: @escaping () -> Void = { NativeEditorDiagnosticsStore.shared.reset() },
         now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
@@ -144,7 +145,7 @@ final class SessionStore {
         self.endMediaPlayback = endMediaPlayback
         self.clearWebCache = clearWebCache
         self.clearWebSiteData = clearWebSiteData
-        self.clearRecentSearches = clearRecentSearches
+        self.clearRecentSearches = clearRecentSearches ?? { RecentSearchesStore(userDefaults: userDefaults).clear() }
         self.clearDiagnostics = clearDiagnostics
         self.now = now
         self.userDefaults = userDefaults
