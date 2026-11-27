@@ -142,9 +142,10 @@ final class PendingDraftStore {
 
     /// Stamps the draft with the signed-in account (a native draft keeps its replica's, and a
     /// draft already stamped keeps its stamp) and replaces only that account's draft of the
-    /// document. Nothing saves while no account is known — pages are read-only then — but a draft
-    /// that arrived without one is set aside under its bare document key rather than lost, shown
-    /// to nobody, exactly like a set-aside draft from an earlier build.
+    /// document. Nothing saves while no account is known — pages are read-only then — so an
+    /// owner-less draft is set aside under its bare document key rather than lost, shown to
+    /// nobody, exactly like a set-aside draft from an earlier build. It never replaces one
+    /// already there: that slot is only ever read now.
     func save(_ draft: PendingDraft) {
         quarantineUnreadableDataIfNeeded()
         var drafts = loadAll()
@@ -152,7 +153,7 @@ final class PendingDraftStore {
         if let owner = stamped.owner {
             drafts = drafts.filter { $0.value.documentID != draft.documentID || $0.value.owner != owner }
             drafts[Self.key(owner: owner, documentID: draft.documentID)] = stamped
-        } else {
+        } else if drafts[draft.documentID.uuidString] == nil {
             drafts[draft.documentID.uuidString] = stamped
         }
         persist(drafts)

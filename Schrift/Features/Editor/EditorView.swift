@@ -277,6 +277,18 @@ func presentedPeerCount(peerCount: Int, isOffline: Bool) -> Int? {
     return peerCount
 }
 
+/// Whether a sign-in change reopens the native editor. A waiting-classic drain must re-ask under
+/// the account now known, and a native session with no input row was opened while the account was
+/// unconfirmed (read-only), so it re-asks too. A mounted native editor keeps its session.
+@MainActor
+func nativeEditorReopensOnSignInChange(route: NativeEditorOpen.Route) -> Bool {
+    switch route {
+    case .waitingClassicEdits: return true
+    case .native(let session): return session.input == nil
+    case .loading, .classic, .preservedUnavailable, .unavailable: return false
+    }
+}
+
 /// Presents the route NativeEditorOpen selects at each open or reopen. The classic view's tasks, save
 /// controls and live bridge are instantiated only when that route is selected.
 struct EditorView: View {
@@ -416,17 +428,14 @@ struct EditorView: View {
         }
         .onChange(of: viewModel.signedInUserID) { _, _ in
             syncMentionLoader()
-            switch nativeOpen.route {
-            case .native(let session):
+            if case .native(let session) = nativeOpen.route {
                 session.input?.refreshInlinePicker()
-            case .waitingClassicEdits:
-                nativeOpen.reopen(
-                    viewModel: viewModel, isOffline: showsOffline,
-                    canUpdate: pinRow?.abilities.update == true,
-                    canMention: pinRow?.abilities.mention == true)
-            case .loading, .classic, .preservedUnavailable, .unavailable:
-                break
             }
+            guard nativeEditorReopensOnSignInChange(route: nativeOpen.route) else { return }
+            nativeOpen.reopen(
+                viewModel: viewModel, isOffline: showsOffline,
+                canUpdate: pinRow?.abilities.update == true,
+                canMention: pinRow?.abilities.mention == true)
         }
         .onChange(of: viewModel.isLocalDocument) { _, _ in
             syncMentionLoader()
@@ -596,10 +605,10 @@ private struct ClassicEditorView: View {
     @State private var optionsViewModel: OptionsViewModel
     @State private var shareViewModel: ShareViewModel
     @State private var selectedPhotoItem: PhotosPickerItem?
-    /// Whether we currently hold a live-collaboration reference for this document,
-    /// so the request/release stays one-shot and balanced even as availability
-    /// flips (a session opened only once, released exactly once).
-    @State private var holdsCollaborationSession = false
+    /// Our claim on this document's live-collaboration session, so the request/release stays
+    /// one-shot and balanced even as availability flips. A claim the manager dropped (an
+    /// account change) is no longer `holds(_:)` and is re-acquired.
+    @State private var collaborationHold: CollaborationSessionHold?
     /// C1's live-write coordinator. `nil` until the first collaboration-session
     /// request, because it needs the `collaboration` manager, which only becomes
     /// available from `@Environment` once the view has been installed — not in
@@ -790,6 +799,13 @@ private struct ClassicEditorView: View {
             .onChange(of: collaboration.availability) { _, _ in
                 requestCollaborationSessionIfNeeded()
             }
+            // The manager dropped our session (an account change closed it) and bumped this:
+            // the claim is gone, so ask again under the account now known.
+            .onChange(of: collaboration.sessionsRevision) { _, _ in
+                guard let hold = collaborationHold, !collaboration.holds(hold) else { return }
+                collaborationHold = nil
+                requestCollaborationSessionIfNeeded()
+            }
             // Backstop for the synchronous replica observer: both notifications share
             // one display-frame projection/apply of the latest replica state.
             .onChange(of: collaboration.replicaVersion(for: viewModel.documentID)) { _, _ in
@@ -826,9 +842,9 @@ private struct ClassicEditorView: View {
                 for task in checklistSettleTasks.values { task.cancel() }
                 checklistSettleTasks = [:]
                 viewModel.clearChecklistSettling()
-                if holdsCollaborationSession {
-                    collaboration.release(viewModel.documentID)
-                    holdsCollaborationSession = false
+                if let hold = collaborationHold {
+                    collaboration.release(hold)
+                    collaborationHold = nil
                 }
             }
             .onChange(of: scenePhase) { _, phase in
@@ -1399,7 +1415,8 @@ private struct ClassicEditorView: View {
                                         block: block, serverOrigin: serverOrigin,
                                         numberedIndex: numbering[index],
                                         isOffline: isOffline,
-                                        onToggleChecklist: { toggleChecklistFromReading(block.id) },
+                                        onToggleChecklist: viewModel.readOnlyNoteKey == nil
+                                            ? { toggleChecklistFromReading(block.id) } : nil,
                                         onTapText: {
                                             snapshotScrollForModeSwap()
                                             viewModel.startEditing(focusing: block.id)
@@ -1688,7 +1705,7 @@ private struct ClassicEditorView: View {
     }
 
     /// Opens a live-collaboration session once, if we don't already hold one and
-    /// live editing is available. A no-op when unavailable (`session(for:)`
+    /// live editing is available. A no-op when unavailable (`acquireSession(for:)`
     /// returns nil), so it can be retried when availability later flips.
     ///
     /// Also builds the C1 bridge on first call — lazily, because it needs the
@@ -1715,9 +1732,11 @@ private struct ClassicEditorView: View {
             // is actually engaged, so classic-only documents are unaffected.
             viewModel.liveWrite = bridge
         }
-        guard !holdsCollaborationSession else { return }
-        if collaboration.session(for: viewModel.documentID, canUpdate: canUpdateLiveDocument) != nil {
-            holdsCollaborationSession = true
+        guard collaborationHold == nil else { return }
+        if let hold = collaboration.acquireSession(
+            for: viewModel.documentID, canUpdate: canUpdateLiveDocument)
+        {
+            collaborationHold = hold
             // Register the bridge's synchronous read-apply observer on every session
             // (re)acquisition, NOT once at bridge construction. The manager drops it when
             // this document's entry is torn down after linger, but the bridge (held in

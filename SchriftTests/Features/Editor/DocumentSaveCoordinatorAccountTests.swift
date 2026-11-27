@@ -104,6 +104,22 @@ final class DocumentSaveCoordinatorAccountTests: DocumentSaveCoordinatorTestCase
         XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# From A's screen")
     }
 
+    /// The parked edit is not saved, so its account's surface must say so — otherwise it reads
+    /// as synced until the account returns.
+    func testAnEditParkedForAnotherAccountIsPendingSyncForThatAccount() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, _, _) = makeCoordinator()
+        let loadedFor = coordinator.signedInSession
+        signIn(otherAccount)
+
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# From A's screen", editedIn: loadedFor)
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+
+        signIn(signedInUserID)
+        XCTAssertTrue(isPendingSync(coordinator.state(for: documentID)))
+    }
+
     /// A save that lands after another account signed in settles under the account that started
     /// it: its draft is that account's to clear, and its body reaches no one's cache.
     func testASaveLandingAfterASwitchSettlesUnderTheAccountThatStartedIt() async {
@@ -193,7 +209,7 @@ final class DocumentSaveCoordinatorAccountTests: DocumentSaveCoordinatorTestCase
     }
 
     /// Pages are read-only while no account is known, and nothing that reaches the coordinator
-    /// then is sent or parked: it is set aside, kept for nobody.
+    /// then is sent or written: an owner-less draft could never be replayed.
     func testNothingIsSentOrParkedWhileNoAccountIsKnown() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log)
@@ -206,6 +222,6 @@ final class DocumentSaveCoordinatorAccountTests: DocumentSaveCoordinatorTestCase
         XCTAssertNil(coordinator.pendingSave(documentID: documentID))
         signIn(signedInUserID)
         XCTAssertNil(draftStore.draft(for: documentID), "nobody's, not the account named next")
-        XCTAssertEqual(draftStore.allDraftsOfEveryAccount().map(\.markdown), ["# Unconfirmed"], "but kept")
+        XCTAssertTrue(draftStore.allDraftsOfEveryAccount().isEmpty, "and nothing owner-less was written")
     }
 }

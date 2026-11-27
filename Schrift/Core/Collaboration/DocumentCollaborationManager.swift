@@ -22,6 +22,15 @@ protocol CollaborationLifecycleObserver: AnyObject {
     func collaborationResumed()
 }
 
+/// A screen's claim on a document's live session. Release it with
+/// `DocumentCollaborationManager.release(_:)`; a claim the manager dropped (an account change
+/// closes the socket) is no longer `holds(_:)`, so the screen re-asks instead of keeping a
+/// session it no longer owns.
+struct CollaborationSessionHold: Hashable, Sendable {
+    let documentID: UUID
+    let token: UUID
+}
+
 /// App-scoped owner of live-collaboration sessions, keyed by document id — built
 /// once per authenticated server session and injected, alongside `DocsAPIClient`
 /// and `DocumentSaveCoordinator`.
@@ -48,7 +57,9 @@ final class DocumentCollaborationManager {
         /// entry: the latest `session(for:canUpdate:)` caller wins, and the replica is
         /// kept across a flip (a reader just stops writing and answering step1).
         var canUpdate: Bool
-        var refCount: Int
+        /// The screens holding this session, by their claim token. A token, not a count, so a
+        /// release can never land on a replacement entry after an `.id` swap.
+        var holders: Set<UUID> = []
         var lingerTask: Task<Void, Never>?
         /// The account signed in when the socket was opened (its cookies); nil when none was known.
         var account: UUID?
@@ -198,12 +209,12 @@ final class DocumentCollaborationManager {
         localAwareness = resolved
         guard !isSuspended else { return }
         rebuildActiveSessions()
-        // A lingering (released, refCount 0) entry keeps a session built before
+        // A lingering (released, no holders) entry keeps a session built before
         // our identity resolved; `rebuildActiveSessions` skips it. Drop that
         // session so a reopen *within the linger window* rebuilds a fresh one that
         // announces us, instead of reusing the silent session (its localState is
         // immutable). The entry keeps lingering for the quick-reopen path.
-        for id in Array(entries.keys) where entries[id]?.refCount == 0 {
+        for id in Array(entries.keys) where entries[id]?.holders.isEmpty == true {
             entries[id]?.session?.stop()
             entries[id]?.session = nil
         }
@@ -386,46 +397,71 @@ final class DocumentCollaborationManager {
     /// request (reference-counted). Returns nil when live editing is unavailable
     /// or the socket URL can't be pinned to the server origin.
     func session(for documentID: UUID, canUpdate: Bool? = nil) -> DocumentCollaborationSession? {
+        guard let hold = acquireSession(for: documentID, canUpdate: canUpdate) else { return nil }
+        return entries[hold.documentID]?.session
+    }
+
+    /// Claims the document's live session, creating and connecting one on first request.
+    /// Returns nil when live editing is unavailable or the socket URL can't be pinned to the
+    /// server origin. Release the returned hold when the screen goes away.
+    func acquireSession(for documentID: UUID, canUpdate: Bool? = nil) -> CollaborationSessionHold? {
         // Existing Hocuspocus-only callers keep their historical behavior. yhub
         // fails closed without explicit abilities.update; the app always passes it.
         let canUpdate = canUpdate ?? (wireProtocol == .hocuspocus)
         // Never open a socket while backgrounded — `resume()` is the only rebuild
         // path when suspended (upholds the same invariant as `reconnect()`).
         guard !isSuspended, availability == .available else { return nil }
+        let hold = CollaborationSessionHold(documentID: documentID, token: UUID())
         if var entry = entries[documentID] {
-            entry.lingerTask?.cancel()  // a re-open cancels the pending teardown
-            entry.lingerTask = nil
-            entry.refCount += 1
             if entry.canUpdate != canUpdate {
                 entry.session?.stop()
                 entry.session = nil
                 entry.canUpdate = canUpdate
             }
             if entry.session == nil { entry.session = makeSession(for: documentID, canUpdate: canUpdate) }
+            guard entry.session != nil else {
+                entries[documentID] = entry
+                return nil
+            }
+            entry.lingerTask?.cancel()  // a re-open cancels the pending teardown
+            entry.lingerTask = nil
+            entry.holders.insert(hold.token)
             entries[documentID] = entry
-            return entry.session
+            return hold
         }
         guard let session = makeSession(for: documentID, canUpdate: canUpdate) else { return nil }
         entries[documentID] = Entry(
-            session: session, canUpdate: canUpdate, refCount: 1, lingerTask: nil, account: accountProvider())
-        return session
+            session: session, canUpdate: canUpdate, holders: [hold.token], lingerTask: nil,
+            account: accountProvider())
+        return hold
     }
 
-    /// Releases one reference. When the last is gone the session lingers for
+    /// Whether the manager still holds this claim. False once an account change closed the
+    /// entry, which is the screen's cue to ask again.
+    func holds(_ hold: CollaborationSessionHold) -> Bool {
+        entries[hold.documentID]?.holders.contains(hold.token) ?? false
+    }
+
+    /// Releases one claim. When the last is gone the session lingers for
     /// `lingerSeconds` (a quick re-open reuses it) then is torn down.
-    func release(_ documentID: UUID) {
-        guard var entry = entries[documentID], entry.refCount > 0 else { return }
-        entry.refCount -= 1
-        guard entry.refCount == 0 else {
-            entries[documentID] = entry
+    func release(_ hold: CollaborationSessionHold) {
+        guard var entry = entries[hold.documentID], entry.holders.remove(hold.token) != nil else { return }
+        guard entry.holders.isEmpty else {
+            entries[hold.documentID] = entry
             return
         }
         entry.lingerTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(self?.lingerSeconds ?? 5))
             guard !Task.isCancelled else { return }
-            self?.teardownIfIdle(documentID)
+            self?.teardownIfIdle(hold.documentID)
         }
-        entries[documentID] = entry
+        entries[hold.documentID] = entry
+    }
+
+    /// Releases one claim by document id, for callers that hold no token.
+    func release(_ documentID: UUID) {
+        guard let token = entries[documentID]?.holders.first else { return }
+        release(CollaborationSessionHold(documentID: documentID, token: token))
     }
 
     /// Sign-out: every replica and socket here goes, held ones too.
@@ -451,8 +487,8 @@ final class DocumentCollaborationManager {
         if releasedHeldReplica { onHeldReplicaReleased?() }
     }
 
-    /// scenePhase background: close every socket (1001). Still-referenced entries
-    /// keep their refcount (session nilled) so `resume()` can rebuild them; an
+    /// scenePhase background: close every socket (1001). Still-held entries
+    /// keep their holders (session nilled) so `resume()` can rebuild them; an
     /// idle entry mid-linger is dropped here (cancelling its linger would
     /// otherwise strand it, since `resume()` only rebuilds referenced entries).
     func suspend() {
@@ -461,7 +497,7 @@ final class DocumentCollaborationManager {
         for (id, entry) in entries {
             entry.lingerTask?.cancel()
             entry.session?.stop()
-            if entry.refCount == 0 {
+            if entry.holders.isEmpty {
                 releasedHeldReplica = removeEntry(id) || releasedHeldReplica
             } else {
                 entries[id]?.session = nil
@@ -521,6 +557,10 @@ final class DocumentCollaborationManager {
 
     /// Test/inspection: how many documents currently hold a session.
     var activeDocumentCount: Int { entries.count }
+
+    /// Bumped whenever an entry is dropped, so a screen holding a claim it no longer owns
+    /// re-checks `holds(_:)` and re-acquires.
+    private(set) var sessionsRevision = 0
 
     // MARK: - internals
 
@@ -694,14 +734,26 @@ final class DocumentCollaborationManager {
         // sockets and leave the entries session-less rather than reopening. A
         // later reconnect rebuilds them once available again.
         let available = availability == .available
-        for (id, entry) in entries where entry.refCount > 0 {
+        let account = accountProvider()
+        var releasedHeldReplica = false
+        for (id, entry) in entries where !entry.holders.isEmpty {
+            // A socket opened under another account's cookies (or before any was known) is
+            // never rebuilt: it goes, and the screen holding it re-asks once it sees
+            // `sessionsRevision` move.
+            guard entry.account == account else {
+                entry.lingerTask?.cancel()
+                entry.session?.stop()
+                releasedHeldReplica = removeEntry(id) || releasedHeldReplica
+                continue
+            }
             entry.session?.stop()
             entries[id]?.session = available ? makeSession(for: id, canUpdate: entry.canUpdate) : nil
         }
+        if releasedHeldReplica { onHeldReplicaReleased?() }
     }
 
     private func teardownIfIdle(_ documentID: UUID) {
-        guard let entry = entries[documentID], entry.refCount == 0 else { return }
+        guard let entry = entries[documentID], entry.holders.isEmpty else { return }
         entry.session?.stop()
         if removeEntry(documentID) { onHeldReplicaReleased?() }
     }
@@ -716,6 +768,7 @@ final class DocumentCollaborationManager {
         initialSyncVersions.removeValue(forKey: documentID)
         localEditVersions.removeValue(forKey: documentID)
         replicaObservers.removeValue(forKey: documentID)
+        sessionsRevision &+= 1
         return wasHeld
     }
 }

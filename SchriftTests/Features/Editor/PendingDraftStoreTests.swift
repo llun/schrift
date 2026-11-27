@@ -414,6 +414,28 @@ final class PendingDraftStoreTests: XCTestCase {
 
     // MARK: - Drafts set aside while no account was known
 
+    /// A bare-key draft is only ever read now: an owner-less save must not replace it, or the
+    /// set-aside copy would be lost to a draft no account can replay.
+    func testAnOwnerlessSaveNeverReplacesASetAsideBareKeyDraft() throws {
+        let (store, defaults) = makeStore()
+        let documentID = UUID()
+        let setAside = PendingDraft(
+            documentID: documentID, title: "Doc", markdown: "# Set aside",
+            updatedAt: Date(timeIntervalSince1970: 1_000))
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        defaults.set(
+            try encoder.encode([documentID.uuidString: setAside]), forKey: "dev.llun.Schrift.pendingDrafts")
+        signIn(nil, in: defaults)
+
+        store.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Newer",
+                updatedAt: Date(timeIntervalSince1970: 2_000)))
+
+        XCTAssertEqual(store.allDraftsOfEveryAccount().map(\.markdown), ["# Set aside"])
+    }
+
     /// A slot an earlier build of this change wrote while the account was unknown is read like
     /// any set-aside draft: shown to nobody, replayed by nobody, never deleted.
     func testAnUnknownAccountSlotStaysSetAsideForEveryAccount() throws {

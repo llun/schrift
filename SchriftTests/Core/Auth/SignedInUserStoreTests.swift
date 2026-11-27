@@ -100,13 +100,19 @@ final class SignedInUserStoreTests: XCTestCase {
             SignedInSession(userID: nil, epoch: 1).isAnotherAccount(than: SignedInSession(userID: a, epoch: 1)))
     }
 
-    func testASessionIsStillCurrentOnlyWithinTheSameSignInAndAccount() {
+    func testASessionIsStillCurrentForTheSameAccountAcrossASignIn() {
         let a = UUID()
         let session = SignedInSession(userID: a, epoch: 1)
         XCTAssertTrue(session.isStill(SignedInSession(userID: a, epoch: 1)))
-        XCTAssertFalse(session.isStill(SignedInSession(userID: a, epoch: 2)), "a sign-out wiped it meanwhile")
+        XCTAssertTrue(session.isStill(SignedInSession(userID: a, epoch: 2)), "a silent re-auth of the same user")
         XCTAssertFalse(session.isStill(SignedInSession(userID: UUID(), epoch: 1)))
         XCTAssertFalse(session.isStill(SignedInSession(userID: nil, epoch: 1)))
+        // Loaded while no account was known: only the same sign-in can still be it.
+        XCTAssertTrue(SignedInSession(userID: nil, epoch: 1).isStill(SignedInSession(userID: a, epoch: 1)))
+        XCTAssertFalse(
+            SignedInSession(userID: nil, epoch: 1).isStill(SignedInSession(userID: nil, epoch: 1)),
+            "an unknown now cannot confirm anything")
+        XCTAssertFalse(SignedInSession(userID: nil, epoch: 1).isStill(SignedInSession(userID: nil, epoch: 2)))
     }
 
     func testASessionIsCurrentOnlyForItsOwnAccount() {

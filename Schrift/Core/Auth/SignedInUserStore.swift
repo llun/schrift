@@ -93,8 +93,13 @@ struct SignedInSession: Equatable, Sendable {
         userID == now.userID
     }
 
-    /// Whether `now` is still this sign-in, under a known account.
+    /// Whether `now` is still this sign-in, under a known account. The same known account is
+    /// still this sign-in even after a re-login moved the epoch (a silent re-auth of the same
+    /// user); a session that never knew its account falls back to the epoch, since only the
+    /// same sign-in can still be it.
     func isStill(_ now: SignedInSession) -> Bool {
-        now.epoch == epoch && now.userID != nil && (userID == nil || userID == now.userID)
+        guard let current = now.userID else { return false }
+        guard let userID else { return now.epoch == epoch }
+        return userID == current
     }
 }

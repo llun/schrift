@@ -364,6 +364,8 @@ private struct AuthenticatedHomeContainer: View {
             // display name. Re-fetch it before any reauthenticated session is rebuilt.
             await collaboration.refreshLocalAwareness()
             await homeViewModel.saveCoordinator.syncPendingPins()
+            // An edit parked under this account while another was signed in replays now.
+            await homeViewModel.saveCoordinator.syncPendingDrafts()
             await homeViewModel.load()
         }
     }

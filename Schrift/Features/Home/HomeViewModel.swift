@@ -610,6 +610,9 @@ final class HomeViewModel {
         // Callers that load next anyway (`refresh()`, `reauthenticated()`) pay one redundant
         // fetch, only on the rare change.
         if previousOwner != user.id { await load() }
+        // And the drafts: an edit parked under this account while another was signed in is
+        // only replayable now that the account is known.
+        await saveCoordinator.syncPendingDrafts()
     }
 
     /// Ask who this session belongs to, but only when nothing on the device knows. Learning the

@@ -1596,9 +1596,10 @@ judged in the window between a login writing its cookies and the identity store 
 refreshes an unknown identity before the replay. A deletion completed for one account
 (`discardPendingWork`) never takes another account's create record or sub-pages with it.
 
-**A draft without an account** (an `unknown-<epoch>|<document>` slot, which only a draft saved
-with no account known can be — nothing writes one now that pages are read-only then) is set
-aside like any other: shown to nobody, replayed by nobody, never deleted.
+**A draft without an account** (a bare `<document>` key or an `unknown-<epoch>|<document>` slot,
+both from an earlier build) is only ever read now: the coordinator writes nothing while no account
+is known, and `PendingDraftStore.save` never replaces an occupied bare key. It is set aside like
+any other: shown to nobody, replayed by nobody, never deleted.
 
 Drafts from before account scoping carry no owner. `SchriftApp.init` calls
 `assignOwnersToEarlierDrafts()` once (a persisted flag) before any sign-in can name an

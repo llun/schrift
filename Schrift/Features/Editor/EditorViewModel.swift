@@ -2857,7 +2857,8 @@ final class EditorViewModel {
     }
 
     func toggleChecklist(blockID: UUID) {
-        guard !saveCoordinator.isNativeOwned(documentID: documentID),
+        guard readOnlyNoteKey == nil,
+            !saveCoordinator.isNativeOwned(documentID: documentID),
             !saveCoordinator.hasCheckpointedCreate(forServerID: documentID),
             !((availability.isOffline || loadFailedOffline) && isNativeBaselineRequiredOffline)
         else { return }
@@ -4721,6 +4722,9 @@ final class EditorViewModel {
     ///    coordinator's own state machine, as belt-and-braces.
     var canEngageLiveEditing: Bool {
         guard hasLoadedContent, !isDirty, !isDocumentDiscarded, !isUnavailable else { return false }
+        // Read-only for an account reason (unconfirmed, or another account's unsent edits here):
+        // a live apply would write under an account that may not own this page.
+        guard readOnlyNoteKey == nil else { return false }
         guard !saveCoordinator.isNativeOwned(documentID: documentID),
             !saveCoordinator.hasCheckpointedCreate(forServerID: documentID)
         else { return false }

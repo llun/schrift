@@ -71,6 +71,9 @@ struct MainTabView: View {
                 client: viewModel.client,
                 onSignedInUserChanged: { [saveCoordinator = viewModel.saveCoordinator] in
                     saveCoordinator.pins.sessionIdentityDidChange()
+                    // An edit parked under this account while another was signed in is only
+                    // replayable now that Profile's fetch has named it.
+                    Task { await saveCoordinator.syncPendingDrafts() }
                 }))
         _attachmentsViewModel = State(
             initialValue: AttachmentsViewModel(

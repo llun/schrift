@@ -69,9 +69,11 @@
   only that account is shown or replays it — nobody while the account is unknown —
   while the backup, purge, photo-collection and conflict-hold protections read every
   account's through `allDraftsOfEveryAccount()`. Nothing writes a draft while the
-  account is unknown (pages are read-only then), so a bare `<document>` key is only
-  an earlier build's unplaceable draft or an `unknown-<epoch>|<document>` slot: set
-  aside, shown to nobody, replayed by nobody, never deleted) nor the
+  account is unknown (pages are read-only then, and the coordinator writes no
+  owner-less draft), so a bare `<document>` key or an `unknown-<epoch>|<document>`
+  slot is only an earlier build's unplaceable draft, read and never replaced (`save`
+  leaves an occupied bare key alone): set aside, shown to nobody, replayed by nobody,
+  never deleted) nor the
   on-device create records in `PendingDocumentCreateStore` (same reasoning — for
   a document that exists nowhere else, that record and its draft are the only
   copies; surviving sign-out is made safe by the record's **`ownerUserID`**, not by

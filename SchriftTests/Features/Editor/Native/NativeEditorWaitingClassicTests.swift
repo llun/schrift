@@ -41,6 +41,60 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         XCTAssertEqual(server.log.methods, [])
     }
 
+    /// A sign-in change reopens a waiting-classic drain and a native session opened while the
+    /// account was unconfirmed (no input row); a mounted native editor keeps its session.
+    func testASignInChangeReopensOnlyAWaitingDrainOrAnUnconfirmedNativeSession() async {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = WaitingClassicServerStub(owner: owner, ydocState: serverYDocState("Server body"))
+        server.install()
+
+        // A waiting-classic drain must re-ask under the account now known.
+        env.drafts.save(
+            PendingDraft(documentID: env.documentID, title: "Offline", markdown: "Waiting", updatedAt: Date()))
+        let waiting = NativeEditorOpen(preference: { true })
+        defer { waiting.close() }
+        await waiting.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .waitingClassicEdits = waiting.route else {
+            return XCTFail("expected .waitingClassicEdits, got \(waiting.route)")
+        }
+        XCTAssertTrue(nativeEditorReopensOnSignInChange(route: waiting.route))
+        waiting.close()
+        env.drafts.remove(documentID: env.documentID)
+
+        // The classic route never reopens.
+        let classic = NativeEditorOpen(preference: { false })
+        defer { classic.close() }
+        await classic.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .classic = classic.route else { return XCTFail("expected .classic, got \(classic.route)") }
+        XCTAssertFalse(nativeEditorReopensOnSignInChange(route: classic.route))
+        classic.close()
+
+        // A native session with no input row was opened while the account was unconfirmed.
+        env.model.signedInUser.clear()
+        let unconfirmed = NativeEditorOpen(preference: { true })
+        defer { unconfirmed.close() }
+        await unconfirmed.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let readOnly) = unconfirmed.route else {
+            return XCTFail("expected a read-only native session, got \(unconfirmed.route)")
+        }
+        XCTAssertNil(readOnly.input)
+        XCTAssertTrue(nativeEditorReopensOnSignInChange(route: unconfirmed.route))
+        unconfirmed.close()
+
+        // A mounted native editor keeps its session.
+        env.model.signedInUser.remember(owner)
+        let mounted = NativeEditorOpen(preference: { true })
+        defer { mounted.close() }
+        await mounted.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let writable) = mounted.route else {
+            return XCTFail("expected a native session, got \(mounted.route)")
+        }
+        XCTAssertNotNil(writable.input)
+        XCTAssertFalse(nativeEditorReopensOnSignInChange(route: mounted.route))
+        mounted.close()
+    }
+
     func testPreDocs6ServerKeepsClassicRouteEvenWithSwitchOn() async {
         let env = makeEnvironment()
         defer { env.clean() }

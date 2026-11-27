@@ -20,7 +20,7 @@ struct EditorScreen: View {
     /// See `EditorView.signInGeneration`.
     var signInGeneration: Int = 0
 
-    @State private var viewModel: EditorViewModel
+    @State var viewModel: EditorViewModel
     /// Builds a fresh model for the same document, for when another account signs in under a
     /// screen that stays mounted (the re-login sheet): the old one's content is that account's.
     private let makeViewModel: @MainActor () -> EditorViewModel
@@ -106,15 +106,20 @@ struct EditorScreen: View {
         .onChange(of: viewModel.signedInUserID, initial: true) { _, _ in replaceIfAnotherAccount() }
     }
 
-    private func replaceIfAnotherAccount() {
-        guard viewModel.loadedSession.isAnotherAccount(than: viewModel.saveCoordinator.signedInSession) else { return }
+    /// Returns the model now on screen, or nil when the account did not change.
+    @discardableResult
+    func replaceIfAnotherAccount() -> EditorViewModel? {
+        guard viewModel.loadedSession.isAnotherAccount(than: viewModel.saveCoordinator.signedInSession) else {
+            return nil
+        }
         viewModel.endForAccountChange()
         // A document only this device holds was the previous account's: there is nothing to
-        // reload it as, so the screen closes instead.
-        if viewModel.isLocalDocument, let onDeleted {
-            onDeleted()
-            return
-        }
-        viewModel = makeViewModel()
+        // reload it as, so the screen closes instead. The model is replaced either way, so the
+        // old one's content never stays on screen under the new account.
+        let wasLocalDocument = viewModel.isLocalDocument
+        let replacement = makeViewModel()
+        viewModel = replacement
+        if wasLocalDocument, let onDeleted { onDeleted() }
+        return replacement
     }
 }

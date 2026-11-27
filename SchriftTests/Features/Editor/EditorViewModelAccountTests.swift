@@ -108,4 +108,48 @@ final class EditorViewModelAccountTests: EditorViewModelTestCase {
         XCTAssertNil(env.viewModel.readOnlyNoteKey)
         XCTAssertTrue(env.viewModel.canStartEditing)
     }
+
+    /// A tick on the reading surface is an edit: while the page is read-only for an account
+    /// reason it must not land, or it would be filed under an account that may not own the page.
+    func testATickIsANoOpWhileTheAccountIsUnconfirmed() async {
+        stubLoad(content: "- [ ] Task")
+        let env = makeEnvironment()
+        await env.viewModel.load()
+        guard let block = env.viewModel.blocks.first, case .checklistItem(let checked) = block.kind else {
+            return XCTFail("expected a checklist item")
+        }
+        XCTAssertFalse(checked)
+
+        signIn(nil)
+        env.viewModel.toggleChecklist(blockID: block.id)
+        XCTAssertNil(env.viewModel.toggleChecklistSettling(blockID: block.id), "no settle either")
+
+        guard case .checklistItem(let after) = env.viewModel.blocks.first?.kind else {
+            return XCTFail("expected a checklist item")
+        }
+        XCTAssertEqual(after, checked, "read-only: the tick did not land")
+        XCTAssertFalse(env.viewModel.isDirty)
+    }
+
+    /// The same for another account's unsent edits here: only that account may change the page.
+    func testATickIsANoOpUnderAnotherAccountsUnsentEdits() async {
+        stubLoad(content: "- [ ] Task")
+        let env = makeEnvironment()
+        await env.viewModel.load()
+        env.draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "- [x] Theirs", updatedAt: Date(),
+                ownerUserID: accountB))
+        guard let block = env.viewModel.blocks.first, case .checklistItem(let checked) = block.kind else {
+            return XCTFail("expected a checklist item")
+        }
+
+        env.viewModel.toggleChecklist(blockID: block.id)
+
+        guard case .checklistItem(let after) = env.viewModel.blocks.first?.kind else {
+            return XCTFail("expected a checklist item")
+        }
+        XCTAssertEqual(after, checked, "read-only: the tick did not land")
+        XCTAssertFalse(env.viewModel.isDirty)
+    }
 }

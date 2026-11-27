@@ -250,4 +250,58 @@ final class DocumentCollaborationManagerLifecycleTests: DocumentCollaborationMan
         await waitUntil { spy.sockets[0].cancelCloseCode == .goingAway }
         await waitAndConfirmNever { spy.sockets.count > 1 }
     }
+
+    /// A socket opened under another account's cookies is never rebuilt: it goes, and the
+    /// screen holding it re-asks.
+    func testReconnectClosesASessionOpenedForAnotherAccount() async throws {
+        let spy = ManagerSocketFactorySpy()
+        let box = AccountBox(value: UUID())
+        let manager = makeManager(spy: spy, account: { box.value })
+        let hold = try XCTUnwrap(manager.acquireSession(for: docID))
+        await waitUntil { spy.sockets.count == 1 }
+
+        box.value = UUID()
+        manager.reconnect()
+
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        await waitUntil { spy.sockets.first?.cancelCloseCode == .goingAway }
+        XCTAssertFalse(manager.holds(hold))
+    }
+
+    /// A claim released after its entry was closed and replaced must not release the
+    /// replacement: the token, not the document id, decides.
+    func testAStaleHoldDoesNotReleaseTheReplacementSession() async throws {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(linger: 0.05, spy: spy)
+        let stale = try XCTUnwrap(manager.acquireSession(for: docID))
+        manager.closeAll()
+        let fresh = try XCTUnwrap(manager.acquireSession(for: docID))
+
+        manager.release(stale)
+
+        XCTAssertTrue(manager.holds(fresh))
+        XCTAssertEqual(manager.activeDocumentCount, 1)
+        await waitAndConfirmNever { manager.activeDocumentCount == 0 }
+    }
+
+    /// A screen holding a claim the manager dropped sees `sessionsRevision` move and
+    /// `holds(_:)` go false, which is its cue to ask again.
+    func testClosingASessionDropsTheHoldAndBumpsTheRevision() throws {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let hold = try XCTUnwrap(manager.acquireSession(for: docID))
+        let before = manager.sessionsRevision
+        XCTAssertTrue(manager.holds(hold))
+
+        manager.closeAll()
+
+        XCTAssertFalse(manager.holds(hold))
+        XCTAssertGreaterThan(manager.sessionsRevision, before)
+    }
+}
+
+@MainActor
+private final class AccountBox {
+    var value: UUID?
+    init(value: UUID?) { self.value = value }
 }

@@ -3865,6 +3865,9 @@ final class DocumentSaveCoordinator {
         let lastPushed =
             lastConfirmedPushMarkdown[documentID, owner: owner]
             ?? draftStore.draft(for: documentID, owner: owner)?.lastPushedMarkdown
+        // Nothing is written while no account is known — pages are read-only then — so an
+        // owner-less save would only land on a bare key no account can ever replay.
+        guard let owner else { return }
         let draft = PendingDraft(
             documentID: documentID, title: save.title, markdown: save.markdown, updatedAt: Date(),
             baseline: baseline,
@@ -3882,12 +3885,14 @@ final class DocumentSaveCoordinator {
         if isPendingCreate(documentID: documentID) { pendingCreatesVersion += 1 }
         // Another account's edit (a screen left from before a re-login) is kept on disk under that
         // account and never sent under this one: the sync pass replays it when that account is
-        // signed in again. Nothing is sent while no account is known — pages are read-only then.
-        guard let owner, owner == now.userID else {
+        // signed in again.
+        guard owner == now.userID else {
             // The draft just written is newer than anything that account parked: drop the parked
             // copy, or it would later win over this draft (the editor restores a parked save
             // first, and a release would push it).
             queued[documentID, owner: owner] = nil
+            // Parked, not saved: the account's surface must say so, or it reads as synced.
+            states[documentID, owner: owner] = .pendingSync
             return
         }
         // Enqueue-hold: while a conflict is recorded, persist the draft and the

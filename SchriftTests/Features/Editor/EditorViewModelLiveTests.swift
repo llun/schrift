@@ -351,6 +351,21 @@ final class EditorViewModelLiveTests: XCTestCase {
         XCTAssertFalse(viewModel.canEngageLiveEditing)
     }
 
+    /// Read-only for an account reason: a live apply would write under an account that may not
+    /// own this page.
+    func testCanEngageLiveEditingFalseWhileAnotherAccountsEditsKeepThePageReadOnly() async {
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        stubLoad(content: "Hello")
+        await viewModel.load()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "Theirs", updatedAt: Date(),
+                ownerUserID: UUID()))
+
+        XCTAssertNotNil(viewModel.readOnlyNoteKey)
+        XCTAssertFalse(viewModel.canEngageLiveEditing)
+    }
+
     func testCanEngageLiveEditingFalseWhenSaveIsPending() async {
         let (viewModel, coordinator, _, _) = makeEnvironment()
         stubLoad(content: "Hello")
