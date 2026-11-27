@@ -48,7 +48,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         guard case .native(let session) = open.route else { return XCTFail("expected a read-only native session") }
         XCTAssertNil(session.input)
         XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .none)
-        XCTAssertEqual(open.editUnavailableReason, .classicDraft)
+        XCTAssertEqual(open.editUnavailableReason, .anotherAccountsEdits)
     }
 
     /// A fresh install has no stored key, so the native editor is on: an eligible

@@ -13,6 +13,9 @@ struct EditorBannerStack: View {
     let hasConflict: Bool
     let showUpdateAvailable: Bool
     let isDocumentPendingDelete: Bool
+    /// Why the page is read-only, when the reason is about the account (classic route; the
+    /// native shell explains its own under the header).
+    var readOnlyNote: String? = nil
     let errorKey: L10nKey?
     let errorDetail: String?
     let onTapConflict: () -> Void
@@ -27,6 +30,15 @@ struct EditorBannerStack: View {
                         limitedNativeOfflineRead ? .editor_offline_read_only_native : .editor_offline_local_copy]
                 )
                 .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            if let readOnlyNote {
+                EditorNoticeLabel(icon: .lock, title: readOnlyNote, foreground: theme.colors.textSecondary)
+                    .padding(.horizontal, DocsSpacing.gutter)
+                    .padding(.top, DocsSpacing.spaceXS)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("editor.readOnlyNotice")
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if hasConflict {

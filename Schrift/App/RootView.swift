@@ -297,8 +297,13 @@ private struct AuthenticatedHomeContainer: View {
             NativeEditorDiagnosticsStore.shared.reset()
             // Nothing announces the previous account; `reauthenticated` learns the new one.
             collaboration.forgetLocalAwareness()
-            // Its live replicas and sockets were built under the previous cookies.
-            collaboration.closeAll()
+            // Live replicas and sockets opened for another account go once this one is known.
+            if let account = SignedInUserStore().userID { collaboration.closeSessions(otherThan: account) }
+        }
+        // The account can also be learned without a re-login (a `/users/me/` retried after a failed
+        // confirmation); `pins.revision` moves when it is.
+        .onChange(of: viewModel.saveCoordinator.pins.revision) { _, _ in
+            if let account = SignedInUserStore().userID { collaboration.closeSessions(otherThan: account) }
         }
         .environment(collaboration)
         .environment(nativeSessions)

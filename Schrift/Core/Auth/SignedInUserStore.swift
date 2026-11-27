@@ -77,25 +77,20 @@ struct SignedInSession: Equatable, Sendable {
     let userID: UUID?
     let epoch: Int
 
-    /// The account this session's work belongs to, judged from `now`: the one it named, or the
-    /// one the same sign-in has since been named as (an unchanged epoch means the same cookies).
-    func owner(now: SignedInSession) -> UUID? {
-        userID ?? (now.epoch == epoch ? now.userID : nil)
-    }
-
-    /// Whether `now` names an account this session's work cannot be shown as: a different one,
-    /// or any one at all when this session never knew whose it was and the sign-in has changed.
-    /// Unknown now is not another account — the work waits, unsent, until it is named.
+    /// Whether a known account other than this session's is now signed in — including any
+    /// account at all, when this session never knew whose it was. Unknown now is not another
+    /// account: the page waits, read-only, until it is named.
     func isAnotherAccount(than now: SignedInSession) -> Bool {
         guard let current = now.userID else { return false }
-        return owner(now: now) != current
+        return userID != current
     }
 
-    /// Whether `now` is still this session for reading and writing on its behalf: the account it
-    /// named (or later learned) is the one signed in, or — no account known — the sign-in is
-    /// the same unnamed one.
+    /// Whether this session's account is the one in front of it now, so the screen may read on
+    /// its behalf: the same known account, or — loaded while no account was known, and still
+    /// none — the same read-only unknown session, which may show the server copy but has nothing
+    /// of anyone's to read or write.
     func isCurrent(now: SignedInSession) -> Bool {
-        owner(now: now) == now.userID && (now.userID != nil || now.epoch == epoch)
+        userID == now.userID
     }
 
     /// Whether `now` is still this sign-in, under a known account.

@@ -67,7 +67,8 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
                 (.pendingDelete, .delete, loc[.editor_pending_delete], nil),
                 (.classicDraft, .sync, loc[.native_editor_read_only_classic_draft], nil),
                 (.liveHeld, .sync, loc[.native_editor_read_only_live_held], nil),
-                (.signedOut, .lock, loc[.native_editor_read_only_signed_out], nil),
+                (.accountUnconfirmed, .lock, loc[.editor_read_only_account_unconfirmed], nil),
+                (.anotherAccountsEdits, .lock, loc[.editor_read_only_another_account], nil),
                 (.preservedUnavailable, .warning, loc[.native_editor_owned_unavailable_body], nil),
             ]
 
@@ -187,45 +188,54 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
 
         XCTAssertEqual(
             NativeEditorOpen.resolveUnavailableReason(
-                enabled: false, hasEditAccess: false, hasAccount: false, isPendingDelete: true,
+                enabled: false, hasEditAccess: false, hasAccount: true, isPendingDelete: true,
                 hasCheckpointedCreate: true, isLiveHeld: true, hasClassicDraft: true, session: typeableSession),
             .noEditAccess)
 
         XCTAssertEqual(
             NativeEditorOpen.resolveUnavailableReason(
-                enabled: false, hasEditAccess: true, hasAccount: false, isPendingDelete: true,
+                enabled: false, hasEditAccess: true, hasAccount: true, isPendingDelete: true,
                 hasCheckpointedCreate: true, isLiveHeld: true, hasClassicDraft: true, session: typeableSession),
             .nativeSwitchOff)
 
         XCTAssertEqual(
             NativeEditorOpen.resolveUnavailableReason(
-                enabled: true, hasEditAccess: true, hasAccount: false, isPendingDelete: true,
+                enabled: true, hasEditAccess: true, hasAccount: true, isPendingDelete: true,
                 hasCheckpointedCreate: true, isLiveHeld: true, hasClassicDraft: true, session: typeableSession),
             .pendingDelete)
 
         XCTAssertEqual(
             NativeEditorOpen.resolveUnavailableReason(
-                enabled: true, hasEditAccess: true, hasAccount: false, isPendingDelete: false,
+                enabled: true, hasEditAccess: true, hasAccount: true, isPendingDelete: false,
                 hasCheckpointedCreate: true, isLiveHeld: true, hasClassicDraft: true, session: typeableSession),
             .pendingSync)
 
         XCTAssertEqual(
             NativeEditorOpen.resolveUnavailableReason(
-                enabled: true, hasEditAccess: true, hasAccount: false, isPendingDelete: false,
+                enabled: true, hasEditAccess: true, hasAccount: true, isPendingDelete: false,
                 hasCheckpointedCreate: false, isLiveHeld: true, hasClassicDraft: true, session: typeableSession),
             .liveHeld)
 
         XCTAssertEqual(
             NativeEditorOpen.resolveUnavailableReason(
-                enabled: true, hasEditAccess: true, hasAccount: false, isPendingDelete: false,
+                enabled: true, hasEditAccess: true, hasAccount: true, isPendingDelete: false,
                 hasCheckpointedCreate: false, isLiveHeld: false, hasClassicDraft: true, session: typeableSession),
             .classicDraft)
 
         XCTAssertEqual(
             NativeEditorOpen.resolveUnavailableReason(
-                enabled: true, hasEditAccess: true, hasAccount: false, isPendingDelete: false,
-                hasCheckpointedCreate: false, isLiveHeld: false, hasClassicDraft: false, session: typeableSession),
-            .signedOut)
+                enabled: true, hasEditAccess: true, hasAccount: true, isPendingDelete: false,
+                hasCheckpointedCreate: false, isLiveHeld: false, hasClassicDraft: false,
+                hasAnotherAccountsEdits: true, session: typeableSession),
+            .anotherAccountsEdits)
+
+        // Until the account is confirmed that is the one reason given: it comes back by itself.
+        XCTAssertEqual(
+            NativeEditorOpen.resolveUnavailableReason(
+                enabled: false, hasEditAccess: false, hasAccount: false, isPendingDelete: true,
+                hasCheckpointedCreate: true, isLiveHeld: true, hasClassicDraft: true,
+                hasAnotherAccountsEdits: true, session: typeableSession),
+            .accountUnconfirmed)
     }
 
     // MARK: - Open Route Integration

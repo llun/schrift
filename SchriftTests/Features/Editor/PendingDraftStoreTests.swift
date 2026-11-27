@@ -414,38 +414,24 @@ final class PendingDraftStoreTests: XCTestCase {
 
     // MARK: - Drafts set aside while no account was known
 
-    func testDraftsSetAsideInASignInGoToTheAccountItIsNamedAs() {
-        let (store, defaults) = makeStore()
-        signIn(nil, in: defaults)
-        let epoch = SignedInUserStore(userDefaults: defaults).epoch
-        let documentID = UUID()
-        store.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Meanwhile", updatedAt: Date()))
-        let otherEpoch = UUID()
-        store.save(
-            PendingDraft(documentID: otherEpoch, title: "Doc", markdown: "# Earlier", updatedAt: Date()),
-            setAsideIn: epoch - 1)
-        SignedInUserStore(userDefaults: defaults).remember(owner)
-
-        XCTAssertNil(store.draft(for: documentID), "unnamed until adopted")
-        XCTAssertTrue(store.adoptDraftsSavedWhileUnknown(epoch: epoch, owner: owner))
-
-        XCTAssertEqual(store.draft(for: documentID)?.markdown, "# Meanwhile")
-        XCTAssertNil(store.draft(for: otherEpoch), "another sign-in's slot is never given away")
-    }
-
-    func testAnAdoptionNeverReplacesTheAccountsOwnDraft() {
+    /// A slot an earlier build of this change wrote while the account was unknown is read like
+    /// any set-aside draft: shown to nobody, replayed by nobody, never deleted.
+    func testAnUnknownAccountSlotStaysSetAsideForEveryAccount() throws {
         let (store, defaults) = makeStore()
         let documentID = UUID()
+        let slot = PendingDraft(documentID: documentID, title: "Doc", markdown: "# Meanwhile", updatedAt: Date())
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        defaults.set(
+            try encoder.encode(["unknown-3|\(documentID.uuidString)": slot]), forKey: "dev.llun.Schrift.pendingDrafts")
+
+        XCTAssertNil(store.draft(for: documentID))
         store.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date()))
-        signIn(nil, in: defaults)
-        let epoch = SignedInUserStore(userDefaults: defaults).epoch
-        store.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Meanwhile", updatedAt: Date()))
-        SignedInUserStore(userDefaults: defaults).remember(owner)
+        store.remove(documentID: documentID)
+        signIn(otherAccount, in: defaults)
+        XCTAssertNil(store.draft(for: documentID))
 
-        XCTAssertFalse(store.adoptDraftsSavedWhileUnknown(epoch: epoch, owner: owner))
-
-        XCTAssertEqual(store.draft(for: documentID)?.markdown, "# Mine")
-        XCTAssertEqual(store.allDraftsOfEveryAccount().count, 2, "both kept")
+        XCTAssertEqual(store.allDraftsOfEveryAccount().map(\.markdown), ["# Meanwhile"], "kept")
     }
 
     // MARK: - Unreadable drafts from before account scoping

@@ -705,7 +705,7 @@ final class ColumnEditorTests: NativeEditingTestCase {
         let attachments = PendingAttachmentStore(
             userDefaults: storeDefaults, directory: dir.appendingPathComponent("bytes"))
         let queue = DocumentSaveCoordinator(
-            client: client, draftStore: PendingDraftStore(userDefaults: storeDefaults),
+            client: client, draftStore: signedInDraftStore(storeDefaults),
             replicaStore: ReplicaStore(directory: dir.appendingPathComponent("replicas")),
             contentCache: DocumentContentCacheStore(directory: dir.appendingPathComponent("cache")),
             createStore: PendingDocumentCreateStore(userDefaults: storeDefaults),

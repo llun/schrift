@@ -213,7 +213,7 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
     /// The pass authorises on a live `/users/me/` but reads the draft through the stored
     /// identity. Unknown (an unconfirmed handover), the draft reads as absent — and the commit
     /// would remove the record and bytes that are the only way to resolve its placeholder.
-    func testAPassWithNoKnownAccountRemovesNoPhoto() async {
+    func testAPassWithNoKnownAccountRemovesNoPhoto() async throws {
         let log = RequestRecorder()
         stubPipeline(log: log)
         let defaults = makeDefaults()
@@ -225,7 +225,7 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
 
         await env.coordinator.syncPendingDrafts()
 
-        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
+        let localID = try XCTUnwrap(pendingAttachmentID(fromPlaceholderURL: placeholder))
         XCTAssertNotNil(env.attachments.attachment(for: localID))
         XCTAssertNotNil(env.attachments.data(for: localID))
         SignedInUserStore(userDefaults: defaults).remember(owner)
@@ -234,11 +234,11 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
 
     /// Another account signing in during the upload: the commit waits for the owner's next pass,
     /// which finds the URL checkpointed and uploads nothing twice.
-    func testAnAccountSwitchDuringTheUploadCommitsNothing() async {
+    func testAnAccountSwitchDuringTheUploadCommitsNothing() async throws {
         let log = RequestRecorder()
         stubPipeline(log: log)
         let gate = MockURLProtocol.ResponseGate()
-        let outer = MockURLProtocol.stubHandler!
+        let outer = try XCTUnwrap(MockURLProtocol.stubHandler)
         MockURLProtocol.stubHandler = { request in
             let stub = outer(request)
             guard request.url?.absoluteString.contains("attachment-upload") == true else { return stub }
@@ -261,7 +261,7 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
         gate.open()
         await pass.value
 
-        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
+        let localID = try XCTUnwrap(pendingAttachmentID(fromPlaceholderURL: placeholder))
         XCTAssertNotNil(env.attachments.attachment(for: localID)?.uploadedURLString, "checkpointed, kept")
         signedIn.clear()
         signedIn.remember(owner)

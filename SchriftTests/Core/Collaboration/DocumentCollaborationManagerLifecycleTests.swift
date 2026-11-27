@@ -162,11 +162,29 @@ final class DocumentCollaborationManagerLifecycleTests: DocumentCollaborationMan
         manager.closeAll()
 
         XCTAssertEqual(manager.activeDocumentCount, 0)
-        await waitUntil { spy.sockets[0].cancelCloseCode != nil }
+        await waitUntil { spy.sockets.first?.cancelCloseCode != nil }
         _ = manager.session(for: docID)
         await waitUntil { spy.sockets.count == 2 }
         XCTAssertEqual(manager.activeDocumentCount, 1, "a screen asking again gets a fresh session")
         manager.session(for: docID).map { $0.stop() }
+    }
+
+    /// The same account confirming a silent re-login keeps its live sessions; another account
+    /// being confirmed closes them, since they were opened under the previous cookies.
+    func testOnlyAnotherAccountClosesTheLiveSessions() async {
+        let spy = ManagerSocketFactorySpy()
+        let accountA = UUID()
+        let manager = makeManager(spy: spy, account: { accountA })
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        manager.closeSessions(otherThan: accountA)
+        XCTAssertEqual(manager.activeDocumentCount, 1)
+        XCTAssertNil(spy.sockets.first?.cancelCloseCode, "the same account's socket stays open")
+
+        manager.closeSessions(otherThan: UUID())
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        await waitUntil { spy.sockets.first?.cancelCloseCode != nil }
     }
 
     func testSuspendClosesSocketAndResumeRebuilds() async {

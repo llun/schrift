@@ -419,6 +419,14 @@ struct EditorView: View {
             switch nativeOpen.route {
             case .native(let session):
                 session.input?.refreshInlinePicker()
+                // Opened read-only while the account was unconfirmed: now that it is named,
+                // open again so editing comes back by itself.
+                if nativeOpen.editUnavailableReason == .accountUnconfirmed, viewModel.signedInUserID != nil {
+                    nativeOpen.reopen(
+                        viewModel: viewModel, isOffline: showsOffline,
+                        canUpdate: pinRow?.abilities.update == true,
+                        canMention: pinRow?.abilities.mention == true)
+                }
             case .waitingClassicEdits:
                 nativeOpen.reopen(
                     viewModel: viewModel, isOffline: showsOffline,
@@ -757,6 +765,11 @@ private struct ClassicEditorView: View {
                     pendingShareAfterOptions = false
                 }
             }
+            // The page turned read-only under an open edit (a re-login whose account is not
+            // confirmed yet): end the edit, keeping what was typed for the account it belongs to.
+            .onChange(of: viewModel.readOnlyNoteKey) { _, key in
+                if key != nil, viewModel.isEditing { viewModel.finishEditing() }
+            }
             // Presence: request a live session while this document is on screen, so
             // our avatar shows to peers and theirs to us. Reference-counted + balanced
             // with `release` on disappear; the manager owns the socket lifecycle
@@ -1088,6 +1101,7 @@ private struct ClassicEditorView: View {
             hasConflict: viewModel.syncConflict != nil,
             showUpdateAvailable: viewModel.updateAvailable && !viewModel.isEditing,
             isDocumentPendingDelete: viewModel.isDocumentPendingDelete,
+            readOnlyNote: viewModel.hasLoadedContent ? viewModel.readOnlyNoteKey.map { loc[$0] } : nil,
             errorKey: viewModel.errorKey,
             errorDetail: viewModel.errorDetail,
             onTapConflict: {

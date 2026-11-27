@@ -50,6 +50,8 @@ final class DocumentCollaborationManager {
         var canUpdate: Bool
         var refCount: Int
         var lingerTask: Task<Void, Never>?
+        /// The account signed in when the socket was opened (its cookies); nil when none was known.
+        var account: UUID?
         /// The document's live Yjs replica (C1), built lazily on the first
         /// inbound sync update. Exactly one owner touches it — this manager, on
         /// the main actor (see `Core/Yjs`'s "one owner" rule) — and it must be
@@ -74,6 +76,7 @@ final class DocumentCollaborationManager {
     }
 
     private var entries: [UUID: Entry] = [:]
+    private let accountProvider: @MainActor () -> UUID?
     private struct WeakObserver {
         weak var observer: (any CollaborationLifecycleObserver)?
     }
@@ -156,8 +159,10 @@ final class DocumentCollaborationManager {
         localStateProvider: @escaping @Sendable () async -> LocalAwarenessState? = { nil },
         socketFactory: @escaping WebSocketFactory,
         lingerSeconds: Double = 5,
-        replicaClientIDProvider: @escaping () -> UInt32 = { UInt32.random(in: 1..<UInt32.max) }
+        replicaClientIDProvider: @escaping () -> UInt32 = { UInt32.random(in: 1..<UInt32.max) },
+        accountProvider: @escaping @MainActor () -> UUID? = { SignedInUserStore().userID }
     ) {
+        self.accountProvider = accountProvider
         self.serverBaseURL = serverBaseURL
         self.cookieProvider = cookieProvider
         self.featureEnabled = featureEnabled
@@ -401,7 +406,8 @@ final class DocumentCollaborationManager {
             return entry.session
         }
         guard let session = makeSession(for: documentID, canUpdate: canUpdate) else { return nil }
-        entries[documentID] = Entry(session: session, canUpdate: canUpdate, refCount: 1, lingerTask: nil)
+        entries[documentID] = Entry(
+            session: session, canUpdate: canUpdate, refCount: 1, lingerTask: nil, account: accountProvider())
         return session
     }
 
@@ -422,12 +428,22 @@ final class DocumentCollaborationManager {
         entries[documentID] = entry
     }
 
-    /// The session changed hands (a re-login, a sign-out): every replica and socket here was
-    /// built under the previous cookies, so all of them go — held ones too. A screen still open
-    /// asks again, under the new session.
+    /// Sign-out: every replica and socket here goes, held ones too.
     func closeAll() {
+        close { _ in true }
+    }
+
+    /// `account` is now known to be the one signed in: the replicas and sockets opened for any
+    /// other (or before an account was known) were built under other cookies, so they go — held
+    /// ones too; a screen still open asks again. The same account confirming a silent re-login
+    /// keeps its live sessions.
+    func closeSessions(otherThan account: UUID) {
+        close { $0.account != account }
+    }
+
+    private func close(where shouldClose: (Entry) -> Bool) {
         var releasedHeldReplica = false
-        for (id, entry) in entries {
+        for (id, entry) in entries where shouldClose(entry) {
             entry.lingerTask?.cancel()
             entry.session?.stop()
             releasedHeldReplica = removeEntry(id) || releasedHeldReplica

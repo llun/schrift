@@ -9,7 +9,8 @@ final class DocumentSaveCoordinatorAccountTests: DocumentSaveCoordinatorTestCase
     private let otherAccount = UUID(uuidString: "6B6B6B6B-6B6B-4B6B-8B6B-6B6B6B6B6B6B")!
 
     private func signIn(_ account: UUID?) {
-        let signedIn = SignedInUserStore(userDefaults: UserDefaults(suiteName: draftSuiteNames.last!)!)
+        guard let suite = draftSuiteNames.last else { return XCTFail("no coordinator suite") }
+        let signedIn = SignedInUserStore(userDefaults: UserDefaults(suiteName: suite)!)
         signedIn.clear()
         signedIn.remember(account)
     }
@@ -124,24 +125,6 @@ final class DocumentSaveCoordinatorAccountTests: DocumentSaveCoordinatorTestCase
         XCTAssertNil(contentCache.content(for: documentID))
     }
 
-    /// Two unnamed sign-ins are two sessions: a save the first parked behind a conflict is
-    /// neither shown to the second nor released by it.
-    func testOneUnnamedSignInNeverReleasesAnothersParkedSave() async {
-        let log = RequestRecorder()
-        stubSavePipeline(log: log)
-        let (coordinator, _, _) = makeCoordinator()
-        signIn(nil)
-        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
-        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# First unnamed sign-in")
-
-        signIn(nil)
-        XCTAssertNil(coordinator.pendingSave(documentID: documentID))
-        XCTAssertNil(coordinator.conflict(for: documentID))
-        coordinator.clearResolvedConflict(documentID: documentID)
-
-        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
-    }
-
     /// Native mode must not seed a replica over another account's waiting classic edits.
     func testAnotherAccountsClassicDraftCountsAsWaitingClassicEdits() {
         let (coordinator, draftStore, _) = makeCoordinator()
@@ -207,19 +190,20 @@ final class DocumentSaveCoordinatorAccountTests: DocumentSaveCoordinatorTestCase
         XCTAssertTrue(isFailed(coordinator.state(for: documentID)), "still the owner's to answer")
     }
 
-    /// While no account is known the hold is mirrored onto the sign-in's own set-aside draft.
-    func testAConflictRecordedWhileUnknownIsMirroredOntoThatSignInsDraft() async {
+    /// Pages are read-only while no account is known, and nothing that reaches the coordinator
+    /// then is sent or parked: it is set aside, kept for nobody.
+    func testNothingIsSentOrParkedWhileNoAccountIsKnown() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, contentStatus: 503)
+        stubSavePipeline(log: log)
         let (coordinator, draftStore, _) = makeCoordinator()
         signIn(nil)
-        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Meanwhile")
-        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
 
-        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 1_800_000_000))
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Unconfirmed")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
 
-        XCTAssertEqual(
-            draftStore.allDraftsOfEveryAccount().first?.conflictServerUpdatedAt,
-            Date(timeIntervalSince1970: 1_800_000_000))
+        XCTAssertNil(coordinator.pendingSave(documentID: documentID))
+        signIn(signedInUserID)
+        XCTAssertNil(draftStore.draft(for: documentID), "nobody's, not the account named next")
+        XCTAssertEqual(draftStore.allDraftsOfEveryAccount().map(\.markdown), ["# Unconfirmed"], "but kept")
     }
 }

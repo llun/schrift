@@ -59,7 +59,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
     private func makeViewModel() -> EditorViewModel {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
-        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: draftSuiteName)!)
+        let draftStore = signedInDraftStore(UserDefaults(suiteName: draftSuiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
         let coordinator = DocumentSaveCoordinator(

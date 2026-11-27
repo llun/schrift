@@ -942,8 +942,8 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
             return XCTFail("nil signedInUser must open native read-only instead of .classic, got \(open.route)")
         }
         XCTAssertNil(session.input, "nil account native session must be read-only")
-        // The owner's classic draft still waits on the device, which is the first reason given.
-        XCTAssertEqual(open.editUnavailableReason, .classicDraft)
+        // Until the account is confirmed that is the reason given; editing comes back by itself.
+        XCTAssertEqual(open.editUnavailableReason, .accountUnconfirmed)
         XCTAssertEqual(session.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
     }
 

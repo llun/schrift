@@ -560,7 +560,6 @@ enum Strings_th {
             "อ่านอย่างเดียว: กำลังรอให้ฉบับร่างออฟไลน์ซิงค์เสร็จสมบูรณ์ — เปิดเอกสารใหม่อีกครั้งเพื่อแก้ไข",
         .native_editor_read_only_live_held:
             "กำลังรอให้การเปลี่ยนแปลงแบบเรียลไทม์ซิงค์ — เปิดเอกสารใหม่อีกครั้งเพื่อแก้ไข",
-        .native_editor_read_only_signed_out: "อ่านอย่างเดียว: ลงชื่อเข้าใช้เพื่อแก้ไขเอกสารนี้",
         .native_editor_block_callout: "กล่องข้อความ",
         .native_editor_block_table: "ตาราง",
         .native_editor_block_columns: "คอลัมน์",

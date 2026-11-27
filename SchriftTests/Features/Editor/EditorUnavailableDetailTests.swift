@@ -37,7 +37,7 @@ final class EditorUnavailableDetailTests: XCTestCase {
             cookieProvider: { [] },
             onRequestFailure: { failure in diagnostics?.record(failure) }
         )
-        let draftStore = PendingDraftStore(userDefaults: userDefaults)
+        let draftStore = signedInDraftStore(userDefaults)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop,

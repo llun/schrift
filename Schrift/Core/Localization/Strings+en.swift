@@ -599,7 +599,9 @@ enum Strings_en {
             "Read-only: waiting for an offline draft to finish syncing — reopen it to edit",
         .native_editor_read_only_live_held:
             "Waiting for live collaboration changes to sync — reopen it to edit",
-        .native_editor_read_only_signed_out: "Read-only: sign in to edit this document",
+        .editor_read_only_account_unconfirmed: "Checking your account…",
+        .editor_read_only_another_account:
+            "This page has unsent changes from another account on this device. You can edit it after they sync.",
         .native_editor_block_callout: "Callout",
         .native_editor_block_table: "Table",
         .native_editor_block_columns: "Columns",

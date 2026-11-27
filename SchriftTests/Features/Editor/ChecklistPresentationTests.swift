@@ -308,7 +308,7 @@ final class ChecklistPresentationTests: XCTestCase {
             session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let coordinator = DocumentSaveCoordinator(
             client: client,
-            draftStore: PendingDraftStore(userDefaults: store), contentCache: contentCache,
+            draftStore: signedInDraftStore(store), contentCache: contentCache,
             createStore: PendingDocumentCreateStore(userDefaults: store),
             deleteStore: PendingDocumentDeleteStore(userDefaults: store),
             attachmentStore: PendingAttachmentStore(userDefaults: store, directory: directory),

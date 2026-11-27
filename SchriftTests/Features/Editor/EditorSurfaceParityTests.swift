@@ -796,7 +796,7 @@ final class EditorSurfaceParityTests: XCTestCase {
         let client = DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!)
         let coordinator = DocumentSaveCoordinator(
             client: client,
-            draftStore: PendingDraftStore(userDefaults: store),
+            draftStore: signedInDraftStore(store),
             contentCache: contentCache,
             createStore: PendingDocumentCreateStore(userDefaults: store),
             deleteStore: PendingDocumentDeleteStore(userDefaults: store),

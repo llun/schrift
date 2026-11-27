@@ -882,6 +882,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         ServerConfigStore(userDefaults: defaultOff.defaults).remember(
             ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
             forServerOrigin: defaultOff.model.client.serverOrigin)
+        // A page is editable only for a known account.
+        SignedInUserStore(userDefaults: defaultOff.defaults).remember(UUID())
         DocumentContentCacheStore(directory: defaultOff.directory).save(
             CachedDocumentContent(
                 documentID: defaultOff.model.documentID, title: "DefaultOff", markdown: "Editable classic",

@@ -146,7 +146,7 @@ final class LiveEditingIntegrationTests: XCTestCase {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "LiveEditingIntegrationTests.\(UUID().uuidString)"
         draftSuiteNames.append(suiteName)
-        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        let draftStore = signedInDraftStore(UserDefaults(suiteName: suiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
         let coordinator = DocumentSaveCoordinator(
@@ -767,13 +767,14 @@ final class LiveEditingIntegrationTests: XCTestCase {
             remoteApplyScheduler: scheduler)
         viewModel.liveWrite = bridge
         bridge.registerReplicaObserver()
-        spy.sockets[0].deliver(message: syncStep2Frame(hex: initialHex))
+        try XCTUnwrap(spy.sockets.first).deliver(message: syncStep2Frame(hex: initialHex))
         await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
         bridge.replicaDidChange()
         scheduler.advanceFrame()
         XCTAssertTrue(bridge.isEngaged)
         XCTAssertEqual(viewModel.blocks.map(\.text), ["Doc", "First", "Second"])
-        let firstID = viewModel.blocks[1].id
+        // Guarded: a failure above reports here rather than trapping the host.
+        let firstID = try XCTUnwrap(viewModel.blocks.dropFirst().first).id
         viewModel.startEditing()
         viewModel.focusedBlockID = firstID
 
@@ -784,7 +785,7 @@ final class LiveEditingIntegrationTests: XCTestCase {
             isMarked: true)
         XCTAssertEqual(manager.replicaVersion(for: documentID), 1)
 
-        spy.sockets[0].deliver(message: syncUpdateFrame(hex: peerHex))
+        try XCTUnwrap(spy.sockets.first).deliver(message: syncUpdateFrame(hex: peerHex))
         await waitUntil { manager.replicaVersion(for: self.documentID) == 2 }
         XCTAssertNotNil(scheduler.pending)
         return (viewModel, manager, bridge, session, firstID, spy)

@@ -74,11 +74,6 @@ final class SessionStore {
     /// stays off until it (or `signOut`) runs; `needsReauthentication` alone is not enough,
     /// because cancelling the sheet clears it while those cookies are still live.
     private var cookiesAwaitingConfirmation = false
-    /// The identity epoch a web login's handover left behind. Still current at `signIn`, and no
-    /// login has begun writing cookies since, nothing changed hands, so the confirming
-    /// `/users/me/` names the account of that sign-in. The only proof that is trusted: an
-    /// unchanged epoch alone is not, since a login writes its cookies before the epoch moves.
-    private var handoverEpoch: Int?
     /// RootView's sign-out is draining native saves before it calls `signOut`. A re-login
     /// finishing in that window would bump `signInGeneration` and RootView would drop the
     /// sign-out, so no re-login may complete until it ends (`endSignOut` or `signOut`).
@@ -168,19 +163,8 @@ final class SessionStore {
         try keychain.save(Data([1]), forKey: Self.authenticatedKeychainKey)
         // Invalidate the old disk namespace before saving replacement cookies,
         // so an interruption cannot restore new credentials with old images.
-        let confirmedEpoch =
-            cookiesAwaitingConfirmation && handoverEpoch == signedInUser.epoch ? handoverEpoch : nil
-        handoverEpoch = nil
-        // Confirming a handover nothing replaced keeps its identity epoch: the cookies have not
-        // changed hands since it moved, and moving it again would make the work this account did
-        // in the meantime (an editor, a save in flight) look like another sign-in's.
-        forgetSignedInIdentity(keepingIdentityEpoch: confirmedEpoch != nil)
+        forgetSignedInIdentity()
         signedInUser.remember(userID)
-        // Drafts saved while the handover was unconfirmed were saved by this account.
-        if let confirmedEpoch, let userID {
-            PendingDraftStore(userDefaults: userDefaults).adoptDraftsSavedWhileUnknown(
-                epoch: confirmedEpoch, owner: userID)
-        }
         let cookiesPersisted = persistSessionCookies(for: serverURL)
         self.serverURL = serverURL
         self.isAuthenticated = true
@@ -257,14 +241,12 @@ final class SessionStore {
     /// completes no request bound to the previous session passes, and none
     /// bound while switching does either.
     func noteSessionCookiesWillChange() {
-        handoverEpoch = nil
         generationClock.beginSwitch()
     }
 
     func noteSessionCookiesReplaced() {
         cookiesAwaitingConfirmation = true
         forgetSignedInIdentity()
-        handoverEpoch = signedInUser.epoch
         // The identity may have changed under screens that survived the sheet, exactly as at
         // `signIn` — clearing the stores is only half of scoping the account row to the session.
         signInGeneration += 1
@@ -273,7 +255,7 @@ final class SessionStore {
 
     /// Everything that answers *whose session is this*, forgotten together. One body, so a
     /// later piece of account-scoped state has one place to be added rather than three.
-    private func forgetSignedInIdentity(keepingIdentityEpoch: Bool = false) {
+    private func forgetSignedInIdentity() {
         let namespace = UUID()
         imageCacheSessionID = namespace
         // Cookie handover precedes /users/me confirmation. Keep its new
@@ -286,7 +268,7 @@ final class SessionStore {
         endMediaPlayback()
         clearWebCache()
         clearDiagnostics()
-        if !keepingIdentityEpoch { signedInUser.clear() }
+        signedInUser.clear()
         // The account's displayed profile goes with the id — it is *displayed* before any
         // fetch, so a kept entry would name the previous account on the new one's screen.
         // (Why none of this happens at a mere expiry is `signIn`'s comment above: a dismissed

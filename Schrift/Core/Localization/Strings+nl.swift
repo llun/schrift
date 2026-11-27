@@ -576,7 +576,6 @@ enum Strings_nl {
             "Alleen-lezen: wachten tot een offline concept is gesynchroniseerd — open het opnieuw om te bewerken",
         .native_editor_read_only_live_held:
             "Wachten tot wijzigingen van live samenwerken zijn gesynchroniseerd — open het opnieuw om te bewerken",
-        .native_editor_read_only_signed_out: "Alleen-lezen: meld je aan om dit document te bewerken",
         .native_editor_block_callout: "Toelichting",
         .native_editor_block_table: "Tabel",
         .native_editor_block_columns: "Kolommen",

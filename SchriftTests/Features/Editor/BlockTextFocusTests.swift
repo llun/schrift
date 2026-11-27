@@ -884,7 +884,7 @@ final class BlockTextFocusTests: XCTestCase {
             session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let cache = DocumentContentCacheStore(directory: directory)
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: PendingDraftStore(userDefaults: defaults), contentCache: cache,
+            client: client, draftStore: signedInDraftStore(defaults), contentCache: cache,
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults), backgroundTasks: .noop, sleep: neverSleep)
         let vm = EditorViewModel(

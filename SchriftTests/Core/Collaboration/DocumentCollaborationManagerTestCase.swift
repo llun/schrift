@@ -35,7 +35,8 @@ class DocumentCollaborationManagerTestCase: XCTestCase {
     func makeManager(
         feature: Bool = true, offline: Bool = false, server: Bool = true,
         cookies: [HTTPCookie] = [], linger: Double = 0.05,
-        config: ServerConfig? = nil, replicaClientID: UInt32 = 42, spy: ManagerSocketFactorySpy
+        config: ServerConfig? = nil, replicaClientID: UInt32 = 42, spy: ManagerSocketFactorySpy,
+        account: @escaping @MainActor () -> UUID? = { nil }
     ) -> DocumentCollaborationManager {
         let manager = DocumentCollaborationManager(
             serverBaseURL: baseURL,
@@ -45,7 +46,8 @@ class DocumentCollaborationManagerTestCase: XCTestCase {
             serverConfigProvider: { config },
             socketFactory: spy.factory,
             lingerSeconds: linger,
-            replicaClientIDProvider: { replicaClientID })
+            replicaClientIDProvider: { replicaClientID },
+            accountProvider: account)
         manager.serverSupportsLiveCollaboration = server
         return manager
     }

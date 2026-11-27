@@ -90,7 +90,8 @@ let pendingDraftClockTolerance: TimeInterval = 120
 /// Stored under `<owner>|<document>`, so two accounts' drafts of one shared document never
 /// replace each other. A bare `<document>` key is a draft from an earlier build that
 /// `assignOwnersToEarlierDrafts` could name no account for, or one an older build wrote after
-/// it ran: set aside, shown to nobody and replayed by nobody, but kept.
+/// it ran; an `unknown-<epoch>|<document>` key is one saved with no account known. Both are set
+/// aside: shown to nobody and replayed by nobody, but kept.
 final class PendingDraftStore {
     private static let draftsKey = "dev.llun.Schrift.pendingDrafts"
     private static let ownersAssignedKey = "dev.llun.Schrift.pendingDrafts.ownersAssigned"
@@ -142,19 +143,18 @@ final class PendingDraftStore {
 
     /// Stamps the draft with the signed-in account (a native draft keeps its replica's, and a
     /// draft already stamped keeps its stamp) and replaces only that account's draft of the
-    /// document. With no account to name it is set aside in a slot of its own for the sign-in
-    /// it was written in (`epoch`, the current one by default), so it replaces no one's work
-    /// either; `adoptDraftsSavedWhileUnknown` hands that slot over once the same sign-in is
-    /// named.
-    func save(_ draft: PendingDraft, setAsideIn epoch: Int? = nil) {
+    /// document. Nothing saves while no account is known — pages are read-only then — but a draft
+    /// that arrived without one would be set aside in a slot of its own rather than lost, shown to
+    /// nobody, exactly like a set-aside draft from an earlier build.
+    func save(_ draft: PendingDraft) {
         quarantineUnreadableDataIfNeeded()
         var drafts = loadAll()
-        let stamped = draft.owned(by: draft.owner ?? (epoch == nil ? signedInUser.userID : nil))
+        let stamped = draft.owned(by: draft.owner ?? signedInUser.userID)
         if let owner = stamped.owner {
             drafts = drafts.filter { $0.value.documentID != draft.documentID || $0.value.owner != owner }
             drafts[Self.key(owner: owner, documentID: draft.documentID)] = stamped
         } else {
-            drafts[Self.setAsideKey(epoch: epoch ?? signedInUser.epoch, documentID: draft.documentID)] = stamped
+            drafts["unknown-\(signedInUser.epoch)|\(draft.documentID.uuidString)"] = stamped
         }
         persist(drafts)
     }
@@ -173,23 +173,8 @@ final class PendingDraftStore {
         return index()?.byOwner[owner]?[documentID]
     }
 
-    /// The draft written in `session`: its account's, or — for a sign-in never named — the slot
-    /// set aside for it.
-    func draft(for documentID: UUID, in session: SignedInSession) -> PendingDraft? {
-        if let owner = session.userID { return draft(for: documentID, owner: owner) }
-        return loadAll()[Self.setAsideKey(epoch: session.epoch, documentID: documentID)]
-    }
-
     func remove(documentID: UUID) {
         remove(documentID: documentID, owner: signedInUser.userID)
-    }
-
-    func remove(documentID: UUID, in session: SignedInSession) {
-        if let owner = session.userID { return remove(documentID: documentID, owner: owner) }
-        quarantineUnreadableDataIfNeeded()
-        var drafts = loadAll()
-        drafts[Self.setAsideKey(epoch: session.epoch, documentID: documentID)] = nil
-        persist(drafts)
     }
 
     func remove(documentID: UUID, owner: UUID?) {
@@ -198,36 +183,6 @@ final class PendingDraftStore {
         var drafts = loadAll()
         drafts = drafts.filter { $0.value.documentID != documentID || $0.value.owner != owner }
         persist(drafts)
-    }
-
-    /// The sign-in `epoch` has been named as `owner` — by a confirmation proven to have run with
-    /// the same cookies (`SessionStore.signIn`) — and the drafts set aside while it was unknown
-    /// are that account's.
-    /// One whose document already has a draft of `owner`'s stays set aside: replacing either
-    /// would lose work. Returns whether anything moved.
-    @discardableResult
-    func adoptDraftsSavedWhileUnknown(epoch: Int, owner: UUID) -> Bool {
-        let prefix = "unknown-\(epoch)|"
-        var drafts = loadAll()
-        let slots = drafts.filter { $0.key.hasPrefix(prefix) }
-        var moved = false
-        for (key, draft) in slots where draft.owner == nil {
-            guard !drafts.values.contains(where: { $0.documentID == draft.documentID && $0.owner == owner }) else {
-                continue
-            }
-            drafts[key] = nil
-            drafts[Self.key(owner: owner, documentID: draft.documentID)] = draft.owned(by: owner)
-            moved = true
-        }
-        if moved {
-            quarantineUnreadableDataIfNeeded()
-            persist(drafts)
-        }
-        return moved
-    }
-
-    private static func setAsideKey(epoch: Int, documentID: UUID) -> String {
-        "unknown-\(epoch)|\(documentID.uuidString)"
     }
 
     private static func key(owner: UUID, documentID: UUID) -> String {

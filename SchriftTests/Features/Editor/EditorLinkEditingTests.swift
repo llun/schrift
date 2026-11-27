@@ -38,7 +38,7 @@ final class EditorLinkEditingTests: XCTestCase {
             return .init(statusCode: 200, headers: [:], body: Data(body.utf8), error: nil)
         }
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
-        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: draftSuiteName)!)
+        let draftStore = signedInDraftStore(UserDefaults(suiteName: draftSuiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
         let coordinator = DocumentSaveCoordinator(
@@ -53,12 +53,15 @@ final class EditorLinkEditingTests: XCTestCase {
     }
 
     private func focusFirstBlock(_ viewModel: EditorViewModel, selection: NSRange) {
-        viewModel.focusedBlockID = viewModel.blocks[0].id
+        // Guarded: an editor that loaded no blocks reports a failure rather than trapping the host.
+        guard let first = viewModel.blocks.first else { return XCTFail("the editor loaded no blocks") }
+        viewModel.focusedBlockID = first.id
         viewModel.selection = selection
     }
 
     private func firstLink(_ viewModel: EditorViewModel) throws -> InlineLinkSpan {
-        try XCTUnwrap(InlineMarkdown.layout(of: viewModel.blocks[0].text).links.first)
+        let first = try XCTUnwrap(viewModel.blocks.first, "the editor loaded no blocks")
+        return try XCTUnwrap(InlineMarkdown.layout(of: first.text).links.first)
     }
 
     func testTheLinkTextStyleOpensTheLinkEditor() async {

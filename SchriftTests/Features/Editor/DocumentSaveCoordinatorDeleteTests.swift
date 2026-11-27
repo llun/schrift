@@ -724,8 +724,6 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertEqual(relaunched.attachments.data(for: photoID), Data([0xFF, 0xD8, 0xFF]))
     }
 
-    /// The undo is one request wide and can lose — but it must never lose the user's *work*.
-    /// The document simply reads as deleted by someone else at the next fetch.
     /// The pass authorises on a live `/users/me/` but reads drafts through the stored identity;
     /// while that is unknown (an unconfirmed handover) it must change nothing.
     func testAPassWithNoKnownAccountSendsAndRemovesNothing() async {
@@ -810,10 +808,10 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
 
     /// Another account deleting a shared server document whose DELETE 404s for it (read as done)
     /// must not take this account's checkpointed create record with it.
-    func testAnotherAccountsDeletionLeavesThisAccountsCheckpointedRecord() {
+    func testAnotherAccountsDeletionLeavesThisAccountsCheckpointedRecord() throws {
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(title: "Local", parentID: nil, ownerUserID: user)
-        var record = env.creates.create(for: local.id)!
+        var record = try XCTUnwrap(env.creates.create(for: local.id))
         record.syncedServerID = serverID
         env.creates.save(record)
         let relaunched = makeEnvironment(sharing: env.defaults)
@@ -829,6 +827,8 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertNotNil(relaunched.drafts.draft(for: local.id))
     }
 
+    /// The undo is one request wide and can lose — but it must never lose the user's *work*.
+    /// The document simply reads as deleted by someone else at the next fetch.
     func testAnUndoDuringTheRequestKeepsEveryLocalTrace() async {
         let log = RequestRecorder()
         let env = makeEnvironment()

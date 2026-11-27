@@ -1541,20 +1541,33 @@ those; it opens the document read-only.
 
 **Work carries the sign-in it started in** (`SignedInSession`: the account id, or nil, and
 `SignedInUserStore.epoch`). An editor captures it when it loads and passes it to `enqueue`:
-the draft is filed under that account, and sent only while that account is the one signed in
-(an unnamed sign-in sends its own edits while its epoch is unchanged). A save captures it at
+the draft is filed under that account, and sent only while that account is the one signed in.
+A save captures it at
 `start`, so `finish` stamps and removes *that* account's draft and writes the content cache
 only while the same sign-in is in front of it (`DocumentContentCacheStore.save(_:during:)`);
 the editor's fetches write the cache under the same rule. While its session is not the one in
 front of it (`EditorViewModel.loadedSessionIsCurrent`) an editor reconciles, retries, resolves
 and purges nothing — its reads go through the live session, so it would otherwise take another
 account's draft for its own or delete that account's cached body. `EditorScreen` replaces its
-view model when another known account is signed in under it (`SignedInSession.isAnotherAccount`,
-checked again when an off-screen editor comes back): the old one finishes editing first, so its
-last flush (an IME composition included) is kept for its own account rather than sent as this
-one, and a document only this device holds closes instead, having nothing to reload as. A
-confirmed handover nothing replaced keeps its identity epoch, so the same account confirming
-does not look like another sign-in to its own editor or save.
+view model when a known account other than its own is signed in under it — including any, for
+one loaded while the account was unconfirmed (`SignedInSession.isAnotherAccount`, checked again
+when an off-screen editor comes back): the old one finishes editing first, so its last flush (an
+IME composition included) is kept for its own account rather than sent as this one, and a
+document only this device holds closes instead, having nothing to reload as.
+
+**Read-only while the account is unconfirmed, or another account has unsent edits here.** While
+the session has no known account (a re-login's cookies are handed over and `/users/me/` has not
+named them yet) every open page is read-only with the note "Checking your account…", classic
+and native alike (`EditorViewModel.readOnlyNoteKey`, `NativeEditUnavailableReason.accountUnconfirmed`).
+An edit open at that moment ends, kept for the account it belongs to. Editing comes back by itself
+once the account is named — in place for the same account; a page loaded while unconfirmed is
+reloaded as the named account. Pull to refresh, reconnect, foreground and a relaunch retry the
+check (`HomeViewModel.refreshSignedInUserIfUnknown`, `ProfileViewModel`). Nothing is written or
+sent for an unknown account. On a shared page where another account on this device has unsent
+classic edits, the page is read-only for this one with a note saying so
+(`hasClassicDraftOfAnotherAccount`, `.anotherAccountsEdits`); those edits stay safe until their
+account signs back in and syncs. The notes offer no action. A draft set aside for nobody locks
+nobody out.
 
 **In-memory per-document state is per account too.** The parked saves (`queued`), the
 content on the wire, the last confirmed push, the conflict holds, the save states, failure
@@ -1564,8 +1577,10 @@ saves, holds and failures are neither shown, released nor sent, and they are the
 that account returns. A save settling after a switch drains its own account's parked follow-up
 (that account's write-ahead draft is on disk for its replay) and lets the current account's
 follow its own session; an edit filed under another session drops what that session had parked,
-so the newer draft wins. The live-collaboration replicas and sockets are closed at every
-sign-in change and at sign-out. The holds are
+so the newer draft wins. The live-collaboration replicas and sockets remember the account they
+were opened for: once another account is known to be signed in (a re-login, or a `/users/me/`
+retried after a failed confirmation) theirs are closed, held ones too; the same account
+confirming a silent re-login keeps its live sessions. Sign-out closes them all. The holds are
 rehydrated at start from every account's drafts, each under its owner, because a fresh sign-in
 builds the coordinator before `/users/me/` answers.
 
@@ -1581,16 +1596,9 @@ judged in the window between a login writing its cookies and the identity store 
 refreshes an unknown identity before the replay. A deletion completed for one account
 (`discardPendingWork`) never takes another account's create record or sub-pages with it.
 
-**Drafts saved while the account is unknown** go to a slot of their own for that sign-in
-(`unknown-<epoch>|<document>`): shown to nobody, replayed by nobody, replacing no one's work.
-Only proof that the cookies did not change hands hands them over: `SessionStore.signIn`
-confirming a handover whose epoch is unchanged and after which no login began writing cookies
-(`noteSessionCookiesWillChange`) — then `adoptDraftsSavedWhileUnknown` re-keys them to that
-account, unless it already has a draft of the document. A passive `/users/me/` refresh does not
-adopt: a login writes its cookies before the epoch moves, so an unchanged epoch proves nothing.
-A slot never adopted stays set aside. The in-memory per-document state of an unnamed sign-in is
-kept per epoch for the same reason, so one unconfirmed session never releases another's parked
-save.
+**A draft without an account** (an `unknown-<epoch>|<document>` slot, which only a draft saved
+with no account known can be — nothing writes one now that pages are read-only then) is set
+aside like any other: shown to nobody, replayed by nobody, never deleted.
 
 Drafts from before account scoping carry no owner. `SchriftApp.init` calls
 `assignOwnersToEarlierDrafts()` once (a persisted flag) before any sign-in can name an

@@ -41,30 +41,6 @@ final class HomeViewModelSignedInUserTests: HomeViewModelTestCase {
     /// in. The store's only other writers run at launch and after a **successful** re-auth, so
     /// without this the user's own offline-created documents stay listed to nobody, and `+`
     /// keeps refusing to mint another, until they relaunch or happen to open Profile.
-    /// An unchanged epoch across `/users/me/` is no proof the cookies did not change hands (a
-    /// login writes them before the epoch moves), so a passive refresh never hands an unnamed
-    /// sign-in's drafts to the account it learns: they stay set aside.
-    func testLearningTheAccountDoesNotAdoptDraftsSavedWhileItWasUnknown() async {
-        let documentID = UUID()
-        MockURLProtocol.stubHandler = { request in
-            if request.url?.path.contains("users/me") == true {
-                return .init(
-                    statusCode: 200, headers: [:],
-                    body: Data(#"{"id":"11111111-1111-4111-8111-111111111111","email":"ada@example.org"}"#.utf8),
-                    error: nil)
-            }
-            return .init(statusCode: 503, headers: [:], body: Data(), error: nil)
-        }
-        let viewModel = makeViewModel(signedInUser: makeSignedInUser(userID: nil))
-        let coordinator = viewModel.saveCoordinator
-        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Typed meanwhile")
-        await waitUntil { coordinator.state(for: documentID) == .pendingSync }
-
-        await viewModel.refreshSignedInUser()
-
-        XCTAssertFalse(coordinator.hasClassicDraftOfAnyAccount(documentID: documentID), "still nobody's")
-    }
-
     func testAPullToRefreshReAsksWhoIsSignedInWhenNothingKnows() async {
         let log = RequestRecorder()
         let empty = Self.emptyFixture

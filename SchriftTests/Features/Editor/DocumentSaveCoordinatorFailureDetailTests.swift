@@ -12,7 +12,7 @@ final class DocumentSaveCoordinatorFailureDetailTests: DocumentSaveCoordinatorTe
         let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
         draftSuiteNames.append(suiteName)
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!),
+            client: client, draftStore: signedInDraftStore(UserDefaults(suiteName: suiteName)!),
             contentCache: DocumentContentCacheStore(directory: cacheDirectory), backgroundTasks: .noop,
             sleep: neverSleep, diagnostics: log)
         return (coordinator, log)

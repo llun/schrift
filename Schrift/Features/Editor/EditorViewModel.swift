@@ -2236,9 +2236,25 @@ final class EditorViewModel {
 
     var canStartEditing: Bool {
         hasLoadedContent
+            && readOnlyNoteKey == nil
             && !saveCoordinator.isNativeOwned(documentID: documentID)
             && !saveCoordinator.hasCheckpointedCreate(forServerID: documentID)
             && !((availability.isOffline || loadFailedOffline) && isNativeBaselineRequiredOffline)
+    }
+
+    /// Why this page is read-only for reasons about the account, explained on the reading surface:
+    /// the session's account is not confirmed yet (a re-login whose `/users/me/` has not named
+    /// it), or another account on this device has unsent classic edits here that only it can
+    /// sync. Reads `pins.revision`, which moves when the account is learned, so editing comes
+    /// back by itself.
+    var readOnlyNoteKey: L10nKey? {
+        _ = saveCoordinator.pins.revision
+        _ = saveCoordinator.draftsVersion
+        if saveCoordinator.signedInSession.userID == nil { return .editor_read_only_account_unconfirmed }
+        if saveCoordinator.hasClassicDraftOfAnotherAccount(documentID: documentID) {
+            return .editor_read_only_another_account
+        }
+        return nil
     }
 
     /// Called only after initialization/restoration, never from a rerender or reconnect.

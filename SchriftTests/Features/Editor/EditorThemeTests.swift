@@ -32,7 +32,7 @@ final class EditorThemeTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let client = DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!)
-        let drafts = PendingDraftStore(userDefaults: defaults)
+        let drafts = signedInDraftStore(defaults)
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: drafts, backgroundTasks: .noop, sleep: neverSleep)
         let model = EditorViewModel(client: client, documentID: UUID(), title: "Doc", saveCoordinator: coordinator)

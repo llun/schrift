@@ -584,7 +584,6 @@ enum Strings_sl {
             "Samo za branje: čakanje na sinhronizacijo osnutka brez povezave — za urejanje ga znova odprite",
         .native_editor_read_only_live_held:
             "Čakanje na sinhronizacijo sprememb sodelovanja v živo — za urejanje ga znova odprite",
-        .native_editor_read_only_signed_out: "Samo za branje: za urejanje tega dokumenta se prijavite",
         .native_editor_block_callout: "Oblaček",
         .native_editor_block_table: "Tabela",
         .native_editor_block_columns: "Stolpci",

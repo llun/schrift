@@ -573,7 +573,6 @@ enum Strings_it {
             "Sola lettura: in attesa della sincronizzazione di una bozza offline — riaprilo per modificare",
         .native_editor_read_only_live_held:
             "In attesa della sincronizzazione delle modifiche della collaborazione dal vivo — riaprilo per modificare",
-        .native_editor_read_only_signed_out: "Sola lettura: accedi per modificare questo documento",
         .native_editor_block_callout: "Riquadro",
         .native_editor_block_table: "Tabella",
         .native_editor_block_columns: "Colonne",
