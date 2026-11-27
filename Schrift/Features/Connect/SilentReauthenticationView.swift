@@ -37,9 +37,9 @@ struct SilentReauthenticationView: View {
             onCookiesWillChange: { viewModel.cookiesWillChange() },
             onLoginComplete: {
                 Task {
-                    await viewModel.handleLoginComplete()
-                    let succeeded = viewModel.errorKey == nil
-                    attempt.confirmationFinished(succeeded: succeeded)
+                    let succeeded = await viewModel.handleLoginComplete()
+                    // A stale login (false, no error) is not a failure to escalate to the sheet.
+                    attempt.confirmationFinished(succeeded: succeeded || viewModel.errorKey == nil)
                     if succeeded { onAuthenticated() }
                 }
             },

@@ -74,6 +74,10 @@ final class SessionStore {
     /// stays off until it (or `signOut`) runs; `needsReauthentication` alone is not enough,
     /// because cancelling the sheet clears it while those cookies are still live.
     private var cookiesAwaitingConfirmation = false
+    /// RootView's sign-out is draining native saves before it calls `signOut`. A re-login
+    /// finishing in that window would bump `signInGeneration` and RootView would drop the
+    /// sign-out, so no re-login may complete until it ends (`endSignOut` or `signOut`).
+    private(set) var isSigningOut = false
     private let now: () -> ContinuousClock.Instant
     /// Bumped by `signIn` and by `noteSessionCookiesReplaced` — the two moments the session
     /// underneath a live screen can become a different account's — so a screen already on
@@ -272,7 +276,26 @@ final class SessionStore {
         cachedUser.clear()
     }
 
+    func beginSignOut() { isSigningOut = true }
+
+    /// A stale re-login (see `ReauthenticationViewModel`) has already written its cookies.
+    /// Signed in, they are treated as an unconfirmed handover — the identity is forgotten, as
+    /// at `noteSessionCookiesReplaced`, without the generation bump that would cancel a
+    /// sign-out under way. Signed out, they are deleted.
+    func discardStaleLoginCookies() {
+        guard isAuthenticated else {
+            deleteServerCookies()
+            return
+        }
+        cookiesAwaitingConfirmation = true
+        forgetSignedInIdentity()
+    }
+
+    /// The sign-out finished or was abandoned.
+    func endSignOut() { isSigningOut = false }
+
     func signOut() throws {
+        isSigningOut = false
         // Belt-and-braces beside `RootView`'s own clear: a second sign-out path added later
         // should not have to remember this one.
         forgetSignedInIdentity()
@@ -306,7 +329,8 @@ final class SessionStore {
     /// replaced — a slow request in flight across a silent re-login, say — and reading it as
     /// the new session failing would put up the very sheet the silent attempt just avoided.
     func noteSessionExpired(requestStartedAt: ContinuousClock.Instant? = nil) {
-        guard isAuthenticated, !needsReauthentication else { return }
+        // A sign-out under way ends the session anyway; no re-login may start under it.
+        guard isAuthenticated, !needsReauthentication, !isSigningOut else { return }
         if let requestStartedAt, let lastSignIn, requestStartedAt < lastSignIn { return }
         let silentJustSucceeded = lastSilentSignIn.map { now() - $0 < silentReauthenticationCooldown }
         reauthenticationAttempt += 1
@@ -325,7 +349,7 @@ final class SessionStore {
     /// attempt is actually running, so a late timeout can neither re-open a sheet the user just
     /// answered nor raise one after a successful silent sign-in.
     func escalateReauthentication(attempt: Int) {
-        guard isSilentlyReauthenticating, attempt == reauthenticationAttempt else { return }
+        guard isSilentlyReauthenticating, attempt == reauthenticationAttempt, !isSigningOut else { return }
         silentReauthenticationExhausted = true
         isReauthenticationInteractive = true
     }

@@ -174,8 +174,12 @@ private struct AuthenticatedHomeContainer: View {
         guard signOutTask == nil else { return }
         let expectedGeneration = sessionStore.signInGeneration
         let leavingUserID = SignedInUserStore().userID
+        sessionStore.beginSignOut()
         signOutTask = Task { @MainActor in
-            defer { signOutTask = nil }
+            defer {
+                signOutTask = nil
+                sessionStore.endSignOut()
+            }
             viewModel.saveCoordinator.cancelNativeSaveRetries()
             // Drain pending native saves, then close every replica before purging clean ones.
             await nativeSessions.drainAll().value

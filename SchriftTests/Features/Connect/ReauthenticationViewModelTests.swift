@@ -149,4 +149,67 @@ final class ReauthenticationViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.sessionStore.needsReauthentication)
         XCTAssertNil(SignedInUserStore(userDefaults: userDefaults).userID)
     }
+
+    /// A sign-out while a silent re-login's `/users/me/` is on the wire wins, whether that
+    /// confirmation then succeeds or fails: no sign-in after it, and no error either.
+    func testASignOutDuringTheConfirmationIsNotUndone() async throws {
+        for status in [200, 500] {
+            let gate = MockURLProtocol.ResponseGate()
+            let viewModel = try makeViewModel { _ in
+                .init(statusCode: status, headers: [:], body: Data("{}".utf8), error: nil, releasedBy: gate)
+            }
+
+            let login = Task { await viewModel.handleLoginComplete() }
+            await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+            try viewModel.sessionStore.signOut()
+            gate.open()
+            let signedIn = await login.value
+
+            XCTAssertFalse(signedIn, "\(status)")
+            XCTAssertNil(viewModel.errorKey, "\(status): nothing failed; the login was superseded")
+            XCTAssertFalse(viewModel.sessionStore.isAuthenticated, "\(status)")
+            XCTAssertFalse(viewModel.isConfirming, "\(status)")
+            MockURLProtocol.reset()
+        }
+    }
+
+    /// RootView's sign-out drains saves before it calls `signOut`; a re-login completing in
+    /// that window would move `signInGeneration` and make RootView drop the sign-out.
+    func testNoReLoginCompletesWhileASignOutIsDraining() async throws {
+        let viewModel = try makeViewModel { _ in
+            .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
+        }
+        let signedInUser = SignedInUserStore(userDefaults: userDefaults)
+        signedInUser.remember(UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        let generation = viewModel.sessionStore.signInGeneration
+        viewModel.sessionStore.beginSignOut()
+
+        let signedIn = await viewModel.handleLoginComplete()
+
+        XCTAssertFalse(signedIn)
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertEqual(viewModel.sessionStore.signInGeneration, generation, "RootView's sign-out guard still holds")
+        XCTAssertNil(signedInUser.userID, "the written cookies may be another account's")
+    }
+
+    /// The web view's cookie callback can land after the sign-out finished: the cookies it just
+    /// wrote are deleted, and nothing is signed in.
+    func testALoginLandingAfterTheSignOutDeletesItsCookies() async throws {
+        let cookieStorage = FakeCookieStorage()
+        let viewModel = try makeViewModel(cookieStorage: cookieStorage) { _ in
+            .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
+        }
+        viewModel.cookiesWillChange()
+        try viewModel.sessionStore.signOut()
+        cookieStorage.setCookie(
+            HTTPCookie(properties: [
+                .domain: "docs.llun.dev", .path: "/", .name: "docs_sessionid", .value: "fake-late-session",
+            ])!)
+
+        let signedIn = await viewModel.handleLoginComplete()
+
+        XCTAssertFalse(signedIn)
+        XCTAssertFalse(viewModel.sessionStore.isAuthenticated)
+        XCTAssertEqual(cookieStorage.cookies(for: serverURL) ?? [], [])
+    }
 }
