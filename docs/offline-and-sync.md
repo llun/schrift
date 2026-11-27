@@ -134,7 +134,9 @@ by timestamp, preserves newer live edits and persists the merged store before
 clearing quarantine. Failed recovery retains the hold and every blob.
 `DocumentSaveCoordinator.recoverQuarantinedDrafts()` wraps it and rehydrates the
 conflict holds of the recovered drafts. Profile's Files section shows "Recover
-unreadable drafts" only while the hold is in force; there are no startup writes.
+unreadable drafts" only while the hold is in force. The only startup write is the one-time
+owner assignment at the first launch of the account-scoping build, which quarantines an
+unreadable live blob so the blobs it records are exactly the ones retained.
 
 The save adapter captures a verified outbox and enters the coordinator's existing
 serialized slots. It validates server/config/org/account, sends each stored update
@@ -1543,16 +1545,27 @@ the draft is filed under that account, and sent only while that account is the o
 (an unnamed sign-in sends its own edits while its epoch is unchanged). A save captures it at
 `start`, so `finish` stamps and removes *that* account's draft and writes the content cache
 only while the same sign-in is in front of it (`DocumentContentCacheStore.save(_:during:)`);
-the editor's fetches write the cache under the same rule. `EditorScreen` replaces its view
-model when another known account is signed in under it (`SignedInSession.isAnotherAccount`),
-so a screen left open across the re-login sheet shows nothing of the previous account's, and
-its last flush is kept for that account rather than sent as this one.
+the editor's fetches write the cache under the same rule. While its session is not the one in
+front of it (`EditorViewModel.loadedSessionIsCurrent`) an editor reconciles, retries, resolves
+and purges nothing — its reads go through the live session, so it would otherwise take another
+account's draft for its own or delete that account's cached body. `EditorScreen` replaces its
+view model when another known account is signed in under it (`SignedInSession.isAnotherAccount`,
+checked again when an off-screen editor comes back): the old one finishes editing first, so its
+last flush (an IME composition included) is kept for its own account rather than sent as this
+one, and a document only this device holds closes instead, having nothing to reload as. A
+confirmed handover nothing replaced keeps its identity epoch, so the same account confirming
+does not look like another sign-in to its own editor or save.
 
 **In-memory per-document state is per account too.** The parked saves (`queued`), the
-content on the wire, the last confirmed push and the conflict holds live in
-`AccountScoped` maps read and written for the account drafts are scoped to: after an in-place
-re-login as someone else, the previous account's parked saves and holds are neither shown,
-released nor sent, and they are there again when that account returns. The holds are
+content on the wire, the last confirmed push, the conflict holds, the save states, failure
+reports and known server titles live in `AccountScoped` maps read and written for the account
+drafts are scoped to: after an in-place re-login as someone else, the previous account's parked
+saves, holds and failures are neither shown, released nor sent, and they are there again when
+that account returns. A save settling after a switch drains its own account's parked follow-up
+(that account's write-ahead draft is on disk for its replay) and lets the current account's
+follow its own session; an edit filed under another session drops what that session had parked,
+so the newer draft wins. The live-collaboration replicas and sockets are closed at every
+sign-in change and at sign-out. The holds are
 rehydrated at start from every account's drafts, each under its owner, because a fresh sign-in
 builds the coordinator before `/users/me/` answers.
 
@@ -1561,8 +1574,12 @@ delete passes authorise on a live `/users/me/` but read drafts through `SignedIn
 each requires the two to name the same account before it starts and again after every await
 (a switch can land mid-pass) — otherwise it would read the owner's body as absent and POST an
 empty document, drop a photo record whose placeholder is still in the hidden draft, or
-complete a deletion against another account's draft. `HomeViewModel.syncPendingDrafts`
-refreshes an unknown identity before the replay.
+complete a deletion against another account's draft. Every request of a pass is bound to the
+sign-in generation it started in, and the check reads the same clock, so nothing is sent or
+judged in the window between a login writing its cookies and the identity store hearing of it
+(a 403 there must not drop a tombstone or re-parent a sub-page). `HomeViewModel.syncPendingDrafts`
+refreshes an unknown identity before the replay. A deletion completed for one account
+(`discardPendingWork`) never takes another account's create record or sub-pages with it.
 
 **Drafts saved while the account is unknown** go to a slot of their own for that sign-in
 (`unknown-<epoch>|<document>`): shown to nobody, replayed by nobody, replacing no one's work.

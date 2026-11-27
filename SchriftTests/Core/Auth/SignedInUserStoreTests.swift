@@ -115,4 +115,16 @@ final class SignedInUserStoreTests: XCTestCase {
         XCTAssertFalse(session.isStill(SignedInSession(userID: UUID(), epoch: 1)))
         XCTAssertFalse(session.isStill(SignedInSession(userID: nil, epoch: 1)))
     }
+
+    func testASessionIsCurrentForItsAccountOrTheSameUnnamedSignIn() {
+        let a = UUID()
+        let loadedForA = SignedInSession(userID: a, epoch: 1)
+        XCTAssertTrue(loadedForA.isCurrent(now: SignedInSession(userID: a, epoch: 3)), "same account, re-login")
+        XCTAssertFalse(loadedForA.isCurrent(now: SignedInSession(userID: nil, epoch: 2)), "unknown is not A")
+        XCTAssertFalse(loadedForA.isCurrent(now: SignedInSession(userID: UUID(), epoch: 3)))
+        let unnamed = SignedInSession(userID: nil, epoch: 1)
+        XCTAssertTrue(unnamed.isCurrent(now: SignedInSession(userID: nil, epoch: 1)))
+        XCTAssertTrue(unnamed.isCurrent(now: SignedInSession(userID: a, epoch: 1)), "the same sign-in, named")
+        XCTAssertFalse(unnamed.isCurrent(now: SignedInSession(userID: nil, epoch: 2)))
+    }
 }

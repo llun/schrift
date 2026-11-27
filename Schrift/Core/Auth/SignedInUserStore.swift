@@ -91,6 +91,13 @@ struct SignedInSession: Equatable, Sendable {
         return owner(now: now) != current
     }
 
+    /// Whether `now` is still this session for reading and writing on its behalf: the account it
+    /// named (or later learned) is the one signed in, or — no account known — the sign-in is
+    /// the same unnamed one.
+    func isCurrent(now: SignedInSession) -> Bool {
+        owner(now: now) == now.userID && (now.userID != nil || now.epoch == epoch)
+    }
+
     /// Whether `now` is still this sign-in, under a known account.
     func isStill(_ now: SignedInSession) -> Bool {
         now.epoch == epoch && now.userID != nil && (userID == nil || userID == now.userID)

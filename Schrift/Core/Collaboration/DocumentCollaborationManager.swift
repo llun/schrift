@@ -422,6 +422,19 @@ final class DocumentCollaborationManager {
         entries[documentID] = entry
     }
 
+    /// The session changed hands (a re-login, a sign-out): every replica and socket here was
+    /// built under the previous cookies, so all of them go — held ones too. A screen still open
+    /// asks again, under the new session.
+    func closeAll() {
+        var releasedHeldReplica = false
+        for (id, entry) in entries {
+            entry.lingerTask?.cancel()
+            entry.session?.stop()
+            releasedHeldReplica = removeEntry(id) || releasedHeldReplica
+        }
+        if releasedHeldReplica { onHeldReplicaReleased?() }
+    }
+
     /// scenePhase background: close every socket (1001). Still-referenced entries
     /// keep their refcount (session nilled) so `resume()` can rebuild them; an
     /// idle entry mid-linger is dropped here (cancelling its linger would

@@ -101,7 +101,26 @@ final class PendingDraftStore {
     /// Shared by every instance and every `UserDefaults`: it memoizes the decode of whatever
     /// bytes were last read, so it can never answer for bytes it did not decode — see
     /// `DecodedBlobMemo`.
-    private static let memo = DecodedBlobMemo<[String: PendingDraft]>()
+    private static let memo = DecodedBlobMemo<DraftIndex>()
+
+    /// One decoded blob, indexed once: the reads on keystroke and render paths look drafts up
+    /// rather than re-deriving owners and re-sorting every draft on each call.
+    private struct DraftIndex: Sendable {
+        let drafts: [String: PendingDraft]
+        let sorted: [PendingDraft]
+        /// The newest draft per account and document.
+        let byOwner: [UUID: [UUID: PendingDraft]]
+
+        init(_ decoded: [String: PendingDraft]) {
+            drafts = PendingDraftStore.ownersFromKeys(decoded)
+            sorted = drafts.values.sorted { $0.updatedAt < $1.updatedAt }
+            var byOwner: [UUID: [UUID: PendingDraft]] = [:]
+            for draft in sorted {
+                if let owner = draft.owner { byOwner[owner, default: [:]][draft.documentID] = draft }
+            }
+            self.byOwner = byOwner
+        }
+    }
 
     private let userDefaults: UserDefaults
     private let signedInUser: SignedInUserStore
@@ -151,7 +170,7 @@ final class PendingDraftStore {
     /// settles after a switch (a save landing, a replay).
     func draft(for documentID: UUID, owner: UUID?) -> PendingDraft? {
         guard let owner else { return nil }
-        return allDraftsOfEveryAccount().last { $0.documentID == documentID && $0.owner == owner }
+        return index()?.byOwner[owner]?[documentID]
     }
 
     /// The draft written in `session`: its account's, or — for a sign-in never named — the slot
@@ -221,7 +240,7 @@ final class PendingDraftStore {
     }
 
     func allDraftsOfEveryAccount() -> [PendingDraft] {
-        loadAll().values.sorted { $0.updatedAt < $1.updatedAt }
+        index()?.sorted ?? []
     }
 
     /// Run once, at launch before any sign-in can name an account: drafts from an earlier build
@@ -237,16 +256,18 @@ final class PendingDraftStore {
     func assignOwnersToEarlierDrafts() {
         guard !userDefaults.bool(forKey: Self.ownersAssignedKey) else { return }
         let owner = signedInUser.userID
-        if let data = userDefaults.data(forKey: Self.draftsKey), var drafts = decoded(data), let owner {
+        if let data = userDefaults.data(forKey: Self.draftsKey), var drafts = decoded(data)?.drafts, let owner {
             for (key, draft) in drafts where draft.owner == nil {
                 drafts[key] = nil
                 drafts[Self.key(owner: owner, documentID: draft.documentID)] = draft.owned(by: owner)
             }
             persist(drafts)
         }
-        // A live blob that does not decode is quarantined behind the ones already there, so the
-        // first `count` recovery blobs are exactly these.
-        let unreadable = quarantinedData.count + (liveDataIsUnreadable ? 1 : 0)
+        // Quarantined first, so the count is of the blobs actually retained (a live blob equal to
+        // one already quarantined is not retained twice): the first `count` recovery blobs are
+        // exactly these, and any later one is not.
+        quarantineUnreadableDataIfNeeded()
+        let unreadable = quarantinedData.count
         if unreadable > 0 {
             userDefaults.set(unreadable, forKey: Self.earlierBlobCountKey)
             userDefaults.set(owner?.uuidString, forKey: Self.earlierBlobOwnerKey)
@@ -314,8 +335,8 @@ final class PendingDraftStore {
         let earlierBlobs = userDefaults.integer(forKey: Self.earlierBlobCountKey)
         let earlierOwner = userDefaults.string(forKey: Self.earlierBlobOwnerKey).flatMap(UUID.init(uuidString:))
         for (index, data) in quarantinedData.enumerated() {
-            guard let recovered = decoded(data) else { return false }
-            for (key, draft) in Self.ownersFromKeys(recovered) {
+            guard let recovered = decoded(data)?.drafts else { return false }
+            for (key, draft) in recovered {
                 // An earlier-build draft goes to the account recorded at the first launch of this
                 // build, never to whoever happens to be signed in at the repair.
                 let isEarlier = index < earlierBlobs && draft.owner == nil && !key.contains("|")
@@ -344,10 +365,11 @@ final class PendingDraftStore {
     /// An older build re-encodes every draft without `ownerUserID`, so the key's owner prefix
     /// stands in for a stamp it dropped.
     private func loadAll() -> [String: PendingDraft] {
-        guard let data = userDefaults.data(forKey: Self.draftsKey), let drafts = decoded(data) else {
-            return [:]
-        }
-        return Self.ownersFromKeys(drafts)
+        index()?.drafts ?? [:]
+    }
+
+    private func index() -> DraftIndex? {
+        userDefaults.data(forKey: Self.draftsKey).flatMap(decoded)
     }
 
     private static func ownersFromKeys(_ drafts: [String: PendingDraft]) -> [String: PendingDraft] {
@@ -362,8 +384,8 @@ final class PendingDraftStore {
     /// The blob's decode, memoized on its bytes: a read with no write since the last one costs a
     /// byte comparison, not a decode of every draft body. nil means undecodable, exactly as the
     /// direct `try? decode` it replaces.
-    private func decoded(_ data: Data) -> [String: PendingDraft]? {
-        Self.memo.value(for: data) { try? decoder.decode([String: PendingDraft].self, from: $0) }
+    private func decoded(_ data: Data) -> DraftIndex? {
+        Self.memo.value(for: data) { (try? decoder.decode([String: PendingDraft].self, from: $0)).map(DraftIndex.init) }
     }
 
     private func persist(_ drafts: [String: PendingDraft]) {

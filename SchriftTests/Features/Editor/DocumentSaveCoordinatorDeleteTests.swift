@@ -772,6 +772,63 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertEqual(env.drafts.draft(for: serverID)?.markdown, "the user's only copy")
     }
 
+    /// A 403 that arrives after another account signed in says nothing about the owner's right
+    /// to delete: the tombstone must survive, since dropping it is irreversible.
+    func testAForbiddenAnswerAfterAnAccountSwitchKeepsTheTombstone() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        let deleteGate = MockURLProtocol.ResponseGate()
+        stubDeletePipeline(log: log, deleteStatus: 403, releasedBy: deleteGate)
+
+        let coordinator = env.coordinator
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
+        let signedIn = SignedInUserStore(userDefaults: env.defaults)
+        signedIn.clear()
+        signedIn.remember(otherUser)
+        deleteGate.open()
+        await pass.value
+
+        XCTAssertTrue(env.coordinator.isPendingDelete(documentID: serverID))
+    }
+
+    /// The pass is bound to the sign-in generation it started in: once a login has begun writing
+    /// new cookies, nothing is sent under them.
+    func testAPassWhoseSignInChangedSendsNothing() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log)
+        env.coordinator.signInIsCurrent = { { false } }
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(log.count(ofMethod: "DELETE"), 0)
+        XCTAssertTrue(env.coordinator.isPendingDelete(documentID: serverID))
+    }
+
+    /// Another account deleting a shared server document whose DELETE 404s for it (read as done)
+    /// must not take this account's checkpointed create record with it.
+    func testAnotherAccountsDeletionLeavesThisAccountsCheckpointedRecord() {
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(title: "Local", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        let signedIn = SignedInUserStore(userDefaults: env.defaults)
+        signedIn.clear()
+        signedIn.remember(otherUser)
+
+        relaunched.coordinator.completeImmediateDelete(documentID: serverID)
+
+        XCTAssertNotNil(relaunched.creates.create(for: local.id))
+        signedIn.clear()
+        signedIn.remember(user)
+        XCTAssertNotNil(relaunched.drafts.draft(for: local.id))
+    }
+
     func testAnUndoDuringTheRequestKeepsEveryLocalTrace() async {
         let log = RequestRecorder()
         let env = makeEnvironment()

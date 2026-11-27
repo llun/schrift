@@ -81,12 +81,18 @@ func attachmentGroupTitle(_ title: String?) -> String? {
 @MainActor
 @Observable
 final class AttachmentsViewModel {
-    private(set) var groups: [AttachmentLibraryGroup] = []
-    private(set) var rows: [AttachmentLibraryRow] = []
+    /// Only the account in front of the screen's: another account's read is never drawn, not
+    /// even for the frame before the reload a re-login starts.
+    var groups: [AttachmentLibraryGroup] { isLoadedForCurrentAccount ? loadedGroups : [] }
+    var rows: [AttachmentLibraryRow] { isLoadedForCurrentAccount ? loadedRows : [] }
     /// False until the first `load()` lands, so the empty state never flashes
     /// before the cache has been read. It is the screen's only loading state —
     /// the list renders blank until then, with no spinner, as every list does.
-    private(set) var hasLoaded = false
+    var hasLoaded: Bool { isLoadedForCurrentAccount && didLoad }
+    private var loadedGroups: [AttachmentLibraryGroup] = []
+    private var loadedRows: [AttachmentLibraryRow] = []
+    private var didLoad = false
+    private var isLoadedForCurrentAccount: Bool { loadedOwner == signedInUser.userID }
 
     /// Reads every cached document body. Called off the main actor: it is up to
     /// the cache's whole limit of files read and JSON-decoded.
@@ -131,12 +137,6 @@ final class AttachmentsViewModel {
         loadGeneration += 1
         let generation = loadGeneration
         let owner = signedInUser.userID
-        // Another account's list never stays on screen while this one's is read.
-        if owner != loadedOwner {
-            groups = []
-            rows = []
-            hasLoaded = false
-        }
         let read = contentCache.allContentsReader()
         let readContents = readContents ?? { read() }
         let origin = serverOrigin
@@ -147,8 +147,8 @@ final class AttachmentsViewModel {
         // A read that began under another account is that account's.
         guard generation == loadGeneration, signedInUser.userID == owner else { return }
         loadedOwner = owner
-        groups = parsed.filter { !isPendingDelete($0.documentID) }
-        rows = attachmentLibraryRows(groups)
-        hasLoaded = true
+        loadedGroups = parsed.filter { !isPendingDelete($0.documentID) }
+        loadedRows = attachmentLibraryRows(loadedGroups)
+        didLoad = true
     }
 }

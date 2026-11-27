@@ -184,6 +184,7 @@ private struct AuthenticatedHomeContainer: View {
             // Drain pending native saves, then close every replica before purging clean ones.
             await nativeSessions.drainAll().value
             await nativeSessions.closeAll().value
+            collaboration.closeAll()
             guard sessionStore.signInGeneration == expectedGeneration, sessionStore.isAuthenticated else {
                 return
             }
@@ -296,6 +297,8 @@ private struct AuthenticatedHomeContainer: View {
             NativeEditorDiagnosticsStore.shared.reset()
             // Nothing announces the previous account; `reauthenticated` learns the new one.
             collaboration.forgetLocalAwareness()
+            // Its live replicas and sockets were built under the previous cookies.
+            collaboration.closeAll()
         }
         .environment(collaboration)
         .environment(nativeSessions)

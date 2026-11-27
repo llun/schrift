@@ -100,12 +100,21 @@ struct EditorScreen: View {
         // A new model is a new editor: the old one disappears, flushing its edits under the
         // account it loaded for — kept for that account, never sent under this one.
         .id(ObjectIdentifier(viewModel))
-        .onChange(of: signInGeneration) { _, _ in replaceIfAnotherAccount() }
-        .onChange(of: viewModel.signedInUserID) { _, _ in replaceIfAnotherAccount() }
+        // `initial`: a screen off-screen during the change (beneath another in the stack, or on
+        // another tab) checks again when it comes back.
+        .onChange(of: signInGeneration, initial: true) { _, _ in replaceIfAnotherAccount() }
+        .onChange(of: viewModel.signedInUserID, initial: true) { _, _ in replaceIfAnotherAccount() }
     }
 
     private func replaceIfAnotherAccount() {
         guard viewModel.loadedSession.isAnotherAccount(than: viewModel.saveCoordinator.signedInSession) else { return }
+        viewModel.endForAccountChange()
+        // A document only this device holds was the previous account's: there is nothing to
+        // reload it as, so the screen closes instead.
+        if viewModel.isLocalDocument, let onDeleted {
+            onDeleted()
+            return
+        }
         viewModel = makeViewModel()
     }
 }

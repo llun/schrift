@@ -171,7 +171,10 @@ final class SessionStore {
         let confirmedEpoch =
             cookiesAwaitingConfirmation && handoverEpoch == signedInUser.epoch ? handoverEpoch : nil
         handoverEpoch = nil
-        forgetSignedInIdentity()
+        // Confirming a handover nothing replaced keeps its identity epoch: the cookies have not
+        // changed hands since it moved, and moving it again would make the work this account did
+        // in the meantime (an editor, a save in flight) look like another sign-in's.
+        forgetSignedInIdentity(keepingIdentityEpoch: confirmedEpoch != nil)
         signedInUser.remember(userID)
         // Drafts saved while the handover was unconfirmed were saved by this account.
         if let confirmedEpoch, let userID {
@@ -270,7 +273,7 @@ final class SessionStore {
 
     /// Everything that answers *whose session is this*, forgotten together. One body, so a
     /// later piece of account-scoped state has one place to be added rather than three.
-    private func forgetSignedInIdentity() {
+    private func forgetSignedInIdentity(keepingIdentityEpoch: Bool = false) {
         let namespace = UUID()
         imageCacheSessionID = namespace
         // Cookie handover precedes /users/me confirmation. Keep its new
@@ -283,7 +286,7 @@ final class SessionStore {
         endMediaPlayback()
         clearWebCache()
         clearDiagnostics()
-        signedInUser.clear()
+        if !keepingIdentityEpoch { signedInUser.clear() }
         // The account's displayed profile goes with the id — it is *displayed* before any
         // fetch, so a kept entry would name the previous account on the new one's screen.
         // (Why none of this happens at a mere expiry is `signIn`'s comment above: a dismissed

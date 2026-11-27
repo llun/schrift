@@ -203,6 +203,22 @@ final class EditorViewModel {
     /// same sign-in is in front of it — a screen outliving a re-login must neither show nor send
     /// one account's work as another's.
     @ObservationIgnored let loadedSession: SignedInSession
+
+    /// The sign-in this screen loaded under is still the one in front of it. The screen reads
+    /// drafts, parked saves and the cache through the live session but files its writes under
+    /// `loadedSession`, so while this is false it reconciles, retries and resolves nothing: it
+    /// would take another account's draft for its own, replace its own with the server copy,
+    /// or delete another account's cached body.
+    var loadedSessionIsCurrent: Bool { loadedSession.isCurrent(now: saveCoordinator.signedInSession) }
+
+    /// Another account signed in under this screen, which is being replaced: settle what was
+    /// typed (an IME composition included) under the account it belongs to, and let nothing
+    /// scheduled run against the new session.
+    func endForAccountChange() {
+        finishEditing()
+        remoteChangeTask?.cancel()
+        remoteChangeTask = nil
+    }
     /// `siteOrigin(for: serverURL)`, which is what turns a standalone
     /// `[name](url)` line into a `.attachment` block rather than a paragraph.
     ///
@@ -801,7 +817,7 @@ final class EditorViewModel {
     /// 404/proxy hiccup, or a co-author's own permission flap) and must never eject
     /// an active editing session over another user's activity.
     private func revalidate(generation: Int, terminalOnUnavailable: Bool = true) async {
-        guard !availability.isOffline else { return }
+        guard loadedSessionIsCurrent, !availability.isOffline else { return }
         let availabilityToken = availability.token
         // A client-minted id 404s, and this is the path whose catch calls `becomeUnavailable`.
         guard !isLocalDocument else { return }
@@ -917,7 +933,7 @@ final class EditorViewModel {
     /// server body — and differs only in that it surfaces failures instead of
     /// swallowing them (the user asked, so silence would read as a no-op).
     func refresh() async {
-        guard !availability.isOffline else { return }
+        guard loadedSessionIsCurrent, !availability.isOffline else { return }
         let availabilityToken = availability.token
         guard hasLoadedContent else {
             await load()  // error-state retry: full initial flow, as today
@@ -1049,6 +1065,9 @@ final class EditorViewModel {
     /// Definitive 404/403: the document is gone or access was revoked. Purge
     /// the durable copy (privacy), disable editing, show the terminal state.
     private func becomeUnavailable() {
+        // A late 404 for this screen's session says nothing about the one now signed in, and
+        // the teardown below purges that one's cache and holds.
+        guard loadedSessionIsCurrent else { return }
         // Persist the in-flight edit **first**, while the blocks still hold it.
         // `enqueue` is write-ahead: it stores the draft before any network call, so
         // even a PATCH that 404s leaves the user's text on disk, and
@@ -1107,7 +1126,7 @@ final class EditorViewModel {
     private func apply(
         formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay, mayPredateLocalSave: Bool
     ) {
-        guard !isNativeRouteActive, !saveCoordinator.isNativeOwned(documentID: documentID),
+        guard loadedSessionIsCurrent, !isNativeRouteActive, !saveCoordinator.isNativeOwned(documentID: documentID),
             !hasPendingNativeTitleEdit
         else { return }
         // This fetch raced one of our own saves, so its body may be the one that
@@ -1260,6 +1279,7 @@ final class EditorViewModel {
     private func reconcileDraft(
         _ formatted: FormattedDocumentContent, draft: PendingDraft, leafNesting: LeafNestingOverlay
     ) {
+        guard loadedSessionIsCurrent else { return }
         // The on-screen content is the draft, so it descends from the draft's own
         // recorded baseline.
         serverBaseline = draft.baseline
@@ -1485,6 +1505,7 @@ final class EditorViewModel {
     /// never reaches here — `apply` returns early — and `startEditing`/
     /// `markDirty` drop the stash, so local work always wins.)
     private func reconcileClean(_ formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
+        guard loadedSessionIsCurrent else { return }
         // `apply` only reaches here with **no pending save, no stored draft, and not dirty** —
         // i.e. no local work exists at all. A conflict record therefore has nothing left to
         // protect and cannot be a live one, so release it. Nothing else would: every other
@@ -1611,7 +1632,7 @@ final class EditorViewModel {
     /// exactly the shape of the bug review found — install over a draft, then
     /// `saveNow()` pushes the server's own body back.
     func applyPendingUpdate() {
-        guard saveCoordinator.storedDraft(documentID: documentID) == nil else { return }
+        guard loadedSessionIsCurrent, saveCoordinator.storedDraft(documentID: documentID) == nil else { return }
         guard !isEditing, !isDirty, let pending = pendingFreshContent else { return }
         install(markdown: pending.markdown, title: nil, syncedAt: pending.syncedAt)
         // The stashed body is now on screen, so it becomes the baseline. Its title came from the
@@ -4227,7 +4248,7 @@ final class EditorViewModel {
         if isDirty {
             flushPendingChanges()
         }
-        guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return }
+        guard loadedSessionIsCurrent, saveCoordinator.pendingSave(documentID: documentID) == nil else { return }
         adoptQueuedTitleIfUnseen()
         // Retry a hard failure (`.failed`) or a queued transient one (`.pendingSync`).
         // The latter matters when the failure happened while online (a 5xx / rate
@@ -4283,7 +4304,7 @@ final class EditorViewModel {
     /// != savedTitle`): the user's own edit, and what makes a reconcile call two titles a
     /// conflict rather than a merge.
     private func adoptQueuedTitleIfUnseen() {
-        guard title == savedTitle,
+        guard loadedSessionIsCurrent, title == savedTitle,
             let newestTitle = saveCoordinator.pendingSave(documentID: documentID)?.title
                 ?? saveCoordinator.storedDraft(documentID: documentID)?.title
                 ?? saveCoordinator.knownServerTitle(documentID: documentID),
@@ -4300,7 +4321,7 @@ final class EditorViewModel {
     /// an unchecked, last-writer-wins overwrite the user chose (the overwritten
     /// server version is recoverable from the web's version history).
     func resolveConflictKeepingMine() {
-        guard let conflict = saveCoordinator.conflict(for: documentID) else { return }
+        guard loadedSessionIsCurrent, let conflict = saveCoordinator.conflict(for: documentID) else { return }
         // The sheet promises "Overwrites the server copy", so it must never be a silent no-op.
         // By the lifecycle rule a conflict only stands while local work exists, so this is a
         // belt-and-braces check rather than an expected branch — but if there is genuinely
@@ -4377,7 +4398,7 @@ final class EditorViewModel {
     /// that replaces it is in hand, and no content is ever taken from the conflict record
     /// itself — it carries none by design.
     func resolveConflictKeepingServer() async {
-        guard saveCoordinator.conflict(for: documentID) != nil else { return }
+        guard loadedSessionIsCurrent, saveCoordinator.conflict(for: documentID) != nil else { return }
         // **End the editing session properly, and do it before the fetch.** `finishEditing()`
         // is that teardown — flush, resync `rawMarkdown` to the edited blocks (only when they
         // diverged), reset mode/focus/selection, clear the error — and reusing it is what
@@ -4424,7 +4445,7 @@ final class EditorViewModel {
             let fetched = try await client.formattedContent(documentID: documentID)
             let (formatted, leafNesting) = await recoveringLeafNesting(
                 fetched, availabilityToken: availability.token)
-            guard generation == revalidationGeneration, !Task.isCancelled else { return }
+            guard generation == revalidationGeneration, !Task.isCancelled, loadedSessionIsCurrent else { return }
             // A body that may predate one of our own saves must never be installed (it
             // would resurrect what that save replaced, and the next full-overwrite save
             // would push it back). Keep the draft and the conflict so the user can retry.

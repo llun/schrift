@@ -233,6 +233,21 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertNil(drafts.draft(for: documentID))
     }
 
+    /// Confirming a handover nothing replaced keeps its identity epoch, so the work the account
+    /// did meanwhile (an open editor, a save in flight) still reads as this sign-in's.
+    func testConfirmingAnUnreplacedHandoverKeepsItsIdentityEpoch() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        let signedIn = SignedInUserStore(userDefaults: userDefaults)
+        try store.signIn(serverURL: serverURL, userID: UUID())
+        store.noteSessionCookiesReplaced()
+        let handover = signedIn.epoch
+
+        try store.signIn(serverURL: serverURL, userID: UUID())
+
+        XCTAssertEqual(signedIn.epoch, handover)
+    }
+
     func testSigningOutForgetsTheAccountId() throws {
         let signedIn = SignedInUserStore(userDefaults: userDefaults)
         let store = SessionStore(

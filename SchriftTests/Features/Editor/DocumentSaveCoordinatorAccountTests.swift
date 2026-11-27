@@ -114,7 +114,7 @@ final class DocumentSaveCoordinatorAccountTests: DocumentSaveCoordinatorTestCase
         draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# B's", updatedAt: Date()))
 
         gate.open()
-        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        await waitUntil { !coordinator.hasSaveInFlight(documentID: self.documentID) }
 
         XCTAssertNil(contentCache.content(for: documentID), "nothing in B's folder")
         XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# B's")
@@ -151,5 +151,75 @@ final class DocumentSaveCoordinatorAccountTests: DocumentSaveCoordinatorTestCase
                 documentID: documentID, title: "Doc", markdown: "# Theirs", updatedAt: Date(),
                 ownerUserID: otherAccount))
         XCTAssertTrue(coordinator.hasClassicDraftOfAnyAccount(documentID: documentID))
+    }
+
+    /// A save that settles after a switch drains its own account's parked follow-up, not the
+    /// current account's bucket: left behind, the follow-up would wedge the document for its owner.
+    func testASaveSettlingAfterASwitchLeavesNothingParkedForItsAccount() async {
+        let log = RequestRecorder()
+        let gate = MockURLProtocol.ResponseGate()
+        stubSavePipeline(log: log, releasedBy: gate)
+        let (coordinator, draftStore, _) = makeCoordinator()
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# v1")
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# v2")
+        signIn(otherAccount)
+
+        gate.open()
+        await waitUntil { !coordinator.hasSaveInFlight(documentID: self.documentID) }
+
+        signIn(signedInUserID)
+        XCTAssertNil(coordinator.pendingSave(documentID: documentID), "nothing wedged behind a dead slot")
+        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# v2", "the newer edit waits on disk")
+    }
+
+    /// A screen's flush made after a switch is newer than what its account parked earlier: the
+    /// parked copy must not win over it when the account returns.
+    func testANewerEditFromAnotherSessionReplacesWhatThatAccountParked() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, draftStore, _) = makeCoordinator()
+        let loadedFor = coordinator.signedInSession
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# v1")
+        signIn(otherAccount)
+
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# v2", editedIn: loadedFor)
+
+        signIn(signedInUserID)
+        XCTAssertNil(coordinator.pendingSave(documentID: documentID))
+        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# v2")
+    }
+
+    /// One account's failed save is not another's: it neither shows nor holds anything for B.
+    func testAnotherAccountsFailureIsNotShownToThisOne() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log, contentStatus: 400)
+        let (coordinator, _, _) = makeCoordinator()
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil { self.isFailed(coordinator.state(for: self.documentID)) }
+
+        signIn(otherAccount)
+        XCTAssertEqual(coordinator.state(for: documentID), .idle)
+        XCTAssertNil(coordinator.failureReport(for: documentID))
+
+        signIn(signedInUserID)
+        XCTAssertTrue(isFailed(coordinator.state(for: documentID)), "still the owner's to answer")
+    }
+
+    /// While no account is known the hold is mirrored onto the sign-in's own set-aside draft.
+    func testAConflictRecordedWhileUnknownIsMirroredOntoThatSignInsDraft() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log, contentStatus: 503)
+        let (coordinator, draftStore, _) = makeCoordinator()
+        signIn(nil)
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Meanwhile")
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 1_800_000_000))
+
+        XCTAssertEqual(
+            draftStore.allDraftsOfEveryAccount().first?.conflictServerUpdatedAt,
+            Date(timeIntervalSince1970: 1_800_000_000))
     }
 }

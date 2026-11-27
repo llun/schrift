@@ -503,4 +503,33 @@ final class PendingDraftStoreTests: XCTestCase {
 
         XCTAssertEqual(store.allDraftsOfEveryAccount().map(\.markdown), ["newer"])
     }
+
+    /// A live blob equal to one already quarantined is one blob, not two: counting it twice would
+    /// give the first-launch account a blob quarantined later.
+    func testTheFirstLaunchCountsALiveDuplicateOfAQuarantinedBlobOnce() throws {
+        let (store, defaults) = makeStore()
+        let damaged = Data("damaged by an earlier build".utf8)
+        defaults.set(damaged, forKey: "dev.llun.Schrift.pendingDrafts.unreadable")
+        defaults.set(damaged, forKey: "dev.llun.Schrift.pendingDrafts")
+        store.assignOwnersToEarlierDrafts()
+        signIn(otherAccount, in: defaults)
+        // After a decoder repair: the earlier blob reads, and a later one (an older build's,
+        // written after the first launch) sits behind it.
+        let earlier = UUID()
+        let later = UUID()
+        try storeLegacyDraft(earlier, markdown: "# Earlier", in: defaults)
+        let first = try XCTUnwrap(defaults.data(forKey: "dev.llun.Schrift.pendingDrafts"))
+        defaults.removeObject(forKey: "dev.llun.Schrift.pendingDrafts")
+        try storeLegacyDraft(later, markdown: "# Later", in: defaults)
+        let second = try XCTUnwrap(defaults.data(forKey: "dev.llun.Schrift.pendingDrafts"))
+        defaults.removeObject(forKey: "dev.llun.Schrift.pendingDrafts")
+        defaults.set(first, forKey: "dev.llun.Schrift.pendingDrafts.unreadable")
+        defaults.set([second], forKey: "dev.llun.Schrift.pendingDrafts.unreadable.additional")
+
+        XCTAssertTrue(store.recoverQuarantinedDrafts())
+
+        signIn(owner, in: defaults)
+        XCTAssertEqual(store.draft(for: earlier)?.markdown, "# Earlier")
+        XCTAssertNil(store.draft(for: later), "the later blob is nobody's")
+    }
 }

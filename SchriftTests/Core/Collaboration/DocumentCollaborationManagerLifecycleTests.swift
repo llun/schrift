@@ -151,6 +151,24 @@ final class DocumentCollaborationManagerLifecycleTests: DocumentCollaborationMan
         await waitAndConfirmNever(timeout: 0.4) { manager.activeDocumentCount == 0 }
     }
 
+    /// A change of account closes every socket and drops every replica, referenced or not: they
+    /// were built under the previous account's cookies.
+    func testCloseAllDropsEverySessionIncludingReferencedOnes() async {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        manager.closeAll()
+
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        await waitUntil { spy.sockets[0].cancelCloseCode != nil }
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 2 }
+        XCTAssertEqual(manager.activeDocumentCount, 1, "a screen asking again gets a fresh session")
+        manager.session(for: docID).map { $0.stop() }
+    }
+
     func testSuspendClosesSocketAndResumeRebuilds() async {
         let spy = ManagerSocketFactorySpy()
         let manager = makeManager(spy: spy)

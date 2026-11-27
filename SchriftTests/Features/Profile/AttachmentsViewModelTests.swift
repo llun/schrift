@@ -153,6 +153,27 @@ final class AttachmentsViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.groups, [])
     }
 
+    /// Not even the frame before the reload: once another account is signed in, the previous
+    /// account's rows are gone from the screen.
+    func testAnotherAccountsRowsAreHiddenBeforeTheReload() async {
+        let suite = "AttachmentsViewModelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(UUID())
+        let cache = DocumentContentCacheStore(root: directory, userDefaults: defaults)
+        cache.save(content(docA, link("a.pdf", document: docA, file: fileOne), at: 1))
+        let viewModel = AttachmentsViewModel(contentCache: cache, serverOrigin: origin, signedInUser: signedIn)
+        await viewModel.load()
+
+        signedIn.clear()
+        signedIn.remember(UUID())
+
+        XCTAssertEqual(viewModel.groups, [])
+        XCTAssertEqual(viewModel.rows.count, 0)
+        XCTAssertFalse(viewModel.hasLoaded)
+    }
+
     func testLoadPicksUpDocumentsCachedSinceTheLastLoad() async {
         let cache = DocumentContentCacheStore(directory: directory)
         let viewModel = AttachmentsViewModel(contentCache: cache, serverOrigin: origin)
