@@ -125,6 +125,12 @@ extension DocsAPIClient {
         return try await getRawData(path)
     }
 
+    /// `mediaData` for a video or audio file: streamed to `destination`, at most `byteLimit` bytes.
+    func mediaFile(path: String, to destination: URL, byteLimit: Int) async throws {
+        guard isSameOriginPath(path) else { throw DocsAPIError.network("Invalid media path") }
+        try await getRawFile(path, to: destination, byteLimit: byteLimit)
+    }
+
     /// Polls a media-check path until the upload reads ready, then answers the **absolute**
     /// media URL to embed — the form the web client persists and `extract_attachments()`
     /// regex-matches.

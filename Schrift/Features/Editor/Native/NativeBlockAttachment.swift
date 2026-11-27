@@ -349,10 +349,16 @@ final class NativeAttachmentView: UIView {
                 label(
                     name.isEmpty ? (URL(string: url)?.lastPathComponent ?? kind) : name, primary: true,
                     font: NativeAttachmentLayout.titleFont(traits)))
-            // A media block without a url yet, or a peer's upload (PR13a).
+            // A media block without a url yet, or a peer's upload (PR13a); another site's file names
+            // its host, where a tap goes.
+            let parsed = URL(string: url)
+            let foreignHost =
+                parsed.flatMap { siteOrigin(for: $0) } == controls?.serverOrigin ? nil : parsed?.host
             let detail =
                 node == MediaBlock.uploadLoader
-                ? labels.uploadElsewhere : url.isEmpty && MediaBlock.nodes.contains(node) ? labels.mediaEmpty : kind
+                ? labels.uploadElsewhere
+                : url.isEmpty && MediaBlock.nodes.contains(node) ? labels.mediaEmpty : foreignHost ?? kind
+            if let foreignHost, detail == foreignHost { accessibilityValue = foreignHost }
             let detailLabel = label(detail, primary: false, font: NativeAttachmentLayout.detailFont(traits))
             stack.addArrangedSubview(detailLabel)
             self.detail = (detailLabel, detail)

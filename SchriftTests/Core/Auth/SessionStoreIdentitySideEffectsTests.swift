@@ -230,29 +230,48 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
     func testAccountTransitionsClearAttachmentCacheAndMediaDropStaging() throws {
         var attachmentClears = 0
         var stagingClears = 0
+        var playbackEnds = 0
         let store = SessionStore(
             userDefaults: userDefaults,
             keychain: FakeKeychainStore(),
             cookieStorage: FakeCookieStorage(),
             clearAttachmentCache: { attachmentClears += 1 },
-            clearMediaDropStaging: { stagingClears += 1 })
+            clearMediaDropStaging: { stagingClears += 1 },
+            endMediaPlayback: { playbackEnds += 1 })
 
         try store.signIn(serverURL: serverURL)
         XCTAssertEqual(attachmentClears, 1)
         XCTAssertEqual(stagingClears, 1)
+        XCTAssertEqual(playbackEnds, 1)
 
         store.noteSessionExpired()
         store.cancelReauthentication()
         XCTAssertEqual(attachmentClears, 1, "mere expiry must keep caches")
         XCTAssertEqual(stagingClears, 1)
+        XCTAssertEqual(playbackEnds, 1)
 
         store.noteSessionCookiesReplaced()
         XCTAssertEqual(attachmentClears, 2)
         XCTAssertEqual(stagingClears, 2)
+        XCTAssertEqual(playbackEnds, 2, "an account switch stops the player")
 
         try store.signOut()
         XCTAssertEqual(attachmentClears, 3)
         XCTAssertEqual(stagingClears, 3)
+        XCTAssertEqual(playbackEnds, 3, "sign-out stops the player")
+    }
+
+    /// The default wiring: sign-out deletes a media preview's staged copy.
+    func testSignOutDeletesStagedMediaPreviews() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: serverURL)
+        let staged = try XCTUnwrap(NativeMediaPresenter.stage(Data([1, 2, 3]), fileExtension: "png"))
+
+        try store.signOut()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: NativeMediaPresenter.stagingDirectory.path))
     }
 
     func testRelaunchAfterUnconfirmedCookieHandoverClearsAttachmentCache() throws {

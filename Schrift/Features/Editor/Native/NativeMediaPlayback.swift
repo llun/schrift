@@ -14,7 +14,9 @@ enum NativeMediaSource: Equatable {
     case attachment(AttachmentDisplay)
     /// An image: `ImageLoader`'s cached file, under its origin policy (the tap is the consent).
     case image(URL)
-    /// Another site's https file, requested only after this tap (the tap is the consent).
+    /// Any other https file, requested only after this tap (the tap is the consent). Video and audio
+    /// download through `RemoteMediaClient` (no cookies, even on this server's host) and play from the
+    /// file: the player is never handed a remote URL.
     case remote(URL)
 }
 
@@ -36,18 +38,20 @@ enum NativeMediaTap: Equatable {
     {
         guard MediaBlock.nodes.contains(node) else { return .inspector }
         let plays = node == "video" || node == "audio"
+        // Neither QuickLook nor the player gets markup or a playlist (`attachmentExtensionIsPreviewable`).
         if let localFile {
-            guard plays || attachmentExtensionIsPreviewable(localFile.pathExtension) else { return .inspector }
+            guard attachmentExtensionIsPreviewable(localFile.pathExtension) else { return .inspector }
             return plays ? .play(.local(localFile)) : .preview(.local(localFile))
         }
         guard !url.isEmpty, let parsed = URL(string: url), isFetchableImageURL(parsed) else { return .inspector }
         if node == "image" { return .preview(.image(parsed)) }
         if let display = parseAttachmentLink("[](\(url))", serverOrigin: serverOrigin) {
-            guard plays || attachmentIsPreviewable(display) else { return .inspector }
+            guard attachmentIsPreviewable(display) else { return .inspector }
             return plays ? .play(.attachment(display)) : .preview(.attachment(display))
         }
         // Another site: https only (never a cleartext fetch), and nothing while offline.
         guard parsed.scheme?.lowercased() == "https" else { return .inspector }
+        if plays, !attachmentExtensionIsPreviewable(parsed.pathExtension) { return .inspector }
         if isOffline { return .offline }
         return plays ? .play(.remote(parsed)) : .preview(.remote(parsed))
     }
@@ -60,6 +64,13 @@ enum NativeMediaTap: Equatable {
 enum NativeMediaPresenter {
     /// The player's accessibility identifier (UI tests find the presented player by it).
     static let playerIdentifier = "nativeMedia.player"
+    /// Where a preview's or a download's file is staged; one file at a time, gone at sign-out.
+    static let stagingDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("SchriftMediaPreview", isDirectory: true)
+    /// The player on screen (or in picture in picture) and the download it waits for, so that
+    /// sign-out or an account switch can stop both (`endSession`).
+    private(set) static weak var activePlayer: AVPlayerViewController?
+    private static var activeLoad: Task<Void, Never>?
 
     static func show(_ tap: NativeMediaTap, from view: UIView, controls: NativeBlockControls) {
         guard let host = topViewController(of: view) else { return }
@@ -91,19 +102,41 @@ enum NativeMediaPresenter {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         let player = AVPlayerViewController()
         player.view.accessibilityIdentifier = playerIdentifier
-        // Up at once: an upload's download can take a while and the player shows it is loading.
+        // Up at once: a download can take a while and the player shows it is loading.
         host.present(player, animated: true)
-        Task {
+        activePlayer = player
+        activeLoad?.cancel()
+        activeLoad = Task {
             switch await resolve(source, controls: controls) {
             case .file(let file):
-                // No cookies to another site; the session's own reached this file through the loader.
-                let asset = AVURLAsset(url: file, options: [AVURLAssetHTTPCookiesKey: [HTTPCookie]()])
-                player.player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
-                player.player?.play()
+                start(file, in: player)
             case .notice(let text):
+                guard player.presentingViewController != nil else { return }
                 player.dismiss(animated: true) { notice(text, on: host, labels: controls.labels) }
             }
         }
+    }
+
+    /// Plays local `file` in `player`, only while it is still presented: one closed during the
+    /// download never starts. The asset may not reference other files or the network.
+    static func start(_ file: URL, in player: AVPlayerViewController) {
+        guard file.isFileURL, player.presentingViewController != nil, !player.isBeingDismissed else { return }
+        let asset = AVURLAsset(
+            url: file, options: [AVURLAssetReferenceRestrictionsKey: AVAssetReferenceRestrictions.forbidAll.rawValue])
+        player.player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        player.player?.play()
+    }
+
+    /// Sign-out or an account switch: the player stops and closes, a download it waits for is
+    /// cancelled, and staged copies are deleted.
+    static func endSession() {
+        activeLoad?.cancel()
+        activeLoad = nil
+        activePlayer?.player?.pause()
+        activePlayer?.player?.replaceCurrentItem(with: nil)
+        activePlayer?.dismiss(animated: false)
+        activePlayer = nil
+        try? FileManager.default.removeItem(at: stagingDirectory)
     }
 
     enum Resolution: Equatable {
@@ -116,8 +149,10 @@ enum NativeMediaPresenter {
         let labels = controls.labels
         let unavailable = Resolution.notice(controls.isOffline ? labels.mediaOffline : labels.mediaFailed)
         switch source {
-        case .local(let url), .remote(let url):
+        case .local(let url):
             return .file(url)
+        case .remote(let url):
+            return await download(url, client: controls.remoteMedia, failure: unavailable)
         case .attachment(let display):
             guard let loader = controls.attachments else { return .notice(labels.mediaOffline) }
             // A tap after a failure is the user's retry, as on the attachment card.
@@ -143,11 +178,46 @@ enum NativeMediaPresenter {
         }
     }
 
+    /// Another site's video or audio, as the one staged file, named for its served type (or its
+    /// url's extension when the type says nothing); a playlist or markup is refused.
+    static func download(_ url: URL, client: RemoteMediaClient, failure: Resolution) async -> Resolution {
+        try? FileManager.default.removeItem(at: stagingDirectory)
+        let file = stagingDirectory.appendingPathComponent(UUID().uuidString, isDirectory: false)
+        let mimeType: String?
+        do {
+            mimeType = try await client.download(url, to: file)
+        } catch {
+            return failure
+        }
+        guard let fileExtension = playableExtension(mimeType: mimeType, pathExtension: url.pathExtension) else {
+            try? FileManager.default.removeItem(at: file)
+            return failure
+        }
+        let named = file.appendingPathExtension(fileExtension)
+        guard (try? FileManager.default.moveItem(at: file, to: named)) != nil else { return failure }
+        return .file(named)
+    }
+
+    /// The extension a downloaded file plays under: the served type's when it is audio or video,
+    /// else the url's; nil for a playlist or markup either way.
+    static func playableExtension(mimeType: String?, pathExtension: String) -> String? {
+        if let mimeType, mimeType.lowercased().contains("mpegurl") { return nil }
+        if let served = mimeType.flatMap({ UTType(mimeType: $0) }) {
+            if served.conforms(to: .playlist) || served.conforms(to: .html) || served.conforms(to: .xml) {
+                return nil
+            }
+            if served.conforms(to: .audiovisualContent), let fileExtension = served.preferredFilenameExtension {
+                return fileExtension
+            }
+        }
+        let fileExtension = pathExtension.lowercased()
+        return !fileExtension.isEmpty && attachmentExtensionIsPreviewable(fileExtension) ? fileExtension : nil
+    }
+
     /// Writes `data` as the one staged preview file, named for its type, replacing the last one.
     static func stage(_ data: Data, fileExtension: String) -> URL? {
         guard !fileExtension.isEmpty else { return nil }
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("SchriftMediaPreview", isDirectory: true)
+        let directory = stagingDirectory
         try? FileManager.default.removeItem(at: directory)
         let file = directory.appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
         do {

@@ -1207,9 +1207,17 @@ when nothing after the block takes text. Tapping a media card plays a video or a
 the system player (`AVPlayerViewController`, with the playback audio session so it sounds with
 the silent switch on) and previews an image, file or PDF in QuickLook. An upload on this server
 is downloaded once through the attachment loader (the session's cookies, its disk cache, so a
-cached file plays offline) and shown from that file; another site's file is requested only on
-that tap, only over https and never offline (a notice says so), and another site's document
-opens in the browser. A block with no file yet, the card's Options button (editing only) and
+cached file plays offline; video and audio stream to disk, at most 200 MB) and shown from that
+file. Any other URL is requested only on that tap, only over https and never offline (a notice
+says so): its video or audio downloads to a staged file through `RemoteMediaClient` (an
+ephemeral session with no cookie, credential or URL-cache storage, https-only redirects, 200 MB)
+and plays from there, because `AVURLAsset` would attach matching session cookies from the shared
+storage to a remote URL whatever its options say (this server's other paths, an explicit `:443`,
+a redirect or playlist hop back). The player only ever gets a local file, with
+`AVAssetReferenceRestrictions.forbidAll`, never a playlist, and only while it is still on screen;
+sign-out and account switches stop it and delete the staged files. Another site's document opens
+in the browser, and its audio, file or PDF card names its host. A block with no file yet, the
+card's Options button (editing only) and
 the block menu's Options open its inspector: name, caption, width, alignment and preview are
 each one `updateBlock`-shaped command (an unset width
 is removed, as the web removes it), and the file comes from Upload photo, Upload file or a
@@ -2770,7 +2778,9 @@ reading time to a host the *author* chose, which is exactly the leak the origin
 gate and `imageLoadPolicy` close, reached by another route. The server agrees: it
 serves these with `Content-Disposition: attachment` precisely so they are never
 rendered in its own origin. The rule keys on the **extension**, not the
-`-unsafe` flag, which is far too broad — a `.docx` sniffs as `zip` and is flagged
+`-unsafe` flag, which is far too broad (plus any extension the system types as
+HTML, XML or a playlist; the same check gates every file the native player gets)
+— a `.docx` sniffs as `zip` and is flagged
 routinely. Such a card renders inert with "Can't be previewed here" rather than
 disappearing: the document does link that file, and saying so is honest.
 
@@ -2782,9 +2792,11 @@ change. (2) QuickLook previews
 co-author-controlled bytes for the types it *does* handle; that is the same
 exposure Mail and Files accept (QuickLook renders out-of-process). (3) There is
 no per-file read-side size cap and the whole file is buffered in memory
-(`getRawData`), so a deployment configured well above the 10 MB default upload
-cap could make merely opening a document expensive — streaming to disk with a
-ceiling (`URLSession.download`) is the fix and is a named follow-up. The cache's
+(`getRawData`) for anything but video and audio, so a deployment configured well
+above the 10 MB default upload cap could make merely opening a document
+expensive. Video and audio attachments already stream to disk with a 200 MB
+ceiling (`mediaFile` → `downloadMediaFile`); extending that to every type is a
+named follow-up. The cache's
 byte cap bounds the disk *except* for one most-recently-used entry, which is
 never evicted by design (evicting the file just written would make the loader
 re-download it forever).

@@ -80,6 +80,27 @@ final class NativeMediaPlaybackTests: NativeEditingTestCase {
         }
     }
 
+    /// A playlist's entries are fetched by the player itself, past every guard here, so none plays,
+    /// wherever it comes from; nor does markup.
+    func testAPlaylistOrMarkupNeverReachesThePlayer() throws {
+        for url in ["https://media.example/live.m3u8", "https://media.example/mix.m3u", Self.upload("m3u8")] {
+            XCTAssertEqual(route("video", url), .inspector, url)
+            XCTAssertEqual(route("audio", url), .inspector, url)
+        }
+        for name in ["live.m3u8", "mix.m3u", "page.xhtm"] {
+            XCTAssertEqual(route("video", "", local: URL(fileURLWithPath: "/tmp/\(name)")), .inspector, name)
+        }
+        XCTAssertNil(
+            NativeMediaPresenter.playableExtension(mimeType: "application/vnd.apple.mpegurl", pathExtension: "mp4"))
+        XCTAssertNil(NativeMediaPresenter.playableExtension(mimeType: "application/x-mpegURL", pathExtension: "mp4"))
+        XCTAssertNil(NativeMediaPresenter.playableExtension(mimeType: "text/html", pathExtension: "mp4"))
+        XCTAssertNil(
+            NativeMediaPresenter.playableExtension(mimeType: "application/octet-stream", pathExtension: "m3u8"))
+        XCTAssertEqual(NativeMediaPresenter.playableExtension(mimeType: "video/mp4", pathExtension: ""), "mp4")
+        XCTAssertEqual(
+            NativeMediaPresenter.playableExtension(mimeType: "application/octet-stream", pathExtension: "MOV"), "mov")
+    }
+
     func testOfflineAnotherSitesFileIsANoticeButAnUploadAsksItsCache() throws {
         XCTAssertEqual(route("video", "https://media.example/clip.mp4", offline: true), .offline)
         XCTAssertEqual(route("file", "https://files.example/notes.txt", offline: true), .offline)
@@ -137,6 +158,32 @@ final class NativeMediaPlaybackTests: NativeEditingTestCase {
                 .preview(.attachment(try display(Self.upload("pdf")))),
             ])
         XCTAssertEqual(inspected, ["empty"], "only the block with nothing to show opens its inspector")
+    }
+
+    private func texts(in view: UIView) -> [String] {
+        view.subviews.flatMap { subview in ((subview as? UILabel)?.text).map { [$0] } ?? texts(in: subview) }
+    }
+
+    /// An audio, file or PDF card on another site says where a tap goes; this server's upload does not.
+    func testAnotherSitesAudioFileOrPDFCardNamesItsHost() async throws {
+        let harness = try await makeHarness([
+            paragraph("lead", "Media"), mediaBlock("audio", "song", url: "https://media.example/song.mp3"),
+            mediaBlock("file", "notes", url: "https://files.example/notes.txt"),
+            mediaBlock("pdf", "paper", url: "https://papers.example:8443/paper.pdf"),
+            mediaBlock("pdf", "upload", url: Self.upload("pdf")),
+        ])
+        addTeardownBlock { await harness.close() }
+        harness.view.blockControls.serverOrigin = Self.origin
+        _ = show(harness.view)
+
+        for (id, host) in [("song", "media.example"), ("notes", "files.example"), ("paper", "papers.example")] {
+            let card = try card(harness.view, id)
+            XCTAssertTrue(texts(in: card).contains(host), "\(id): \(texts(in: card))")
+            XCTAssertEqual(card.accessibilityValue, host, "VoiceOver hears it too")
+        }
+        let upload = try card(harness.view, "upload")
+        XCTAssertFalse(texts(in: upload).contains("example.test"), "\(texts(in: upload))")
+        XCTAssertTrue(texts(in: upload).contains(NativeEditorLabels().kind("pdf")))
     }
 
     func testTheOptionsButtonOpensTheInspectorWhileEditing() async throws {
@@ -260,6 +307,133 @@ final class NativeMediaPlaybackTests: NativeEditingTestCase {
 
         XCTAssertEqual(resolved, NativeMediaPresenter.Resolution.notice(NativeEditorLabels().mediaOffline))
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/media/"), 0)
+    }
+
+    /// The client a test's remote fetch goes through: the production configuration, mock transport.
+    private func remoteMedia() -> RemoteMediaClient {
+        let configuration = RemoteMediaClient.configuration()
+        configuration.protocolClasses = [MockURLProtocol.self]
+        return RemoteMediaClient(session: URLSession(configuration: configuration))
+    }
+
+    /// `AVURLAsset` sends matching cookies from the shared storage whatever its options say, so a URL on
+    /// this server's host that isn't an upload (another path, an explicit :443) must never reach the
+    /// player: it downloads with no cookies and the player gets the local file.
+    func testThisHostsNonUploadURLDownloadsWithoutCookiesAndPlaysTheFile() async throws {
+        let harness = try await makeHarness([paragraph("lead", "Media")])
+        addTeardownBlock { await harness.close() }
+        let controls: NativeBlockControls = harness.view.blockControls
+        controls.serverOrigin = Self.origin
+        controls.remoteMedia = remoteMedia()
+        let configuration = RemoteMediaClient.configuration()
+        XCTAssertNil(configuration.httpCookieStorage, "no cookie storage, so no session cookie")
+        XCTAssertFalse(configuration.httpShouldSetCookies)
+        XCTAssertNil(configuration.urlCredentialStorage)
+        XCTAssertNil(configuration.urlCache)
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(
+                statusCode: 200, headers: ["Content-Type": "video/mp4"], body: Data([0, 0, 0, 0x18]), error: nil)
+        }
+
+        for url in ["\(Self.origin)/other/clip.mp4", "https://example.test:443/media/clip.mp4"] {
+            let parsed = try XCTUnwrap(URL(string: url))
+            let tap = route("video", url)
+            XCTAssertEqual(tap, .play(.remote(parsed)), url)
+            guard case .play(let source) = tap else { continue }
+
+            let resolved = await NativeMediaPresenter.resolve(source, controls: controls)
+
+            guard case .file(let file) = resolved else { return XCTFail("\(url): expected a file, got \(resolved)") }
+            XCTAssertTrue(file.isFileURL, "\(url): the player never gets a remote URL")
+            XCTAssertEqual(file.pathExtension, "mp4")
+            XCTAssertEqual(try Data(contentsOf: file), Data([0, 0, 0, 0x18]))
+            let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+            XCTAssertEqual(request.url, parsed)
+            XCTAssertFalse(request.httpShouldHandleCookies, "\(url): no cookies attached")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+        }
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "clip.mp4"), 2)
+    }
+
+    func testRemoteMediaRefusesCleartextRedirectsAndBodiesOverTheCap() async throws {
+        let delegate = MediaDownloadDelegate(
+            destination: URL(fileURLWithPath: "/tmp/unused"), byteLimit: 8, external: true)
+        let session = URLSession(configuration: RemoteMediaClient.configuration())
+        let source = try XCTUnwrap(URL(string: "https://media.example/clip.mp4"))
+        let response = try XCTUnwrap(HTTPURLResponse(url: source, statusCode: 302, httpVersion: nil, headerFields: nil))
+        for (target, allowed) in [
+            ("http://media.example/clip.mp4", false), ("https://user@cdn.example/clip.mp4", false),
+            ("https://cdn.example/clip.mp4", true),
+        ] {
+            let proposed = URLRequest(url: try XCTUnwrap(URL(string: target)))
+            let result: URLRequest? = await withCheckedContinuation { continuation in
+                delegate.urlSession(
+                    session, task: session.dataTask(with: source), willPerformHTTPRedirection: response,
+                    newRequest: proposed
+                ) { continuation.resume(returning: $0) }
+            }
+            XCTAssertEqual(result != nil, allowed, target)
+        }
+
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: ["Content-Type": "video/mp4"], body: Data(repeating: 1, count: 9), error: nil)
+        }
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NativeMediaPlaybackTests.\(UUID().uuidString).mp4")
+        directories.append(destination)
+        do {
+            _ = try await remoteMedia().download(source, to: destination, byteLimit: 8)
+            XCTFail("a body over the cap must be refused")
+        } catch {
+            XCTAssertEqual((error as? URLError)?.code, .dataLengthExceedsMaximum)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path), "nothing over the cap lands")
+
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: ["Content-Type": "application/vnd.apple.mpegurl"],
+                body: Data("#EXTM3U".utf8), error: nil)
+        }
+        let harness = try await makeHarness([paragraph("lead", "Media")])
+        addTeardownBlock { await harness.close() }
+        harness.view.blockControls.remoteMedia = remoteMedia()
+        let resolved = await NativeMediaPresenter.resolve(.remote(source), controls: harness.view.blockControls)
+        XCTAssertEqual(resolved, .notice(NativeEditorLabels().mediaFailed), "a served playlist never plays")
+    }
+
+    func testAPlayerClosedBeforeItsFileArrivesNeverPlays() throws {
+        let file = try XCTUnwrap(NativeMediaPresenter.stage(Data([0, 0, 0, 0x18]), fileExtension: "mp4"))
+        let player = AVPlayerViewController()
+
+        NativeMediaPresenter.start(file, in: player)
+
+        XCTAssertNil(player.player, "a player no longer presented never starts")
+    }
+
+    /// Sign-out and an account switch (`SessionStore.forgetSignedInIdentity`) stop the player and
+    /// delete what was staged for it.
+    func testEndingTheSessionStopsThePlayerAndDeletesStagedFiles() async throws {
+        let harness = try await makeHarness([paragraph("lead", "Media"), mediaBlock("video", "clip", url: "")])
+        addTeardownBlock { await harness.close() }
+        let window = show(harness.view)
+        let file = try XCTUnwrap(NativeMediaPresenter.stage(Data([0, 0, 0, 0x18]), fileExtension: "mp4"))
+        NativeMediaPresenter.show(
+            .play(.local(file)), from: try card(harness.view, "clip"), controls: harness.view.blockControls)
+        let player = try XCTUnwrap(window.rootViewController?.presentedViewController as? AVPlayerViewController)
+        await waitUntil { player.player?.currentItem != nil }
+        let avPlayer = try XCTUnwrap(player.player)
+        XCTAssertTrue(NativeMediaPresenter.activePlayer === player)
+
+        NativeMediaPresenter.endSession()
+
+        XCTAssertEqual(avPlayer.rate, 0, "paused")
+        XCTAssertNil(avPlayer.currentItem)
+        XCTAssertNil(NativeMediaPresenter.activePlayer)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: NativeMediaPresenter.stagingDirectory.path))
+        await waitUntil { window.rootViewController?.presentedViewController == nil }
     }
 
     func testPlayingPresentsTheSystemPlayerOverTheCard() async throws {

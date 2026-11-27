@@ -124,6 +124,31 @@ actor DocsAPIClient {
         try await performRequest(path: path, method: "GET", body: nil, contentType: nil)
     }
 
+    /// `getRawData` streamed to `destination` instead of memory (`downloadMediaFile`): refused past
+    /// `byteLimit` with `URLError(.dataLengthExceedsMaximum)`, which is not a transport failure, so
+    /// nothing retries it on its own.
+    func getRawFile(_ path: String, to destination: URL, byteLimit: Int) async throws {
+        guard let url = URL(string: path, relativeTo: baseURL) else {
+            throw DocsAPIError.network("Invalid path: \(path)")
+        }
+        let startedAt = ContinuousClock.now
+        let response: HTTPURLResponse
+        do {
+            response = try await downloadMediaFile(
+                URLRequest(url: url), session: session, to: destination, byteLimit: byteLimit, external: false)
+        } catch let error as URLError where error.code == .dataLengthExceedsMaximum {
+            onTransportOutcome(.reachedServer, startedAt)
+            throw error
+        } catch {
+            if isConnectivityFailure(error) {
+                onTransportOutcome(.unreachable, startedAt)
+            }
+            throw DocsAPIError.network(error.localizedDescription)
+        }
+        onTransportOutcome(.reachedServer, startedAt)
+        try checkStatus(response, body: Data(), method: "GET", path: path, startedAt: startedAt)
+    }
+
     func send<T: Decodable>(
         path: String, method: String, body: Data?, contentType: String? = "application/json", accept: String? = nil,
         isCurrent: (@Sendable () -> Bool)? = nil
@@ -226,23 +251,28 @@ actor DocsAPIClient {
         }
         // Any status proves the server answered; only the status handling below differs.
         onTransportOutcome(.reachedServer, startedAt)
-
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            onRequestFailure(
-                RequestFailure(method: method, path: path, statusCode: httpResponse.statusCode, body: data))
-            var headers: [String: String] = [:]
-            for (key, value) in httpResponse.allHeaderFields {
-                if let key = key as? String, let value = value as? String {
-                    headers[key] = value
-                }
-            }
-            let error = DocsAPIErrorMapper.map(statusCode: httpResponse.statusCode, headers: headers)
-            if error == .sessionExpired {
-                onSessionExpired(startedAt)
-            }
-            throw error
-        }
-
+        try checkStatus(httpResponse, body: data, method: method, path: path, startedAt: startedAt)
         return data
+    }
+
+    /// A non-2xx answer: reported, mapped, and a 401 raises the re-login flow.
+    private func checkStatus(
+        _ httpResponse: HTTPURLResponse, body: Data, method: String, path: String,
+        startedAt: ContinuousClock.Instant
+    ) throws {
+        guard !(200..<300).contains(httpResponse.statusCode) else { return }
+        onRequestFailure(
+            RequestFailure(method: method, path: path, statusCode: httpResponse.statusCode, body: body))
+        var headers: [String: String] = [:]
+        for (key, value) in httpResponse.allHeaderFields {
+            if let key = key as? String, let value = value as? String {
+                headers[key] = value
+            }
+        }
+        let error = DocsAPIErrorMapper.map(statusCode: httpResponse.statusCode, headers: headers)
+        if error == .sessionExpired {
+            onSessionExpired(startedAt)
+        }
+        throw error
     }
 }

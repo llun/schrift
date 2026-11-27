@@ -346,6 +346,9 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     /// The app's attachment loader: an upload on this server plays or
     /// previews from the file it downloads and caches. Nil shows nothing.
     var attachments: AttachmentLoader?
+    /// Another site's video or audio (or this server's, off the attachment shape) downloads
+    /// through this cookie-free client before it plays.
+    var remoteMedia = RemoteMediaClient.shared
     /// The editor's uploads: a queued upload's card plays its local bytes.
     var mediaUploads: NativeMediaUploads? { textView?.inputCoordinator?.mediaUploads }
     /// A tap (or VoiceOver action) on an enabled inline page link chip opens

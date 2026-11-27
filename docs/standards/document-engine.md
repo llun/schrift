@@ -1789,9 +1789,15 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   VoiceOver activation is routed by `NativeMediaTap.route` (pure; `NativeMediaPlaybackTests`): video
   and audio play, image, file and PDF preview (`NativeMediaPresenter`: `AVPlayerViewController`,
   `QLPreviewController`), from a queued upload's bytes, this server's upload through
-  `AttachmentLoader`, an image through `ImageLoader`, or another site's https file on the tap
-  (offline: a notice; a document: the browser); a block with no url, an `uploadLoader`, a
-  non-https other-site URL or a type QuickLook must not render opens the inspector instead. The
+  `AttachmentLoader` (video and audio streamed to disk, capped), an image through `ImageLoader`, or
+  any other https file on the tap (offline: a notice; a document: the browser; video and audio:
+  downloaded cookie-free by `RemoteMediaClient` and played from the staged file, since the player
+  must never get a remote URL); a block with no url, an `uploadLoader`, a non-https other-site URL,
+  a playlist or a type QuickLook must not render (`attachmentExtensionIsPreviewable`) opens the
+  inspector instead. `NativeMediaPresenter.start` plays only in a still-presented player, with
+  `forbidAll` reference restrictions; `endSession` (from `SessionStore.forgetSignedInIdentity`)
+  stops it and deletes `tmp/SchriftMediaPreview`. Another site's audio, file or PDF card shows its
+  host as the detail line. The
   card's Options button (`mediaOptionButtons`, editing only) and the block menu's Options
   (`mediaOptionsTarget` → `requestedMedia`) call `NativeBlockControls.onOpenMedia`, which opens
   `NativeMediaInspector` (a sheet,
