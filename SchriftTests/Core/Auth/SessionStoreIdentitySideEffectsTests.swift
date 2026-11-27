@@ -215,6 +215,24 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertNil(drafts.draft(for: documentID))
     }
 
+    /// A web login writes its cookies before the epoch moves, so a login beginning after the
+    /// handover means the confirmation may have run with that login's cookies.
+    func testALoginBeginningAfterTheHandoverAdoptsNothing() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        let account = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        try store.signIn(serverURL: serverURL, userID: account)
+        store.noteSessionCookiesReplaced()
+        let drafts = PendingDraftStore(userDefaults: userDefaults)
+        let documentID = UUID()
+        drafts.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Meanwhile", updatedAt: Date()))
+        store.noteSessionCookiesWillChange()
+
+        try store.signIn(serverURL: serverURL, userID: account)
+
+        XCTAssertNil(drafts.draft(for: documentID))
+    }
+
     func testSigningOutForgetsTheAccountId() throws {
         let signedIn = SignedInUserStore(userDefaults: userDefaults)
         let store = SessionStore(

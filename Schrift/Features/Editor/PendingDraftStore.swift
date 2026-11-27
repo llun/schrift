@@ -181,8 +181,9 @@ final class PendingDraftStore {
         persist(drafts)
     }
 
-    /// The sign-in `epoch` has been named as `owner` — by a `/users/me/` that ran inside it, so
-    /// with the same cookies — and the drafts set aside while it was unknown are that account's.
+    /// The sign-in `epoch` has been named as `owner` — by a confirmation proven to have run with
+    /// the same cookies (`SessionStore.signIn`) — and the drafts set aside while it was unknown
+    /// are that account's.
     /// One whose document already has a draft of `owner`'s stays set aside: replacing either
     /// would lose work. Returns whether anything moved.
     @discardableResult

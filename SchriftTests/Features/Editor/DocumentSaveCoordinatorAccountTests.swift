@@ -124,18 +124,22 @@ final class DocumentSaveCoordinatorAccountTests: DocumentSaveCoordinatorTestCase
         XCTAssertNil(contentCache.content(for: documentID))
     }
 
-    /// Drafts saved while the sign-in was unnamed go to the account it is then named as.
-    func testDraftsSavedWhileUnknownAreAdoptedWhenTheSameSignInIsNamed() {
-        let (coordinator, draftStore, _) = makeCoordinator()
+    /// Two unnamed sign-ins are two sessions: a save the first parked behind a conflict is
+    /// neither shown to the second nor released by it.
+    func testOneUnnamedSignInNeverReleasesAnothersParkedSave() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, _, _) = makeCoordinator()
         signIn(nil)
-        let unnamed = coordinator.signedInSession
-        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Typed meanwhile")
-        XCTAssertNil(draftStore.draft(for: documentID))
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# First unnamed sign-in")
 
-        SignedInUserStore(userDefaults: UserDefaults(suiteName: draftSuiteNames.last!)!).remember(signedInUserID)
-        coordinator.adoptDraftsSavedWhileUnknown(epoch: unnamed.epoch, owner: signedInUserID)
+        signIn(nil)
+        XCTAssertNil(coordinator.pendingSave(documentID: documentID))
+        XCTAssertNil(coordinator.conflict(for: documentID))
+        coordinator.clearResolvedConflict(documentID: documentID)
 
-        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Typed meanwhile")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
     }
 
     /// Native mode must not seed a replica over another account's waiting classic edits.

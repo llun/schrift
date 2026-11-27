@@ -1566,10 +1566,14 @@ refreshes an unknown identity before the replay.
 
 **Drafts saved while the account is unknown** go to a slot of their own for that sign-in
 (`unknown-<epoch>|<document>`): shown to nobody, replayed by nobody, replacing no one's work.
-When the same sign-in is named — an epoch-guarded `/users/me/` (`HomeViewModel`,
-`ProfileViewModel`), or `SessionStore.signIn` confirming a handover nothing has replaced since
-— `adoptDraftsSavedWhileUnknown` re-keys them to that account, unless it already has a draft
-of the document (then the slot stays set aside).
+Only proof that the cookies did not change hands hands them over: `SessionStore.signIn`
+confirming a handover whose epoch is unchanged and after which no login began writing cookies
+(`noteSessionCookiesWillChange`) — then `adoptDraftsSavedWhileUnknown` re-keys them to that
+account, unless it already has a draft of the document. A passive `/users/me/` refresh does not
+adopt: a login writes its cookies before the epoch moves, so an unchanged epoch proves nothing.
+A slot never adopted stays set aside. The in-memory per-document state of an unnamed sign-in is
+kept per epoch for the same reason, so one unconfirmed session never releases another's parked
+save.
 
 Drafts from before account scoping carry no owner. `SchriftApp.init` calls
 `assignOwnersToEarlierDrafts()` once (a persisted flag) before any sign-in can name an

@@ -590,8 +590,6 @@ final class HomeViewModel {
         guard signedInUser.epoch == epoch else { return }
         let previousOwner = signedInUser.userID
         signedInUser.remember(user.id)
-        // The same sign-in, now named: what it saved while unnamed is this account's.
-        if let id = user.id { saveCoordinator.adoptDraftsSavedWhileUnknown(epoch: epoch, owner: id) }
         // Unconditional: a sign-in now remembers the new id before this runs.
         saveCoordinator.pins.sessionIdentityDidChange()
         // Same response, one more consumer: Profile shows this account from disk when there is

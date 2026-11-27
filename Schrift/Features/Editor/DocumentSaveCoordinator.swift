@@ -596,7 +596,8 @@ final class DocumentSaveCoordinator {
         // fresh sign-in builds this coordinator before `/users/me/` names the account.
         for draft in draftStore.allDraftsOfEveryAccount() {
             if let serverUpdatedAt = draft.conflictServerUpdatedAt, let owner = draft.owner {
-                conflicts[draft.documentID, owner: owner] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
+                conflicts[draft.documentID, in: SignedInSession(userID: owner, epoch: 0)] =
+                    SyncConflict(serverUpdatedAt: serverUpdatedAt)
             }
         }
         updateBackupProtection()
@@ -684,13 +685,6 @@ final class DocumentSaveCoordinator {
         draftStore.allDraftsOfEveryAccount().contains {
             $0.documentID == documentID && $0.replica == nil && $0.owner != nil
         }
-    }
-
-    /// The sign-in `epoch` has been named as `owner` (by a `/users/me/` that ran inside it): the
-    /// drafts set aside while it was unnamed are that account's.
-    func adoptDraftsSavedWhileUnknown(epoch: Int, owner: UUID) {
-        guard draftStore.adoptDraftsSavedWhileUnknown(epoch: epoch, owner: owner) else { return }
-        draftsVersion &+= 1
     }
 
     /// The live `/users/me/` and the account drafts are scoped to name the same account. A replay
@@ -951,7 +945,8 @@ final class DocumentSaveCoordinator {
         draftsVersion &+= 1
         for draft in draftStore.allDraftsOfEveryAccount() {
             if let serverUpdatedAt = draft.conflictServerUpdatedAt, let owner = draft.owner {
-                conflicts[draft.documentID, owner: owner] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
+                conflicts[draft.documentID, in: SignedInSession(userID: owner, epoch: 0)] =
+                    SyncConflict(serverUpdatedAt: serverUpdatedAt)
             }
             syncBackupExclusion(for: draft.documentID, scope: draft.replica?.scope)
         }
@@ -3843,7 +3838,7 @@ final class DocumentSaveCoordinator {
         // *else* writes the server, and rule 1 compares against the server body, so a
         // stale stamp simply stops matching and rule 2 takes over.
         let lastPushed =
-            lastConfirmedPushMarkdown[documentID, owner: owner]
+            lastConfirmedPushMarkdown[documentID, in: writtenIn]
             ?? draftStore.draft(for: documentID, in: writtenIn)?.lastPushedMarkdown
         let draft = PendingDraft(
             documentID: documentID, title: save.title, markdown: save.markdown, updatedAt: Date(),
@@ -3851,7 +3846,7 @@ final class DocumentSaveCoordinator {
             lastPushedMarkdown: lastPushed,
             // Carry the hold through: `enqueue` rebuilds the whole draft, so omitting this
             // would silently erase a persisted conflict on the next keystroke.
-            conflictServerUpdatedAt: conflicts[documentID, owner: owner]?.serverUpdatedAt,
+            conflictServerUpdatedAt: conflicts[documentID, in: writtenIn]?.serverUpdatedAt,
             replica: save.replicaRequest?.reference, ownerUserID: owner)
         saveDraft(draft, setAsideIn: owner == nil ? session.epoch : nil)
         // A local document's *displayed* title comes from its draft (`pendingLocalDocuments`
@@ -5650,7 +5645,7 @@ final class DocumentSaveCoordinator {
         let owner = session.owner(now: signedInSession)
         let settledIn = SignedInSession(userID: owner, epoch: session.epoch)
         inFlight[documentID] = nil
-        inFlightContent[documentID, owner: session.userID] = nil
+        inFlightContent[documentID, in: session] = nil
         let wasReplayedPush = replayedPushes.remove(documentID) != nil
         // Fired from every exit below (the early returns included) once the content is known to
         // be on the server; `defer` keeps it last, after state has settled.
@@ -5688,7 +5683,7 @@ final class DocumentSaveCoordinator {
         // survives the discarded branch below and must carry the stamp too. Doing this after
         // that branch's `return` left exactly that draft unstamped.
         if contentLanded {
-            lastConfirmedPushMarkdown[documentID, owner: owner] = save.markdown
+            lastConfirmedPushMarkdown[documentID, in: settledIn] = save.markdown
             // Stamp whatever draft is on disk: its content descends from what this save just
             // landed, whether it is a *newer* draft (the user kept typing) or the save's own
             // draft surviving a failure (a half-land keeps an **identical** draft — stamping
@@ -5699,7 +5694,7 @@ final class DocumentSaveCoordinator {
                     PendingDraft(
                         documentID: documentID, title: draft.title, markdown: draft.markdown,
                         updatedAt: draft.updatedAt, baseline: draft.baseline, lastPushedMarkdown: save.markdown,
-                        conflictServerUpdatedAt: conflicts[documentID, owner: owner]?.serverUpdatedAt,
+                        conflictServerUpdatedAt: conflicts[documentID, in: settledIn]?.serverUpdatedAt,
                         replica: draft.replica, ownerUserID: draft.owner),
                     setAsideIn: owner == nil ? session.epoch : nil)
             }
@@ -5860,30 +5855,39 @@ final class DocumentSaveCoordinator {
 /// `DocumentSaveCoordinator.observeDocumentDeleted`.
 /// Per-document state an account left in memory, read and written for whoever the drafts are
 /// scoped to: an in-place re-login as someone else neither shows nor sends it, and it is there
-/// again when that account returns. `keys` spans every account, for the protections.
+/// again when that account returns. A sign-in never named keeps its own bucket per epoch, like
+/// the store's set-aside slots, so one unconfirmed session never releases another's parked save.
+/// `keys` spans every bucket, for the protections.
 struct AccountScoped<Value> {
+    private enum Bucket: Hashable {
+        case account(UUID)
+        case unnamed(epoch: Int)
+    }
+
     private let drafts: PendingDraftStore
-    private var byOwner: [UUID?: [UUID: Value]] = [:]
+    private var buckets: [Bucket: [UUID: Value]] = [:]
 
     init(_ drafts: PendingDraftStore) { self.drafts = drafts }
 
+    private static func bucket(_ session: SignedInSession) -> Bucket {
+        session.userID.map(Bucket.account) ?? .unnamed(epoch: session.epoch)
+    }
+
     subscript(documentID: UUID) -> Value? {
-        get { self[documentID, owner: drafts.session.userID] }
-        set { self[documentID, owner: drafts.session.userID] = newValue }
+        get { self[documentID, in: drafts.session] }
+        set { self[documentID, in: drafts.session] = newValue }
     }
 
-    subscript(documentID: UUID, owner owner: UUID?) -> Value? {
-        get { byOwner[owner]?[documentID] }
-        set { byOwner[owner, default: [:]][documentID] = newValue }
+    subscript(documentID: UUID, in session: SignedInSession) -> Value? {
+        get { buckets[Self.bucket(session)]?[documentID] }
+        set { buckets[Self.bucket(session), default: [:]][documentID] = newValue }
     }
 
-    var keys: Set<UUID> { Set(byOwner.values.flatMap(\.keys)) }
+    var keys: Set<UUID> { Set(buckets.values.flatMap(\.keys)) }
 
     mutating func removeValue(forKey documentID: UUID) -> Value? {
-        byOwner[drafts.session.userID]?.removeValue(forKey: documentID)
+        buckets[Self.bucket(drafts.session)]?.removeValue(forKey: documentID)
     }
-
-    mutating func removeAll(owner: UUID?) { byOwner[owner] = nil }
 }
 
 private struct DocumentDeletedObserver {

@@ -71,9 +71,6 @@ struct MainTabView: View {
                 client: viewModel.client,
                 onSignedInUserChanged: { [saveCoordinator = viewModel.saveCoordinator] in
                     saveCoordinator.pins.sessionIdentityDidChange()
-                },
-                onSessionNamed: { [saveCoordinator = viewModel.saveCoordinator] epoch, userID in
-                    saveCoordinator.adoptDraftsSavedWhileUnknown(epoch: epoch, owner: userID)
                 }))
         _attachmentsViewModel = State(
             initialValue: AttachmentsViewModel(

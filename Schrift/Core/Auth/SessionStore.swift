@@ -74,8 +74,10 @@ final class SessionStore {
     /// stays off until it (or `signOut`) runs; `needsReauthentication` alone is not enough,
     /// because cancelling the sheet clears it while those cookies are still live.
     private var cookiesAwaitingConfirmation = false
-    /// The identity epoch a web login's handover left behind. Still current at `signIn`, nothing
-    /// changed hands since, so the confirming `/users/me/` names the account of that sign-in.
+    /// The identity epoch a web login's handover left behind. Still current at `signIn`, and no
+    /// login has begun writing cookies since, nothing changed hands, so the confirming
+    /// `/users/me/` names the account of that sign-in. The only proof that is trusted: an
+    /// unchanged epoch alone is not, since a login writes its cookies before the epoch moves.
     private var handoverEpoch: Int?
     /// RootView's sign-out is draining native saves before it calls `signOut`. A re-login
     /// finishing in that window would bump `signInGeneration` and RootView would drop the
@@ -252,6 +254,7 @@ final class SessionStore {
     /// completes no request bound to the previous session passes, and none
     /// bound while switching does either.
     func noteSessionCookiesWillChange() {
+        handoverEpoch = nil
         generationClock.beginSwitch()
     }
 
