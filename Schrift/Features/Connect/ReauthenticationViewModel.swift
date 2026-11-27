@@ -18,9 +18,6 @@ final class ReauthenticationViewModel {
     let serverURL: URL
     let sessionStore: SessionStore
     private let apiClientFactory: (URL) -> DocsAPIClient
-    /// The session this login set out to replace, read before its cookies were written. A
-    /// sign-out or another login since then makes it stale.
-    private var generationBeforeCookies: Int?
 
     init(
         serverURL: URL,
@@ -39,7 +36,6 @@ final class ReauthenticationViewModel {
 
     /// The web login is about to write its cookies (PR13a review W1).
     func cookiesWillChange() {
-        generationBeforeCookies = sessionStore.signInGeneration
         sessionStore.noteSessionCookiesWillChange()
     }
 
@@ -48,9 +44,7 @@ final class ReauthenticationViewModel {
     /// sign-out, another login): this login is stale and must not undo that.
     @discardableResult
     func handleLoginComplete() async -> Bool {
-        guard sessionStore.isAuthenticated, !sessionStore.isSigningOut,
-            generationBeforeCookies.map({ $0 == sessionStore.signInGeneration }) ?? true
-        else {
+        guard sessionStore.isAuthenticated, !sessionStore.isSigningOut else {
             sessionStore.discardStaleLoginCookies()
             return false
         }
@@ -69,7 +63,12 @@ final class ReauthenticationViewModel {
             let userID = try await client.confirmSession()
             guard sessionStore.isAuthenticated, !sessionStore.isSigningOut,
                 sessionStore.signInGeneration == generation
-            else { return false }
+            else {
+                // Signed out meanwhile: the confirmation may have set cookies after the delete.
+                // (Signed in, a newer login owns the identity; leave it be.)
+                if !sessionStore.isAuthenticated { sessionStore.discardStaleLoginCookies() }
+                return false
+            }
             try sessionStore.signIn(serverURL: serverURL, userID: userID)
             return true
         } catch {

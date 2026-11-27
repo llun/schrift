@@ -4,6 +4,7 @@ import Foundation
 
 final class FakeKeychainStore: KeychainStoring {
     var failingSaveKeys: Set<String> = []
+    var failingDeleteKeys: Set<String> = []
     private var storage: [String: Data] = [:]
     /// Keys passed to `upgradeAccessibility`, in call order — lets a test assert
     /// the launch-time migration fires for exactly the right keys.
@@ -22,6 +23,7 @@ final class FakeKeychainStore: KeychainStoring {
     }
 
     func delete(forKey key: String) throws {
+        if failingDeleteKeys.contains(key) { throw NSError(domain: "FakeKeychain", code: 1) }
         storage.removeValue(forKey: key)
     }
 
