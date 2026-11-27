@@ -441,6 +441,25 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertEqual(clears, [false])
     }
 
+    /// A sign-out whose marker delete fails still clears the cookies and their snapshot, so a
+    /// relaunch cannot restore the session without a password.
+    func testAFailedMarkerDeleteAtSignOutLeavesNoSessionToRestore() throws {
+        let keychain = FakeKeychainStore()
+        let cookies = FakeCookieStorage()
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookies)
+        cookies.setCookie(
+            HTTPCookie(properties: [.domain: "docs.llun.dev", .path: "/", .name: "docs_sessionid", .value: "fake"])!)
+        try store.signIn(serverURL: serverURL)
+        keychain.failingDeleteKeys = ["dev.llun.Schrift.isAuthenticated"]
+
+        XCTAssertThrowsError(try store.signOut())
+
+        XCTAssertEqual(cookies.storedCookies, [])
+        let relaunchedCookies = FakeCookieStorage()
+        _ = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: relaunchedCookies)
+        XCTAssertEqual(relaunchedCookies.storedCookies, [], "nothing to restore")
+    }
+
     func testOnlyAMissingMarkerCountsAsSignedOutAtLaunch() throws {
         let keychain = FakeKeychainStore()
         XCTAssertTrue(SessionStore.hasNoSignInMarker(keychain: keychain))

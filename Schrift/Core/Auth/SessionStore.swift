@@ -368,8 +368,10 @@ final class SessionStore {
         // (read-only, no account) instead of typing on under a forgotten identity.
         signInGeneration += 1
         generationClock.advance()
-        try keychain.delete(forKey: Self.authenticatedKeychainKey)
+        // The cookie snapshot first: if the marker delete below throws, a relaunch must not
+        // restore this session (it finds the marker but no cookies, and asks for a password).
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
+        try keychain.delete(forKey: Self.authenticatedKeychainKey)
         endReauthentication()
         silentReauthenticationExhausted = false
         lastSilentSignIn = nil

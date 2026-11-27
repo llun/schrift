@@ -91,7 +91,7 @@
   confirmed account and web-login count decide it). An intentional sign-out and a stale
   login landing after it remove everything the web view keeps and every cookie in
   `HTTPCookieStorage.shared` (the login copies the IdP's there), ending the IdP's single
-  sign-on; a launch with no sign-in marker clears the web view's store. Keep that stronger account-isolation lifecycle. See [`docs/offline-and-sync.md`](../offline-and-sync.md).
+  sign-on; a launch with no sign-in marker clears both stores as well. Keep that stronger account-isolation lifecycle. See [`docs/offline-and-sync.md`](../offline-and-sync.md).
 - **The account's displayed profile is cached too** (`CurrentUserCacheStore`,
   `dev.llun.Schrift.currentUser`), because `/users/me/` is the only source of the
   email and names and it is a network call: `ProfileViewModel` held it in memory
