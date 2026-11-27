@@ -83,6 +83,8 @@ class HomeViewModelTestCase: XCTestCase {
         let suiteName = "HomeViewModelTests.coordinator.\(UUID().uuidString)"
         coordinatorSuiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
+        // One account, as in the app, where both read `UserDefaults.standard`.
+        SignedInUserStore(userDefaults: defaults).remember(signedInUser?.userID)
         let draftStore = PendingDraftStore(userDefaults: defaults)
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore,

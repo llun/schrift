@@ -549,7 +549,6 @@ enum Strings_zhHans {
         .native_editor_read_only_pending_sync: "正在等待此文档完成同步 — 请重新打开以编辑",
         .native_editor_read_only_classic_draft: "只读：正在等待离线草稿完成同步 — 请重新打开以编辑",
         .native_editor_read_only_live_held: "正在等待实时协作更改同步 — 请重新打开以编辑",
-        .native_editor_read_only_signed_out: "只读：请登录以编辑此文档",
         .native_editor_block_callout: "提示框",
         .native_editor_block_table: "表格",
         .native_editor_block_columns: "分栏",

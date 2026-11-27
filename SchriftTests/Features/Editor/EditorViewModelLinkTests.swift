@@ -33,7 +33,7 @@ final class EditorViewModelLinkTests: XCTestCase {
     private func makeViewModel() -> EditorViewModel {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "EditorViewModelLinkTests.\(UUID().uuidString)"
-        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        let draftStore = signedInDraftStore(UserDefaults(suiteName: suiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop,

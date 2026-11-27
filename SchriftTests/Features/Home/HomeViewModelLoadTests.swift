@@ -538,6 +538,7 @@ final class HomeViewModelLoadTests: HomeViewModelTestCase {
         let documentID = UUID(uuidString: "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b")!
         let suiteName = "HomeViewModelTests.forwarding.\(UUID().uuidString)"
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(UUID())
         // Isolated content cache so the successful replay's write-through doesn't
         // leak a JSON file into the real Application Support directory.
         let cacheDir = FileManager.default.temporaryDirectory

@@ -85,4 +85,44 @@ final class SignedInUserStoreTests: XCTestCase {
 
         XCTAssertNil(SignedInUserStore(userDefaults: defaults).userID)
     }
+
+    // MARK: - SignedInSession
+
+    func testAScreenIsReplacedOnlyWhenAnotherAccountIsKnown() {
+        let a = UUID()
+        let loadedForA = SignedInSession(userID: a, epoch: 1)
+        XCTAssertFalse(loadedForA.isAnotherAccount(than: SignedInSession(userID: nil, epoch: 2)), "unknown waits")
+        XCTAssertFalse(loadedForA.isAnotherAccount(than: SignedInSession(userID: a, epoch: 3)), "same account")
+        XCTAssertTrue(loadedForA.isAnotherAccount(than: SignedInSession(userID: UUID(), epoch: 3)))
+        // A page loaded while the account was unconfirmed is read-only, and is reloaded as whichever
+        // account is named.
+        XCTAssertTrue(
+            SignedInSession(userID: nil, epoch: 1).isAnotherAccount(than: SignedInSession(userID: a, epoch: 1)))
+    }
+
+    func testASessionIsStillCurrentForTheSameAccountAcrossASignIn() {
+        let a = UUID()
+        let session = SignedInSession(userID: a, epoch: 1)
+        XCTAssertTrue(session.isStill(SignedInSession(userID: a, epoch: 1)))
+        XCTAssertTrue(session.isStill(SignedInSession(userID: a, epoch: 2)), "a silent re-auth of the same user")
+        XCTAssertFalse(session.isStill(SignedInSession(userID: UUID(), epoch: 1)))
+        XCTAssertFalse(session.isStill(SignedInSession(userID: nil, epoch: 1)))
+        // Loaded while no account was known: only the same sign-in can still be it.
+        XCTAssertTrue(SignedInSession(userID: nil, epoch: 1).isStill(SignedInSession(userID: a, epoch: 1)))
+        XCTAssertFalse(
+            SignedInSession(userID: nil, epoch: 1).isStill(SignedInSession(userID: nil, epoch: 1)),
+            "an unknown now cannot confirm anything")
+        XCTAssertFalse(SignedInSession(userID: nil, epoch: 1).isStill(SignedInSession(userID: nil, epoch: 2)))
+    }
+
+    func testASessionIsCurrentOnlyForItsOwnAccount() {
+        let a = UUID()
+        let loadedForA = SignedInSession(userID: a, epoch: 1)
+        XCTAssertTrue(loadedForA.isCurrent(now: SignedInSession(userID: a, epoch: 3)), "same account, re-login")
+        XCTAssertFalse(loadedForA.isCurrent(now: SignedInSession(userID: nil, epoch: 2)), "unknown is not A")
+        XCTAssertFalse(loadedForA.isCurrent(now: SignedInSession(userID: UUID(), epoch: 3)))
+        // Loaded while no account was known and still none: the screen may show the server copy.
+        XCTAssertTrue(SignedInSession(userID: nil, epoch: 1).isCurrent(now: SignedInSession(userID: nil, epoch: 2)))
+        XCTAssertFalse(SignedInSession(userID: nil, epoch: 1).isCurrent(now: SignedInSession(userID: a, epoch: 1)))
+    }
 }

@@ -151,6 +151,42 @@ final class DocumentCollaborationManagerLifecycleTests: DocumentCollaborationMan
         await waitAndConfirmNever(timeout: 0.4) { manager.activeDocumentCount == 0 }
     }
 
+    /// A change of account closes every socket and drops every replica, referenced or not: they
+    /// were built under the previous account's cookies.
+    func testCloseAllDropsEverySessionIncludingReferencedOnes() async {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        manager.closeAll()
+
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        await waitUntil { spy.sockets.first?.cancelCloseCode != nil }
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 2 }
+        XCTAssertEqual(manager.activeDocumentCount, 1, "a screen asking again gets a fresh session")
+        manager.session(for: docID).map { $0.stop() }
+    }
+
+    /// The same account confirming a silent re-login keeps its live sessions; another account
+    /// being confirmed closes them, since they were opened under the previous cookies.
+    func testOnlyAnotherAccountClosesTheLiveSessions() async {
+        let spy = ManagerSocketFactorySpy()
+        let accountA = UUID()
+        let manager = makeManager(spy: spy, account: { accountA })
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        manager.closeSessions(otherThan: accountA)
+        XCTAssertEqual(manager.activeDocumentCount, 1)
+        XCTAssertNil(spy.sockets.first?.cancelCloseCode, "the same account's socket stays open")
+
+        manager.closeSessions(otherThan: UUID())
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        await waitUntil { spy.sockets.first?.cancelCloseCode != nil }
+    }
+
     func testSuspendClosesSocketAndResumeRebuilds() async {
         let spy = ManagerSocketFactorySpy()
         let manager = makeManager(spy: spy)
@@ -214,4 +250,91 @@ final class DocumentCollaborationManagerLifecycleTests: DocumentCollaborationMan
         await waitUntil { spy.sockets[0].cancelCloseCode == .goingAway }
         await waitAndConfirmNever { spy.sockets.count > 1 }
     }
+
+    /// A socket opened under another account's cookies is never rebuilt: it goes, and the
+    /// screen holding it re-asks.
+    func testReconnectClosesASessionOpenedForAnotherAccount() async throws {
+        let spy = ManagerSocketFactorySpy()
+        let box = AccountBox(value: UUID())
+        let manager = makeManager(spy: spy, account: { box.value })
+        let hold = try XCTUnwrap(manager.acquireSession(for: docID))
+        await waitUntil { spy.sockets.count == 1 }
+
+        box.value = UUID()
+        manager.reconnect()
+
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        await waitUntil { spy.sockets.first?.cancelCloseCode == .goingAway }
+        XCTAssertFalse(manager.holds(hold))
+    }
+
+    /// With no account known, a reconnect redials nothing: the cookies could be anyone's.
+    /// An entry opened while no account was known is not redialed while it still isn't.
+    func testReconnectWhileStillUnknownRedialsNothing() async throws {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(spy: spy, account: { nil })
+        let hold = try XCTUnwrap(manager.acquireSession(for: docID))
+        await waitUntil { spy.sockets.count == 1 }
+
+        manager.reconnect()
+
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        XCTAssertFalse(manager.holds(hold))
+        await waitAndConfirmNever { spy.sockets.count > 1 }
+    }
+
+    /// A reconnect after the account became unknown (a re-login's handover) closes the
+    /// previous account's socket and replica instead of redialing them.
+    func testReconnectWithNoKnownAccountClosesTheSession() async throws {
+        let spy = ManagerSocketFactorySpy()
+        let box = AccountBox(value: UUID())
+        let manager = makeManager(spy: spy, account: { box.value })
+        let hold = try XCTUnwrap(manager.acquireSession(for: docID))
+        await waitUntil { spy.sockets.count == 1 }
+
+        box.value = nil
+        manager.reconnect()
+
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        XCTAssertFalse(manager.holds(hold))
+        await waitUntil { spy.sockets.first?.cancelCloseCode == .goingAway }
+        await waitAndConfirmNever { spy.sockets.count > 1 }
+    }
+
+    /// A claim released after its entry was closed and replaced must not release the
+    /// replacement: the token, not the document id, decides.
+    func testAStaleHoldDoesNotReleaseTheReplacementSession() async throws {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(linger: 0.05, spy: spy)
+        let stale = try XCTUnwrap(manager.acquireSession(for: docID))
+        manager.closeAll()
+        let fresh = try XCTUnwrap(manager.acquireSession(for: docID))
+
+        manager.release(stale)
+
+        XCTAssertTrue(manager.holds(fresh))
+        XCTAssertEqual(manager.activeDocumentCount, 1)
+        await waitAndConfirmNever { manager.activeDocumentCount == 0 }
+    }
+
+    /// A screen holding a claim the manager dropped sees `sessionsRevision` move and
+    /// `holds(_:)` go false, which is its cue to ask again.
+    func testClosingASessionDropsTheHoldAndBumpsTheRevision() throws {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let hold = try XCTUnwrap(manager.acquireSession(for: docID))
+        let before = manager.sessionsRevision
+        XCTAssertTrue(manager.holds(hold))
+
+        manager.closeAll()
+
+        XCTAssertFalse(manager.holds(hold))
+        XCTAssertGreaterThan(manager.sessionsRevision, before)
+    }
+}
+
+@MainActor
+private final class AccountBox {
+    var value: UUID?
+    init(value: UUID?) { self.value = value }
 }

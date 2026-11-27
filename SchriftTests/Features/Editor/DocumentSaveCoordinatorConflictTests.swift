@@ -392,6 +392,7 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
         let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
         draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(signedInUserID)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         func makeProcess() -> DocumentSaveCoordinator {
             DocumentSaveCoordinator(
@@ -434,6 +435,7 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
         let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
         draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(signedInUserID)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         func makeProcess() -> DocumentSaveCoordinator {
             DocumentSaveCoordinator(
@@ -483,6 +485,7 @@ final class DocumentSaveCoordinatorConflictTests: DocumentSaveCoordinatorTestCas
         let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
         draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(signedInUserID)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         func makeProcess() -> DocumentSaveCoordinator {
             DocumentSaveCoordinator(

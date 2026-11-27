@@ -574,7 +574,6 @@ enum Strings_pt {
             "Só de leitura: a aguardar que um rascunho offline termine de sincronizar — reabra-o para editar",
         .native_editor_read_only_live_held:
             "A aguardar que as alterações da colaboração ao vivo sincronizem — reabra-o para editar",
-        .native_editor_read_only_signed_out: "Só de leitura: inicie sessão para editar este documento",
         .native_editor_block_callout: "Aviso",
         .native_editor_block_table: "Tabela",
         .native_editor_block_columns: "Colunas",

@@ -20,7 +20,10 @@ struct EditorScreen: View {
     /// See `EditorView.signInGeneration`.
     var signInGeneration: Int = 0
 
-    @State private var viewModel: EditorViewModel
+    @State var viewModel: EditorViewModel
+    /// Builds a fresh model for the same document, for when another account signs in under a
+    /// screen that stays mounted (the re-login sheet): the old one's content is that account's.
+    private let makeViewModel: @MainActor () -> EditorViewModel
     /// Retained past `init` because the Pages drawer reads the same store the
     /// view model writes; a test that isolates one must isolate both.
     private let childrenCache: DocumentChildrenCacheStore
@@ -48,8 +51,8 @@ struct EditorScreen: View {
         onCreatedDocument: ((Document) -> Void)? = nil,
         signInGeneration: Int = 0
     ) {
-        _viewModel = State(
-            initialValue: EditorViewModel(
+        let makeViewModel = { @MainActor (entryIntent: NewDocumentEntryIntent?) in
+            EditorViewModel(
                 client: client,
                 documentID: documentID,
                 title: title,
@@ -60,7 +63,10 @@ struct EditorScreen: View {
                 childrenCache: childrenCache,
                 diagnostics: diagnostics,
                 availability: availability
-            ))
+            )
+        }
+        _viewModel = State(initialValue: makeViewModel(entryIntent))
+        self.makeViewModel = { makeViewModel(nil) }
         self.childrenCache = childrenCache
         self.reach = reach
         self.serverHost = serverHost
@@ -91,5 +97,29 @@ struct EditorScreen: View {
             onCreatedDocument: onCreatedDocument,
             signInGeneration: signInGeneration
         )
+        // A new model is a new editor: the old one disappears, flushing its edits under the
+        // account it loaded for — kept for that account, never sent under this one.
+        .id(ObjectIdentifier(viewModel))
+        // `initial`: a screen off-screen during the change (beneath another in the stack, or on
+        // another tab) checks again when it comes back.
+        .onChange(of: signInGeneration, initial: true) { _, _ in replaceIfAnotherAccount() }
+        .onChange(of: viewModel.signedInUserID, initial: true) { _, _ in replaceIfAnotherAccount() }
+    }
+
+    /// Returns the model now on screen, or nil when the account did not change.
+    @discardableResult
+    func replaceIfAnotherAccount() -> EditorViewModel? {
+        guard viewModel.loadedSession.isAnotherAccount(than: viewModel.saveCoordinator.signedInSession) else {
+            return nil
+        }
+        viewModel.endForAccountChange()
+        // A document only this device holds was the previous account's: there is nothing to
+        // reload it as, so the screen closes instead. The model is replaced either way, so the
+        // old one's content never stays on screen under the new account.
+        let wasLocalDocument = viewModel.isLocalDocument
+        let replacement = makeViewModel()
+        viewModel = replacement
+        if wasLocalDocument, let onDeleted { onDeleted() }
+        return replacement
     }
 }

@@ -10,6 +10,7 @@ class DocumentSaveCoordinatorTestCase: XCTestCase {
     let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
     let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
     let otherDocumentID = UUID(uuidString: "9C2C2C2C-2C2C-4C2C-8C2C-2C2C2C2C2C2C")!
+    let signedInUserID = UUID(uuidString: "5A5A5A5A-5A5A-4A5A-8A5A-5A5A5A5A5A5A")!
     var cacheDirectory: URL!
 
     /// Every suite `makeCoordinator` creates, so tearDown can remove each persistent
@@ -59,13 +60,20 @@ class DocumentSaveCoordinatorTestCase: XCTestCase {
     func makeCoordinator(
         backgroundTasks: BackgroundTaskProvider = .noop,
         isLiveReplicaHeld: @escaping @MainActor (UUID) -> Bool = { _ in false },
-        sleep: @escaping @Sendable (Duration) async throws -> Void = neverSleep
+        sleep: @escaping @Sendable (Duration) async throws -> Void = neverSleep,
+        accountScopedCache: Bool = false
     ) -> (DocumentSaveCoordinator, PendingDraftStore, DocumentContentCacheStore) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
         draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
-        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        // Drafts are shown and replayed only for the signed-in account they belong to.
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(signedInUserID)
+        // One folder per account, keyed on this suite's identity, when a test switches accounts.
+        let contentCache =
+            accountScopedCache
+            ? DocumentContentCacheStore(root: cacheDirectory, userDefaults: UserDefaults(suiteName: suiteName)!)
+            : DocumentContentCacheStore(directory: cacheDirectory)
         // Isolate the owner marker and replica storage: the defaults would
         // otherwise be `UserDefaults.standard` and Application Support, where a
         // marker left by another run could make a document read-only here.

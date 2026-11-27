@@ -30,6 +30,7 @@ final class StringsCompletenessTests: XCTestCase {
         .native_editor_drag_handle, .native_editor_drag_moved_to_top, .native_editor_drag_moved_before,
         .native_editor_drag_moved_after, .native_editor_drag_moved_inside, .native_editor_drag_nested_count,
         .native_editor_empty_hint,
+        .editor_read_only_account_unconfirmed, .editor_read_only_another_account,
     ]
 
     private static let extendedPluralKeys: Set<L10nKey> = [

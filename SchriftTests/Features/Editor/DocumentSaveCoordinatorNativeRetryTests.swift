@@ -354,7 +354,7 @@ final class DocumentSaveCoordinatorNativeRetryTests: DocumentSaveCoordinatorTest
         let classicDefaults = UserDefaults(suiteName: classicSuite)!
         let classicCoordinator = DocumentSaveCoordinator(
             client: DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
-            draftStore: PendingDraftStore(userDefaults: classicDefaults),
+            draftStore: signedInDraftStore(classicDefaults),
             replicaStore: ReplicaStore(
                 directory: cacheDirectory.appendingPathComponent("ClassicReplica.\(UUID().uuidString)"),
                 ownershipStore: ReplicaOwnershipStore(userDefaults: classicDefaults)),

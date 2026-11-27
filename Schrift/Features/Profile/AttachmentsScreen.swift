@@ -14,6 +14,9 @@ struct AttachmentsScreen: View {
     @Environment(LocalizationStore.self) private var loc
     @Bindable var viewModel: AttachmentsViewModel
     var isOffline: Bool = false
+    /// `SessionStore.signInGeneration`: a re-login, which this screen survives, re-reads the
+    /// list for the account now signed in.
+    var signInGeneration: Int = 0
 
     var body: some View {
         Group {
@@ -59,7 +62,7 @@ struct AttachmentsScreen: View {
         // Re-read on every appearance: documents opened since the last visit
         // add to the cache. The read is local but not cheap (every cached body is
         // decoded and parsed), so the view model does it off the main actor.
-        .task { await viewModel.load() }
+        .task(id: signInGeneration) { await viewModel.load() }
     }
 }
 

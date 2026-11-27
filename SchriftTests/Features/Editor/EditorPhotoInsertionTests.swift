@@ -59,7 +59,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
     private func makeViewModel() -> EditorViewModel {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
-        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: draftSuiteName)!)
+        let draftStore = signedInDraftStore(UserDefaults(suiteName: draftSuiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
         let coordinator = DocumentSaveCoordinator(
@@ -776,7 +776,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
     }
     // MARK: - Queueing when the upload cannot happen now
 
-    func testInsertingOfflineQueuesThePhotoAndPostsNothing() async {
+    func testInsertingOfflineQueuesThePhotoAndPostsNothing() async throws {
         let log = RequestRecorder()
         stubUploadPipeline(log: log)
         let (viewModel, attachments) = makeQueueingViewModel()
@@ -788,15 +788,15 @@ final class EditorPhotoInsertionTests: XCTestCase {
         // Attempting the upload offline would open the picker, re-encode, and fail — and the
         // bytes are already prepared, so losing them here would be gratuitous.
         XCTAssertEqual(log.count(ofMethod: "POST", urlContaining: "attachment-upload"), 0)
-        let placeholder = queuedPlaceholder(in: viewModel)
-        XCTAssertNotNil(placeholder, "the document should carry a placeholder image block")
-        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder ?? "")!
+        let placeholder = try XCTUnwrap(
+            queuedPlaceholder(in: viewModel), "the document should carry a placeholder image block")
+        let localID = try XCTUnwrap(pendingAttachmentID(fromPlaceholderURL: placeholder))
         XCTAssertNotNil(attachments.attachment(for: localID))
         XCTAssertNotNil(attachments.data(for: localID), "the prepared photo must be on disk")
         XCTAssertNil(viewModel.errorKey, "queueing is a success, not a failure")
     }
 
-    func testATransientUploadFailureFallsBackToTheQueue() async {
+    func testATransientUploadFailureFallsBackToTheQueue() async throws {
         stubUploadPipeline(uploadStatus: 503)
         let (viewModel, attachments) = makeQueueingViewModel()
         await viewModel.load()
@@ -805,9 +805,9 @@ final class EditorPhotoInsertionTests: XCTestCase {
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
         // Mirrors Home's create button: a failure the replay can retry keeps the work.
-        let placeholder = queuedPlaceholder(in: viewModel)
-        XCTAssertNotNil(placeholder)
-        XCTAssertNotNil(attachments.attachment(for: pendingAttachmentID(fromPlaceholderURL: placeholder ?? "")!))
+        let placeholder = try XCTUnwrap(queuedPlaceholder(in: viewModel))
+        let localID = try XCTUnwrap(pendingAttachmentID(fromPlaceholderURL: placeholder))
+        XCTAssertNotNil(attachments.attachment(for: localID))
         XCTAssertNil(viewModel.errorKey)
     }
 
@@ -893,17 +893,19 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
     // MARK: - Resolving and removing
 
-    func testAdoptingAResolvedURLRewritesInPlaceKeepingBlockIdentity() async {
+    func testAdoptingAResolvedURLRewritesInPlaceKeepingBlockIdentity() async throws {
         stubUploadPipeline()
         let (viewModel, _) = makeQueueingViewModel()
         await viewModel.load()
         viewModel.startEditing()
         await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
-        let placeholder = queuedPlaceholder(in: viewModel)!
-        let blockID = viewModel.blocks.first { block in
-            if case .image(_, let url) = block.kind { return url == placeholder }
-            return false
-        }!.id
+        let placeholder = try XCTUnwrap(queuedPlaceholder(in: viewModel))
+        let blockID = try XCTUnwrap(
+            viewModel.blocks.first { block in
+                if case .image(_, let url) = block.kind { return url == placeholder }
+                return false
+            }
+        ).id
 
         viewModel.adoptResolvedAttachmentURL(placeholder: placeholder, resolved: expectedMediaURL)
 
@@ -914,18 +916,20 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertNil(queuedPlaceholder(in: viewModel))
     }
 
-    func testRemovingAQueuedPhotoDropsTheBlockAndTheRecord() async {
+    func testRemovingAQueuedPhotoDropsTheBlockAndTheRecord() async throws {
         stubUploadPipeline()
         let (viewModel, attachments) = makeQueueingViewModel()
         await viewModel.load()
         viewModel.startEditing()
         await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
-        let placeholder = queuedPlaceholder(in: viewModel)!
-        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
-        let blockID = viewModel.blocks.first { block in
-            if case .image(_, let url) = block.kind { return url == placeholder }
-            return false
-        }!.id
+        let placeholder = try XCTUnwrap(queuedPlaceholder(in: viewModel))
+        let localID = try XCTUnwrap(pendingAttachmentID(fromPlaceholderURL: placeholder))
+        let blockID = try XCTUnwrap(
+            viewModel.blocks.first { block in
+                if case .image(_, let url) = block.kind { return url == placeholder }
+                return false
+            }
+        ).id
 
         viewModel.removePendingAttachment(blockID: blockID)
 
@@ -937,7 +941,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertNil(attachments.data(for: localID))
     }
 
-    func testRemovingAQueuedPhotoFromTheReadingSurfaceClearsTheSavedBodyToo() async {
+    func testRemovingAQueuedPhotoFromTheReadingSurfaceClearsTheSavedBodyToo() async throws {
         // The reading surface is a *different* source of truth: `currentMarkdown()` returns
         // `rawMarkdown` there, not a serialization of `blocks`. Dropping only the block left the
         // placeholder in the body that gets saved, the flush saw no change and wrote nothing,
@@ -949,12 +953,14 @@ final class EditorPhotoInsertionTests: XCTestCase {
         await viewModel.load()
         XCTAssertEqual(viewModel.mode, .reading, "no startEditing — this is the reading path")
         await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
-        let placeholder = queuedPlaceholder(in: viewModel)!
-        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
-        let blockID = viewModel.blocks.first { block in
-            if case .image(_, let url) = block.kind { return url == placeholder }
-            return false
-        }!.id
+        let placeholder = try XCTUnwrap(queuedPlaceholder(in: viewModel))
+        let localID = try XCTUnwrap(pendingAttachmentID(fromPlaceholderURL: placeholder))
+        let blockID = try XCTUnwrap(
+            viewModel.blocks.first { block in
+                if case .image(_, let url) = block.kind { return url == placeholder }
+                return false
+            }
+        ).id
 
         viewModel.removePendingAttachment(blockID: blockID)
 
@@ -984,17 +990,17 @@ final class EditorPhotoInsertionTests: XCTestCase {
     /// photo is gone, over bytes that are on disk, and offers a Remove that deletes the only
     /// copy in existence. `isAttachmentReplayable` refuses to collect an unattributable record
     /// for exactly this reason ("no requests *and* no deletion"), and the card must agree.
-    func testAQueuedPhotoIsNotDeclaredMissingMerelyBecauseTheSessionIsUnnamed() async {
+    func testAQueuedPhotoIsNotDeclaredMissingMerelyBecauseTheSessionIsUnnamed() async throws {
         stubUploadPipeline()
         let (viewModel, attachments) = makeQueueingViewModel()
         await viewModel.load()
         await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
-        let placeholder = queuedPlaceholder(in: viewModel)!
-        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
+        let placeholder = try XCTUnwrap(queuedPlaceholder(in: viewModel))
+        let localID = try XCTUnwrap(pendingAttachmentID(fromPlaceholderURL: placeholder))
 
         // The re-login sheet completed and its confirmation failed: cookies changed hands, so
         // the identity was dropped and nothing has re-learned it yet.
-        SignedInUserStore(userDefaults: UserDefaults(suiteName: draftSuiteName)!).clear()
+        SignedInUserStore(userDefaults: try XCTUnwrap(UserDefaults(suiteName: draftSuiteName))).clear()
 
         XCTAssertEqual(
             viewModel.pendingAttachmentDisplay(forPlaceholderURL: placeholder), .unattributable,
@@ -1007,13 +1013,13 @@ final class EditorPhotoInsertionTests: XCTestCase {
     /// gone is `.missing` whatever the session knows, and there Remove is the correct affordance
     /// rather than a destructive one, since nothing is left to lose and the orphaned placeholder
     /// still holds this document's saves.
-    func testAnUnnamedSessionStillReportsMissingWhenTheBytesAreActuallyGone() async {
+    func testAnUnnamedSessionStillReportsMissingWhenTheBytesAreActuallyGone() async throws {
         stubUploadPipeline()
         let (viewModel, attachments) = makeQueueingViewModel()
         await viewModel.load()
         await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
-        let placeholder = queuedPlaceholder(in: viewModel)!
-        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
+        let placeholder = try XCTUnwrap(queuedPlaceholder(in: viewModel))
+        let localID = try XCTUnwrap(pendingAttachmentID(fromPlaceholderURL: placeholder))
 
         // The bytes vanish while the record survives — an eviction-free store, so in practice a
         // restore or a manual purge. Removing the files directly is the only way to reach it:
@@ -1026,7 +1032,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
         }
         XCTAssertNotNil(
             attachments.attachment(for: localID), "the record must outlive its bytes for this case to exist")
-        SignedInUserStore(userDefaults: UserDefaults(suiteName: draftSuiteName)!).clear()
+        SignedInUserStore(userDefaults: try XCTUnwrap(UserDefaults(suiteName: draftSuiteName))).clear()
 
         XCTAssertEqual(
             viewModel.pendingAttachmentDisplay(forPlaceholderURL: placeholder), .missing,
@@ -1035,15 +1041,15 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
     /// The disclosure half still holds: a record this session can positively attribute to
     /// *somebody else* stays `.missing`, so one user's photo never renders inside another's.
-    func testAnotherAccountsQueuedPhotoIsStillWithheld() async {
+    func testAnotherAccountsQueuedPhotoIsStillWithheld() async throws {
         stubUploadPipeline()
         let (viewModel, _) = makeQueueingViewModel()
         await viewModel.load()
         await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
-        let placeholder = queuedPlaceholder(in: viewModel)!
+        let placeholder = try XCTUnwrap(queuedPlaceholder(in: viewModel))
 
-        SignedInUserStore(userDefaults: UserDefaults(suiteName: draftSuiteName)!)
-            .remember(UUID(uuidString: "99999999-9999-4999-8999-999999999999")!)
+        SignedInUserStore(userDefaults: try XCTUnwrap(UserDefaults(suiteName: draftSuiteName)))
+            .remember(try XCTUnwrap(UUID(uuidString: "99999999-9999-4999-8999-999999999999")))
 
         XCTAssertEqual(viewModel.pendingAttachmentDisplay(forPlaceholderURL: placeholder), .missing)
     }

@@ -578,7 +578,6 @@ enum Strings_es {
             "Solo lectura: esperando a que termine de sincronizarse un borrador sin conexión — vuelve a abrirlo para editar",
         .native_editor_read_only_live_held:
             "Esperando a que se sincronicen los cambios de colaboración en vivo — vuelve a abrirlo para editar",
-        .native_editor_read_only_signed_out: "Solo lectura: inicia sesión para editar este documento",
         .native_editor_block_callout: "Aviso",
         .native_editor_block_table: "Tabla",
         .native_editor_block_columns: "Columnas",

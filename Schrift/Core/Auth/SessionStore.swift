@@ -83,6 +83,9 @@ final class SessionStore {
     /// stays off until it (or `signOut`) runs; `needsReauthentication` alone is not enough,
     /// because cancelling the sheet clears it while those cookies are still live.
     private var cookiesAwaitingConfirmation = false
+    /// A web login's cookies are in the shared storage and no confirmation has accepted them
+    /// yet, so the account they belong to is not known.
+    var isAwaitingConfirmation: Bool { cookiesAwaitingConfirmation }
     /// The Keychain could not be read at launch (locked), so "signed out" here is not a known
     /// sign-out: the next sign-in treats the login web view's site data as someone else's.
     private var launchedWithUnreadableMarker = false

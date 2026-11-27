@@ -576,7 +576,6 @@ enum Strings_fr {
             "Lecture seule : en attente de la synchronisation d’un brouillon hors ligne — rouvrez-le pour modifier",
         .native_editor_read_only_live_held:
             "En attente de la synchronisation des modifications en direct — rouvrez-le pour modifier",
-        .native_editor_read_only_signed_out: "Lecture seule : connectez-vous pour modifier ce document",
         .native_editor_block_callout: "Encadré",
         .native_editor_block_table: "Tableau",
         .native_editor_block_columns: "Colonnes",

@@ -46,6 +46,9 @@ class EditorViewModelTestCase: XCTestCase {
         let suiteName = "EditorViewModelTests.\(UUID().uuidString)"
         draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        // Drafts are shown and replayed only for the signed-in account they belong to.
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(
+            UUID(uuidString: "11111111-1111-4111-8111-111111111111"))
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         // Isolated: load()/delete/404 paths touch the children cache, which
         // must never read from or write to UserDefaults.standard in tests.

@@ -30,6 +30,7 @@ final class EditorChecklistFilterTests: XCTestCase {
         let client = DocsAPIClient(
             baseURL: URL(string: "https://docs.example.org/api/v1.0/")!,
             session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        SignedInUserStore(userDefaults: defaults).remember(UUID())
         drafts = PendingDraftStore(userDefaults: defaults)
         let cache = DocumentContentCacheStore(directory: directory)
         coordinator = DocumentSaveCoordinator(

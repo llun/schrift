@@ -580,8 +580,6 @@ enum Strings_de {
             "Schreibgeschützt: Warten auf die Synchronisierung eines Offline-Entwurfs — zum Bearbeiten erneut öffnen",
         .native_editor_read_only_live_held:
             "Warten auf die Synchronisierung von Änderungen aus der Live-Zusammenarbeit — zum Bearbeiten erneut öffnen",
-        .native_editor_read_only_signed_out:
-            "Schreibgeschützt: Melde dich an, um dieses Dokument zu bearbeiten",
         .native_editor_block_callout: "Hinweis",
         .native_editor_block_table: "Tabelle",
         .native_editor_block_columns: "Spalten",

@@ -142,7 +142,8 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
         f.coordinator.resolveConflictKeepingServer(documentID: documentID)
         XCTAssertNotNil(try f.store.restore(for: f.scope), "A's replica is A's unsynced work")
         XCTAssertEqual(f.ownership.owner(documentID: documentID, serverOrigin: f.scope.serverOrigin), .owned(f.scope))
-        XCTAssertEqual(f.drafts.draft(for: documentID)?.replica?.scope, f.scope)
+        // Not shown to B, but kept.
+        XCTAssertEqual(f.drafts.allDraftsOfEveryAccount().map(\.replica?.scope), [f.scope])
         XCTAssertNil(f.coordinator.pendingSave(documentID: documentID), "B's own delete flow still completes")
     }
 

@@ -83,7 +83,9 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
                 localID: documentID, title: "Local", parentID: nil, createdAt: Date(),
                 serverOrigin: origin, ownerUserID: ownerUserID ?? user, syncedServerID: syncedServerID))
         PendingDraftStore(userDefaults: defaults).save(
-            PendingDraft(documentID: documentID, title: "Local", markdown: markdown, updatedAt: Date()))
+            PendingDraft(
+                documentID: documentID, title: "Local", markdown: markdown, updatedAt: Date(),
+                ownerUserID: ownerUserID ?? user))
         if pendingDelete {
             PendingDocumentDeleteStore(userDefaults: defaults).save(
                 PendingDocumentDelete(
@@ -295,6 +297,8 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
 
         env.coordinator.convertUnsentClassicCreates()
 
+        // The draft is the other account's, so only that account is shown it.
+        SignedInUserStore(userDefaults: defaults).remember(otherUser)
         assertStaysClassic(env, markdown: "# Notes")
     }
 

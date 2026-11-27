@@ -28,6 +28,23 @@ func collaborationScenePhaseAction(_ phase: ScenePhase) -> CollaborationScenePha
     }
 }
 
+/// What a sign-in change should do to live collaboration sessions. A handover's cookies are not
+/// confirmed yet, so nothing: the account it names decides. A confirmed account closes every
+/// session opened for another (or before any was known); a confirmation that named nobody closes
+/// them all. The same account silently re-logging in keeps its sessions — dropping a mounted
+/// socket there would be a routine launch-time teardown.
+enum CollaborationSignInAction: Equatable {
+    case none
+    case closeOthers(UUID)
+    case closeAll
+}
+
+func collaborationSignInAction(isAwaitingConfirmation: Bool, account: UUID?) -> CollaborationSignInAction {
+    if isAwaitingConfirmation { return .none }
+    guard let account else { return .closeAll }
+    return .closeOthers(account)
+}
+
 private struct AuthenticatedHomeContainer: View {
     @State private var viewModel: HomeViewModel
     @State private var collaboration: DocumentCollaborationManager
@@ -184,6 +201,7 @@ private struct AuthenticatedHomeContainer: View {
             // Drain pending native saves, then close every replica before purging clean ones.
             await nativeSessions.drainAll().value
             await nativeSessions.closeAll().value
+            collaboration.closeAll()
             guard sessionStore.signInGeneration == expectedGeneration, sessionStore.isAuthenticated else {
                 return
             }
@@ -296,6 +314,20 @@ private struct AuthenticatedHomeContainer: View {
             NativeEditorDiagnosticsStore.shared.reset()
             // Nothing announces the previous account; `reauthenticated` learns the new one.
             collaboration.forgetLocalAwareness()
+            // Live replicas and sockets opened for another account go once this one is known.
+            switch collaborationSignInAction(
+                isAwaitingConfirmation: sessionStore.isAwaitingConfirmation,
+                account: SignedInUserStore().userID)
+            {
+            case .none: break
+            case .closeOthers(let account): collaboration.closeSessions(otherThan: account)
+            case .closeAll: collaboration.closeAll()
+            }
+        }
+        // The account can also be learned without a re-login (a `/users/me/` retried after a failed
+        // confirmation); `pins.revision` moves when it is.
+        .onChange(of: viewModel.saveCoordinator.pins.revision) { _, _ in
+            if let account = SignedInUserStore().userID { collaboration.closeSessions(otherThan: account) }
         }
         .environment(collaboration)
         .environment(nativeSessions)
@@ -332,6 +364,8 @@ private struct AuthenticatedHomeContainer: View {
             // display name. Re-fetch it before any reauthenticated session is rebuilt.
             await collaboration.refreshLocalAwareness()
             await homeViewModel.saveCoordinator.syncPendingPins()
+            // An edit parked under this account while another was signed in replays now.
+            await homeViewModel.saveCoordinator.syncPendingDrafts()
             await homeViewModel.load()
         }
     }
@@ -349,12 +383,11 @@ struct RootView: View {
                 sessionStore: sessionStore,
                 connectivity: connectivity,
                 onSignOut: {
-                    // Full document bodies must not survive sign-out on disk. The
-                    // metadata caches (DocumentCacheStore's document lists and
-                    // DocumentChildrenCacheStore's sub-page lists) and unsaved
-                    // drafts (PendingDraftStore) keep their existing behavior — a
-                    // recorded decision, see the 2026-07-03 spec and the
-                    // instant-local-doc-lists plan.
+                    // Full document bodies must not survive sign-out on disk: every
+                    // account's folder goes. The metadata caches (DocumentCacheStore's
+                    // document lists and DocumentChildrenCacheStore's sub-page lists) stay,
+                    // and unsaved drafts (PendingDraftStore) stay with their account, shown
+                    // again only when it signs back in.
                     DocumentContentCacheStore().removeAll()
                     // Downloaded attachment bytes are document content too, and
                     // are re-downloadable, so they go with the session for the

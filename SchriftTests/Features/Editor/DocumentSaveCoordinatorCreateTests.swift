@@ -37,6 +37,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let suiteName = "CoordinatorCreateTests.\(UUID().uuidString)"
         suiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
         let draftStore = PendingDraftStore(userDefaults: defaults)
         let createStore = PendingDocumentCreateStore(userDefaults: defaults)
         let coordinator = DocumentSaveCoordinator(
@@ -58,6 +59,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let suiteName = "CoordinatorCreateTests.config.\(UUID().uuidString)"
         suiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
         let coordinator = DocumentSaveCoordinator(
             client: client,
             draftStore: PendingDraftStore(userDefaults: defaults),
@@ -465,6 +467,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let suiteName = "CoordinatorCreateTests.corruptDrafts.\(UUID().uuidString)"
         suiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
         let createStore = PendingDocumentCreateStore(userDefaults: defaults)
         // A perfectly readable record — only the drafts are unknown.
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
@@ -525,6 +528,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let suiteName = "CoordinatorCreateTests.corruptDiscard.\(UUID().uuidString)"
         suiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
         let draftStore = PendingDraftStore(userDefaults: defaults)
         // Baseline-less and long stale, so `draftSyncDecision` reaches rule 3's tolerance and
         // answers `.discardServerWins`.
@@ -567,6 +571,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let suiteName = "CoordinatorCreateTests.corrupt.\(UUID().uuidString)"
         suiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
         let draftStore = PendingDraftStore(userDefaults: defaults)
         let orphanedByCorruption = UUID()
         draftStore.save(
@@ -603,6 +608,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let suiteName = "CoordinatorCreateTests.quarantine.\(UUID().uuidString)"
         suiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
         let corrupt = Data("not json".utf8)
         defaults.set(corrupt, forKey: "dev.llun.Schrift.pendingCreates")
         let store = PendingDocumentCreateStore(userDefaults: defaults)
@@ -630,6 +636,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let suiteName = "CoordinatorCreateTests.quarantineTwice.\(UUID().uuidString)"
         suiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
         let first = Data("first corruption".utf8)
         defaults.set(first, forKey: "dev.llun.Schrift.pendingCreates")
         let store = PendingDocumentCreateStore(userDefaults: defaults)
@@ -654,6 +661,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let suiteName = "CoordinatorCreateTests.quarantineOnce.\(UUID().uuidString)"
         suiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
         defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingCreates")
         let store = PendingDocumentCreateStore(userDefaults: defaults)
         let first = PendingDocumentCreate(
@@ -676,6 +684,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let suiteName = "CoordinatorCreateTests.quarantineRemove.\(UUID().uuidString)"
         suiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
         let corrupt = Data("not json".utf8)
         defaults.set(corrupt, forKey: "dev.llun.Schrift.pendingCreates")
         let store = PendingDocumentCreateStore(userDefaults: defaults)
@@ -976,6 +985,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "CoordinatorCreateTests.spare.\(UUID().uuidString)"
         suiteNames.append(suiteName)
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(user)
         let drafts = draftStore ?? PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         let coordinator = DocumentSaveCoordinator(
             client: client,

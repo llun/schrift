@@ -549,7 +549,6 @@ enum Strings_zhHant {
         .native_editor_read_only_pending_sync: "正在等待此文件完成同步 — 請重新開啟以編輯",
         .native_editor_read_only_classic_draft: "唯讀：正在等待離線草稿完成同步 — 請重新開啟以編輯",
         .native_editor_read_only_live_held: "正在等待即時協作變更同步 — 請重新開啟以編輯",
-        .native_editor_read_only_signed_out: "唯讀：請登入以編輯此文件",
         .native_editor_block_callout: "提示框",
         .native_editor_block_table: "表格",
         .native_editor_block_columns: "欄位",

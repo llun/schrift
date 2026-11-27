@@ -81,16 +81,28 @@ func attachmentGroupTitle(_ title: String?) -> String? {
 @MainActor
 @Observable
 final class AttachmentsViewModel {
-    private(set) var groups: [AttachmentLibraryGroup] = []
-    private(set) var rows: [AttachmentLibraryRow] = []
+    /// Only the account in front of the screen's: another account's read is never drawn, not
+    /// even for the frame before the reload a re-login starts.
+    var groups: [AttachmentLibraryGroup] { isLoadedForCurrentAccount ? loadedGroups : [] }
+    var rows: [AttachmentLibraryRow] { isLoadedForCurrentAccount ? loadedRows : [] }
     /// False until the first `load()` lands, so the empty state never flashes
     /// before the cache has been read. It is the screen's only loading state —
     /// the list renders blank until then, with no spinner, as every list does.
-    private(set) var hasLoaded = false
+    var hasLoaded: Bool { isLoadedForCurrentAccount && didLoad }
+    private var loadedGroups: [AttachmentLibraryGroup] = []
+    private var loadedRows: [AttachmentLibraryRow] = []
+    private var didLoad = false
+    private var isLoadedForCurrentAccount: Bool { loadedOwner == signedInUser.userID }
 
     /// Reads every cached document body. Called off the main actor: it is up to
     /// the cache's whole limit of files read and JSON-decoded.
-    private let readContents: @Sendable () async -> [CachedDocumentContent]
+    private let readContents: (@Sendable () async -> [CachedDocumentContent])?
+    /// The cache is one folder per account and this view model outlives a re-login (it is
+    /// `MainTabView` state), so each load asks for the folder of the account in front of it.
+    private let contentCache: DocumentContentCacheStore
+    private let signedInUser: SignedInUserStore
+    /// The account the groups on screen were read for.
+    private var loadedOwner: UUID?
     private let serverOrigin: String
     /// A document the user has deleted whose deletion is still queued keeps its
     /// content-cache entry until the deletion lands; it is withheld here, as
@@ -104,15 +116,13 @@ final class AttachmentsViewModel {
     /// loads); nil reads `contentCache`.
     init(
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(), serverOrigin: String,
+        signedInUser: SignedInUserStore = SignedInUserStore(),
         isPendingDelete: @escaping @MainActor (UUID) -> Bool = { _ in false },
         readContents: (@Sendable () async -> [CachedDocumentContent])? = nil
     ) {
-        if let readContents {
-            self.readContents = readContents
-        } else {
-            let read = contentCache.allContentsReader()
-            self.readContents = { read() }
-        }
+        self.readContents = readContents
+        self.contentCache = contentCache
+        self.signedInUser = signedInUser
         self.serverOrigin = serverOrigin
         self.isPendingDelete = isPendingDelete
     }
@@ -126,15 +136,19 @@ final class AttachmentsViewModel {
     func load() async {
         loadGeneration += 1
         let generation = loadGeneration
-        let readContents = readContents
+        let owner = signedInUser.userID
+        let read = contentCache.allContentsReader()
+        let readContents = readContents ?? { read() }
         let origin = serverOrigin
         let parsed = await Task.detached(priority: .userInitiated) {
             let contents = await readContents()
             return attachmentLibraryGroups(from: contents, serverOrigin: origin)
         }.value
-        guard generation == loadGeneration else { return }
-        groups = parsed.filter { !isPendingDelete($0.documentID) }
-        rows = attachmentLibraryRows(groups)
-        hasLoaded = true
+        // A read that began under another account is that account's.
+        guard generation == loadGeneration, signedInUser.userID == owner else { return }
+        loadedOwner = owner
+        loadedGroups = parsed.filter { !isPendingDelete($0.documentID) }
+        loadedRows = attachmentLibraryRows(loadedGroups)
+        didLoad = true
     }
 }

@@ -9,7 +9,7 @@ final class EditorBlockMutationTests: XCTestCase {
             baseURL: URL(string: "https://docs.example.org/api/v1.0/")!, session: MockURLProtocol.makeSession(),
             cookieProvider: { [] })
         let suiteName = "EditorBlockMutationTests.\(UUID().uuidString)"
-        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        let draftStore = signedInDraftStore(UserDefaults(suiteName: suiteName)!)
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore, backgroundTasks: .noop, sleep: neverSleep)
         let viewModel = EditorViewModel(client: client, documentID: UUID(), title: "Doc", saveCoordinator: coordinator)

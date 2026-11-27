@@ -448,7 +448,7 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
         let suiteName = "EditorViewModelCompositionTests.\(UUID().uuidString)"
         draftSuiteNames.append(suiteName)
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!),
+            client: client, draftStore: signedInDraftStore(UserDefaults(suiteName: suiteName)!),
             backgroundTasks: .noop, sleep: neverSleep)
         let viewModel = EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator)

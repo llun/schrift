@@ -30,6 +30,27 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertNil(open.editUnavailableReason)
     }
 
+    /// Another account's waiting classic edits for this document: seeding would write an
+    /// ownership marker that leaves that account's draft unsyncable, so the document opens
+    /// read-only and nothing is seeded.
+    func testAnotherAccountsClassicDraftKeepsTheDocumentUnseeded() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        ServerStub(owner: owner, state: seedState()).install()
+        PendingDraftStore(userDefaults: env.defaults).save(
+            PendingDraft(
+                documentID: env.model.documentID, title: "Theirs", markdown: "Unsynced elsewhere",
+                updatedAt: Date(), ownerUserID: UUID()))
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+
+        guard case .native(let session) = open.route else { return XCTFail("expected a read-only native session") }
+        XCTAssertNil(session.input)
+        XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .none)
+        XCTAssertEqual(open.editUnavailableReason, .anotherAccountsEdits)
+    }
+
     /// A fresh install has no stored key, so the native editor is on: an eligible
     /// Docs 6 document opens on the native route without anyone touching the switch.
     func testFreshInstallWithNoStoredKeyRoutesToNative() async throws {
@@ -2148,8 +2169,12 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         await open.resolveConflictKeepingServer(viewModel: env.model, isOffline: false, canUpdate: true)
         XCTAssertFalse(env.model.saveCoordinator.resolveConflictKeepingServer(documentID: env.documentID))
 
-        XCTAssertNotNil(env.model.saveCoordinator.conflict(for: env.documentID))
-        let preservedDraft = try XCTUnwrap(env.model.saveCoordinator.storedDraft(documentID: env.documentID))
+        XCTAssertNil(env.model.saveCoordinator.conflict(for: env.documentID), "A's hold is not shown to B")
+        XCTAssertNil(env.model.saveCoordinator.storedDraft(documentID: env.documentID), "never shown to B")
+        let preservedDraft = try XCTUnwrap(
+            PendingDraftStore(userDefaults: env.defaults).allDraftsOfEveryAccount().first {
+                $0.documentID == env.documentID
+            })
         XCTAssertNotNil(preservedDraft.conflictServerUpdatedAt)
         XCTAssertNotNil(try env.replicaStore.restore(for: aScope))
         XCTAssertEqual(

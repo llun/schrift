@@ -45,6 +45,7 @@ final class EditorViewModelLiveTests: XCTestCase {
         let suiteName = "EditorViewModelLiveTests.\(UUID().uuidString)"
         draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(UUID())
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
         let coordinator = DocumentSaveCoordinator(
@@ -347,6 +348,21 @@ final class EditorViewModelLiveTests: XCTestCase {
             PendingDraft(documentID: documentID, title: "Doc", markdown: "Stashed from elsewhere", updatedAt: Date())
         )
 
+        XCTAssertFalse(viewModel.canEngageLiveEditing)
+    }
+
+    /// Read-only for an account reason: a live apply would write under an account that may not
+    /// own this page.
+    func testCanEngageLiveEditingFalseWhileAnotherAccountsEditsKeepThePageReadOnly() async {
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        stubLoad(content: "Hello")
+        await viewModel.load()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "Theirs", updatedAt: Date(),
+                ownerUserID: UUID()))
+
+        XCTAssertNotNil(viewModel.readOnlyNoteKey)
         XCTAssertFalse(viewModel.canEngageLiveEditing)
     }
 

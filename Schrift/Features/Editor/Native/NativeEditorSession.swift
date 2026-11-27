@@ -23,8 +23,10 @@ enum NativeEditUnavailableReason: Equatable, Sendable {
     case classicDraft
     /// Document is held by a live collaboration session.
     case liveHeld
-    /// No signed-in account is active for this open.
-    case signedOut
+    /// The session's account is not confirmed yet (a re-login `/users/me/` has not named).
+    case accountUnconfirmed
+    /// Another account on this device has unsent classic edits here; only it can sync them.
+    case anotherAccountsEdits
     /// Document cannot be restored or rendered safely on the native route.
     case preservedUnavailable
 
@@ -53,7 +55,7 @@ enum NativeEditUnavailableReason: Equatable, Sendable {
     var icon: MaterialIcon {
         switch self {
         case .unfamiliarContent: return .info
-        case .noEditAccess, .nativeSwitchOff, .signedOut: return .lock
+        case .noEditAccess, .nativeSwitchOff, .accountUnconfirmed, .anotherAccountsEdits: return .lock
         case .pendingSync, .classicDraft, .liveHeld: return .sync
         case .pendingDelete: return .delete
         case .preservedUnavailable: return .warning
@@ -80,8 +82,10 @@ enum NativeEditUnavailableReason: Equatable, Sendable {
             return loc[.native_editor_read_only_classic_draft]
         case .liveHeld:
             return loc[.native_editor_read_only_live_held]
-        case .signedOut:
-            return loc[.native_editor_read_only_signed_out]
+        case .accountUnconfirmed:
+            return loc[.editor_read_only_account_unconfirmed]
+        case .anotherAccountsEdits:
+            return loc[.editor_read_only_another_account]
         case .preservedUnavailable:
             return loc[.native_editor_owned_unavailable_body]
         }
@@ -2156,6 +2160,7 @@ final class NativeEditorOpen {
             hasCheckpointedCreate: coordinator.hasCheckpointedCreate(forServerID: documentID),
             isLiveHeld: coordinator.isLiveHeld(documentID: documentID),
             hasClassicDraft: hasClassicDraft,
+            hasAnotherAccountsEdits: coordinator.hasClassicDraftOfAnotherAccount(documentID: documentID),
             session: session)
     }
 
@@ -2167,15 +2172,19 @@ final class NativeEditorOpen {
         hasCheckpointedCreate: Bool,
         isLiveHeld: Bool,
         hasClassicDraft: Bool,
+        hasAnotherAccountsEdits: Bool = false,
         session: NativeEditorSession
     ) -> NativeEditUnavailableReason? {
+        // First: until the account is confirmed nothing else about it is known, and editing
+        // comes back by itself once it is.
+        if !hasAccount { return .accountUnconfirmed }
         if !hasEditAccess { return .noEditAccess }
         if !enabled { return .nativeSwitchOff }
         if isPendingDelete { return .pendingDelete }
         if hasCheckpointedCreate { return .pendingSync }
         if isLiveHeld { return .liveHeld }
         if hasClassicDraft { return .classicDraft }
-        if !hasAccount { return .signedOut }
+        if hasAnotherAccountsEdits { return .anotherAccountsEdits }
         if !session.canType {
             if let unfamiliar = session.unfamiliarContent {
                 return .unfamiliarContent(blockNode: unfamiliar.node, reason: unfamiliar.reason)
@@ -2200,14 +2209,15 @@ final class NativeEditorOpen {
     }
 
     /// Typing also needs no live owner (a native session never takes the live
-    /// write path), no pending create or delete and no classic draft.
+    /// write path), no pending create or delete and no classic draft — any account's: the
+    /// seed's ownership marker would take the document from that account's classic writer.
     private func mayType(_ viewModel: EditorViewModel) -> Bool {
         let coordinator = viewModel.saveCoordinator
         let documentID = viewModel.documentID
         return !viewModel.isDocumentPendingDelete
             && !coordinator.hasCheckpointedCreate(forServerID: documentID)
             && !coordinator.isLiveHeld(documentID: documentID)
-            && (coordinator.storedDraft(documentID: documentID).map { $0.replica != nil } ?? true)
+            && !coordinator.hasClassicDraftOfAnyAccount(documentID: documentID)
     }
 
     /// The open that asked for an awaited result is still the one on screen.

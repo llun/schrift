@@ -507,15 +507,20 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         let original = try XCTUnwrap(f.drafts.draft(for: documentID))
         SignedInUserStore(userDefaults: f.listCache.userDefaults).remember(UUID())
         f.coordinator.resolveConflictKeepingLocal(documentID: documentID)
-        XCTAssertEqual(f.drafts.draft(for: documentID), original)
+        // Not shown to the other account, but kept exactly as it was.
+        XCTAssertEqual(f.drafts.allDraftsOfEveryAccount(), [original])
         XCTAssertTrue(self.isFailed(f.coordinator.state(for: documentID)))
-        XCTAssertNotNil(f.coordinator.pendingSave(documentID: documentID))
+        XCTAssertNil(f.coordinator.pendingSave(documentID: documentID), "never shown to the other account")
         do {
             try enqueue(f)
             XCTFail("another account must not queue this raw draft")
         } catch ReplicaSaveError.otherServerOrAccount {}
-        XCTAssertEqual(f.drafts.draft(for: documentID), original)
+        XCTAssertEqual(f.drafts.allDraftsOfEveryAccount(), [original])
         XCTAssertEqual(log.count(ofMethod: "PATCH"), 0)
+        // The parked save is the owner's: shown to the owner again, never to the other account.
+        SignedInUserStore(userDefaults: f.listCache.userDefaults).remember(owner)
+        XCTAssertNotNil(f.coordinator.pendingSave(documentID: documentID))
+        XCTAssertNotNil(f.coordinator.conflict(for: documentID))
     }
 
     func testKeepMineReportsAFailedRawCaptureInsteadOfANoOp() throws {

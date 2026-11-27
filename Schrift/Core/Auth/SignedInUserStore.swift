@@ -46,6 +46,8 @@ struct SignedInUserStore {
     /// only if it has not moved, so account A's late response never names B.
     var epoch: Int { userDefaults.integer(forKey: Self.epochKey) }
 
+    var session: SignedInSession { SignedInSession(userID: userID, epoch: epoch) }
+
     /// Write through from any successful `/users/me/`. Idempotent, and a nil id (the field is
     /// Optional on the wire) is ignored rather than clearing a good value — a server that omits
     /// it on one response has told us nothing about the account.
@@ -66,5 +68,38 @@ struct SignedInUserStore {
     func clear() {
         userDefaults.removeObject(forKey: Self.key)
         userDefaults.set(epoch &+ 1, forKey: Self.epochKey)
+    }
+}
+
+/// Who was signed in when some work started, so that work can tell, when it settles, whether
+/// it still belongs to the session in front of it.
+struct SignedInSession: Equatable, Sendable {
+    let userID: UUID?
+    let epoch: Int
+
+    /// Whether a known account other than this session's is now signed in — including any
+    /// account at all, when this session never knew whose it was. Unknown now is not another
+    /// account: the page waits, read-only, until it is named.
+    func isAnotherAccount(than now: SignedInSession) -> Bool {
+        guard let current = now.userID else { return false }
+        return userID != current
+    }
+
+    /// Whether this session's account is the one in front of it now, so the screen may read on
+    /// its behalf: the same known account, or — loaded while no account was known, and still
+    /// none — the same read-only unknown session, which may show the server copy but has nothing
+    /// of anyone's to read or write.
+    func isCurrent(now: SignedInSession) -> Bool {
+        userID == now.userID
+    }
+
+    /// Whether `now` is still this sign-in, under a known account. The same known account is
+    /// still this sign-in even after a re-login moved the epoch (a silent re-auth of the same
+    /// user); a session that never knew its account falls back to the epoch, since only the
+    /// same sign-in can still be it.
+    func isStill(_ now: SignedInSession) -> Bool {
+        guard let current = now.userID else { return false }
+        guard let userID else { return now.epoch == epoch }
+        return userID == current
     }
 }
