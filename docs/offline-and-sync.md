@@ -1531,7 +1531,12 @@ online stays fully readable offline, previews included. It follows
 `Application Support/dev.llun.Schrift/AttachmentCache/`, `isExcludedFromBackup`
 (the bytes are re-downloadable from the user's own server), stateless over its
 directory, never throwing to callers, cleared on sign-out — with three
-deliberate differences:
+deliberate differences, and one guard: a write that started before a clear (a
+download still on the wire at sign-out or an account switch) is refused, because
+the file name carries no account and a late write would hand the next account
+this one's bytes. `removeAll` bumps a per-directory generation shared by every
+instance; `AttachmentLoader` reads it when a download starts and the store
+compares it under the same lock right before writing.
 
 - **Recency is last *use*, not last write.** `cachedFileURL(for:)` bumps the
   file's mtime on a hit. Attachments are read-hot: a write-recency cache would

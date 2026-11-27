@@ -329,6 +329,45 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
             "relaunch after unconfirmed handover must wipe Account B's unscoped attachment cache")
     }
 
+    /// The attachment cache's file names carry no account, so a download still on the wire at sign-out or at
+    /// an account switch must not land in the cache the session change just cleared.
+    func testAnAttachmentDownloadInFlightAcrossAnAccountChangeIsNotCached() async throws {
+        let cacheDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SessionStoreAttachmentRace-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: cacheDir) }
+        addTeardownBlock { MockURLProtocol.reset() }
+        let display = try XCTUnwrap(
+            parseAttachmentLink(
+                "[Report.pdf](\(serverURL.absoluteString)/media/11111111-2222-4333-8444-555555555555/attachments/"
+                    + "66666666-7777-4888-8999-aaaaaaaaaaaa.pdf)",
+                serverOrigin: serverURL.absoluteString))
+        for change in ["handover", "signOut"] {
+            MockURLProtocol.reset()
+            let store = SessionStore(
+                userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage(),
+                clearAttachmentCache: { AttachmentCacheStore(directory: cacheDir).removeAll() })
+            try store.signIn(serverURL: serverURL)
+            let gate = MockURLProtocol.ResponseGate()
+            MockURLProtocol.stubHandler = { _ in
+                .init(statusCode: 200, headers: [:], body: Data("account-a".utf8), error: nil, releasedBy: gate)
+            }
+            let loader = AttachmentLoader(
+                client: DocsAPIClient(
+                    baseURL: serverURL.appendingPathComponent("api/v1.0/"),
+                    session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
+                serverOrigin: serverURL.absoluteString, cache: AttachmentCacheStore(directory: cacheDir))
+            let load = Task { await loader.loadIfNeeded(display) }
+            await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+
+            if change == "handover" { store.noteSessionCookiesReplaced() } else { try store.signOut() }
+            gate.open()
+            await load.value
+
+            XCTAssertEqual(loader.state(for: display), .failed, change)
+            XCTAssertNil(AttachmentCacheStore(directory: cacheDir).cachedFileURL(for: display), change)
+        }
+    }
+
     func testDiagnosticsStoreResetsOnEveryAccountChange() throws {
         var resetCount = 0
         let store = SessionStore(

@@ -153,6 +153,28 @@ final class AttachmentCacheStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
 
+    /// The file name carries no account: a write that began before a sign-out's clear (through a separate
+    /// instance, as `SessionStore` does) would hand the next account this one's bytes with no access check.
+    func testAWriteThatStartedBeforeAClearIsRefused() throws {
+        let store = makeStore()
+        let display = try makeDisplay()
+        let video = try makeDisplay(ext: "mp4", label: "Clip.mp4")
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AttachmentCacheStoreTests.source.\(UUID().uuidString)", isDirectory: false)
+        addTeardownBlock { try? FileManager.default.removeItem(at: source) }
+        try Data([7]).write(to: source)
+        let started = store.generation
+
+        makeStore().removeAll()
+
+        XCTAssertNil(store.store(Data([1]), for: display, ifGeneration: started))
+        XCTAssertNil(store.store(movingFileAt: source, for: video, ifGeneration: started))
+        XCTAssertNil(makeStore().cachedFileURL(for: display), "refused bytes must not reach the cache")
+        XCTAssertNil(makeStore().cachedFileURL(for: video), "refused bytes must not reach the cache")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path), "the refused download is deleted")
+        XCTAssertNotNil(store.store(Data([2]), for: display, ifGeneration: store.generation), "a write after it lands")
+    }
+
     func testStoringAgainReplacesTheBytes() throws {
         let store = makeStore()
         let display = try makeDisplay()
