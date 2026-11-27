@@ -3656,6 +3656,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return entry.blockID
     }
 
+    /// The block menu's Options row: the target block when it is a media block
+    /// (its inspector opens through `requestedMedia`).
+    func mediaOptionsTarget() -> String? {
+        guard let id = blockActionTarget(), let position = surface.rangeIndex.position(for: id),
+            surface.blocks.indices.contains(position), MediaBlock.isMediaLike(surface.blocks[position].node)
+        else { return nil }
+        return id
+    }
+
     /// What `performBlockAction` would apply now (the engine's own
     /// validation, nothing written); the menu disables the rest.
     /// The session answers asynchronously (PR08b): until its answer for this

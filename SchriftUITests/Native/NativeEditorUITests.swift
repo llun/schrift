@@ -276,9 +276,9 @@ final class NativeEditorUITests: XCTestCase {
     /// switching to the other with the picker (the keyboard stays) and typing
     /// there are durable, and the document shows the group as one card.
     /// PR13a: a document holding a captioned image and a file types; the
-    /// image's inspector edits its caption (one durable command, which
-    /// survives a relaunch); offline it still offers an upload, which queues
-    /// (PR13b).
+    /// image's inspector (its card's Options button, while editing) edits its
+    /// caption (one durable command, which survives a relaunch); offline it
+    /// still offers an upload, which queues (PR13b).
     func testAMediaCaptionEditedInTheInspectorSurvivesRelaunch() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-open", "--reset", "--native-media-edit"]
@@ -287,7 +287,10 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         XCTAssertTrue(app.descendants(matching: .any)["nativeEditor.attachment.owned-file"].exists)
         XCTAssertFalse(app.staticTexts["nativeEditor.editUnavailableNotice"].exists, "the document types")
-        card.tap()
+        focusFirstParagraph(of: app.textViews["nativeEditor.text"], in: app)
+        let options = app.buttons["nativeEditor.mediaOptions.owned-image"]
+        XCTAssertTrue(options.waitForExistence(timeout: 5), "editing shows the card's Options button")
+        options.tap()
         let caption = app.textFields["nativeMedia.caption"]
         XCTAssertTrue(caption.waitForExistence(timeout: 5), "the inspector opened")
         XCTAssertEqual(caption.value as? String, "Old caption")
@@ -305,7 +308,8 @@ final class NativeEditorUITests: XCTestCase {
         app.buttons["nativeMedia.done"].tap()
         // Shown by name while its preview is hidden; the caption is in the inspector.
         XCTAssertTrue(card.waitForExistence(timeout: 5))
-        card.tap()
+        XCTAssertTrue(options.waitForExistence(timeout: 5))
+        options.tap()
         XCTAssertTrue(caption.waitForExistence(timeout: 5))
         XCTAssertEqual(caption.value as? String, "Harbour at dawn")
         preview.switches.firstMatch.press(forDuration: 0.2)
@@ -359,6 +363,35 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         XCTAssertTrue(waitForText(of: editor, containing: "Attach here"))
         XCTAssertFalse(app.staticTexts["nativeEditor.editUnavailableNotice"].exists)
+    }
+
+    /// A tap on a video's card plays it in the system player (here an upload on this server, offline,
+    /// played from the attachment cache: no request), in the reader as while editing; settings are
+    /// behind the card's Options button, shown only while editing.
+    func testTappingAVideoPlaysItAndItsOptionsButtonOpensTheInspector() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-media-play"]
+        app.launch()
+        let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-video"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertTrue(card.waitForStableFrame())
+        let options = app.buttons["nativeEditor.mediaOptions.owned-video"]
+        XCTAssertFalse(options.exists, "reading has no settings")
+        card.tap()
+        let player = app.descendants(matching: .any)["nativeMedia.player"]
+        XCTAssertTrue(player.waitForExistence(timeout: 10), "the tap presented the system player")
+        XCTAssertFalse(app.buttons["nativeMedia.done"].exists, "not the inspector")
+        app.buttons["Close"].firstMatch.tap()
+        XCTAssertTrue(player.waitForNonExistence(timeout: 10), "the player closed")
+
+        focusFirstParagraph(of: app.textViews["nativeEditor.text"], in: app)
+        XCTAssertTrue(options.waitForExistence(timeout: 5), "editing shows the card's Options button")
+        options.tap()
+        let done = app.buttons["nativeMedia.done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "Options opened the inspector")
+        XCTAssertFalse(player.exists)
+        done.tap()
+        XCTAssertTrue(done.waitForNonExistence(timeout: 5))
     }
 
     func testTypingInBothColumnsSurvivesRelaunch() {

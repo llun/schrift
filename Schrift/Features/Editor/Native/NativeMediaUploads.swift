@@ -77,6 +77,15 @@ final class NativeMediaUploads {
             queue.nativeAttachments(scope: scope).filter { state(of: $0) == wanted }.compactMap(\.native?.blockID))
     }
 
+    /// Block `blockID`'s queued bytes as a file named for their type, so its
+    /// card plays or previews what is uploading; nil without a queued upload.
+    func localFile(_ blockID: String) -> URL? {
+        guard let record = record(blockID), let target = record.native,
+            let data = queue.pendingAttachmentData(localID: record.localID)
+        else { return nil }
+        return NativeMediaPresenter.stage(data, fileExtension: (target.fileName as NSString).pathExtension)
+    }
+
     /// Whether `blockID` is currently preparing its upload bytes before queueing.
     func isPreparing(_ blockID: String) -> Bool { preparing.contains(blockID) }
 

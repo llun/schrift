@@ -54,8 +54,15 @@ final class AttachmentCardViewTests: XCTestCase {
     func testMarkupTypesAreNeverPreviewable() throws {
         for ext in [
             "html", "htm", "xhtml", "xht", "shtml", "svg", "svgz", "xml", "xsl", "xslt",
-            "mht", "mhtml", "webarchive", "epub", "webloc", "url", "eml", "emlx",
+            "mht", "mhtml", "webarchive", "epub", "webloc", "url", "eml", "emlx", "shtm", "xhtm", "m3u", "m3u8",
         ] {
+            XCTAssertFalse(attachmentIsPreviewable(try attachment(ext: ext)), "\(ext) must not be previewable")
+        }
+    }
+
+    /// Past the named list: whatever the system types as HTML, XML or a playlist is refused too.
+    func testTypesThatConformToMarkupOrPlaylistsAreNeverPreviewable() throws {
+        for ext in ["rss", "pls"] {
             XCTAssertFalse(attachmentIsPreviewable(try attachment(ext: ext)), "\(ext) must not be previewable")
         }
     }

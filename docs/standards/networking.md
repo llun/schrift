@@ -1,11 +1,16 @@
 # Networking (`Core/Networking`)
 
-- Everything goes through `DocsAPIClient`'s four primitives
-  (`get`/`getRawData`/`send`/`sendVoid`) over one private `performRequest`.
+- Everything goes through `DocsAPIClient`'s primitives
+  (`get`/`getRawData`/`send`/`sendVoid`) over one private `performRequest`, plus
+  `getRawFile`, which streams a capped download to disk and shares its status mapping.
   Endpoint code **never** builds a `URLRequest` or touches `URLSession`. (One
   intentional exception: absolute document images use `ImageLoader` and
   `ImageTransport`, whose ephemeral, origin-pinned session supports explicitly
-  consented external URLs without sharing credentials.)
+  consented external URLs without sharing credentials, and a tapped media block's
+  non-upload video or audio uses `RemoteMediaClient`: the same cookie-free
+  configuration, https-only redirects, streamed to disk with a 200 MB cap. Never
+  hand `AVPlayer`/`AVURLAsset` a remote URL — it sends the shared storage's
+  session cookies whatever `AVURLAssetHTTPCookiesKey` says.)
 - `performRequest` retries a `GET` **once** on `URLError.networkConnectionLost`
   (-1005: a pooled connection that went stale while the app slept, common on the
   first request after a resume). Unsafe methods are never retried, since the server
@@ -102,7 +107,8 @@
   it. The uploaded bytes must be a real JPEG named `photo.jpg`: the backend
   magic-sniffs the content and stores a mismatched file under an `-unsafe` key that
   never renders inline. **Reading** an attachment's bytes back is
-  `mediaData(path:)` — `isSameOriginPath` + `getRawData`, the same rooted-path
+  `mediaData(path:)` — `isSameOriginPath` + `getRawData` (video and audio:
+  `mediaFile(path:to:byteLimit:)` + `getRawFile`, streamed to disk), the same rooted-path
   contract as `checkMedia`, because its path also derives from a string the app
   did not author (see the attachment rules under
   [Editor](editor-save.md#editor--the-on-device-save-coreyjs)).

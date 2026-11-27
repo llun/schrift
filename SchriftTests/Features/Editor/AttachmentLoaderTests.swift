@@ -54,6 +54,51 @@ final class AttachmentLoaderTests: XCTestCase {
 
     // MARK: - Downloading
 
+    private func makeVideo() throws -> AttachmentDisplay {
+        let url = "\(serverOrigin)/media/\(documentUUID)/attachments/22222222-2222-4222-8222-222222222222.mp4"
+        return try XCTUnwrap(parseAttachmentLink("[Clip.mp4](\(url))", serverOrigin: serverOrigin))
+    }
+
+    private func makeLoader(mediaByteLimit: Int) -> AttachmentLoader {
+        let client = DocsAPIClient(
+            baseURL: URL(string: "https://docs.example.org/api/v1.0/")!,
+            session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] })
+        return AttachmentLoader(
+            client: client, serverOrigin: serverOrigin, cache: makeCache(), mediaByteLimit: mediaByteLimit)
+    }
+
+    func testAVideoStreamsIntoTheCacheUnderItsCap() async throws {
+        let payload = Data(repeating: 7, count: 64)
+        stub(payload)
+        let loader = makeLoader(mediaByteLimit: 64)
+        let video = try makeVideo()
+
+        await loader.loadIfNeeded(video)
+
+        guard case .cached(let url) = loader.state(for: video) else {
+            return XCTFail("Expected .cached, got \(String(describing: loader.state(for: video)))")
+        }
+        XCTAssertEqual(try Data(contentsOf: url), payload)
+        XCTAssertEqual(url.pathExtension, "mp4")
+    }
+
+    /// A video or audio upload is never read whole into memory: past the cap the download stops, nothing
+    /// is cached, and it is not a transport failure, so the next load does not fetch it again on its own.
+    func testAVideoOverItsCapIsRefusedAndNotRetriedOnItsOwn() async throws {
+        let log = RequestRecorder()
+        stub(Data(repeating: 7, count: 65), log: log)
+        let loader = makeLoader(mediaByteLimit: 64)
+        let video = try makeVideo()
+
+        await loader.loadIfNeeded(video)
+        await loader.loadIfNeeded(video)
+
+        XCTAssertEqual(loader.state(for: video), .failed)
+        XCTAssertNil(makeCache().cachedFileURL(for: video), "nothing over the cap is cached")
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/media/"), 1)
+    }
+
     func testDownloadsCachesAndPublishesTheFileURL() async throws {
         let payload = Data([0x25, 0x50, 0x44, 0x46, 0x00, 0xFF])
         let log = RequestRecorder()

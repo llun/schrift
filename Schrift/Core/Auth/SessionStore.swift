@@ -33,6 +33,7 @@ final class SessionStore {
     private let clearImageCache: () -> Void
     private let clearAttachmentCache: () -> Void
     private let clearMediaDropStaging: () -> Void
+    private let endMediaPlayback: () -> Void
     private let clearDiagnostics: () -> Void
     var imageCacheScope: String? { imageCacheSessionID?.uuidString }
 
@@ -102,12 +103,14 @@ final class SessionStore {
         clearImageCache: @escaping () -> Void = { ImageCacheStore().removeAll() },
         clearAttachmentCache: @escaping () -> Void = { AttachmentCacheStore().removeAll() },
         clearMediaDropStaging: @escaping () -> Void = { NativeMediaDropPaste.removeStagingRoot() },
+        endMediaPlayback: @escaping () -> Void = { NativeMediaPresenter.endSession() },
         clearDiagnostics: @escaping () -> Void = { NativeEditorDiagnosticsStore.shared.reset() },
         now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
         self.clearImageCache = clearImageCache
         self.clearAttachmentCache = clearAttachmentCache
         self.clearMediaDropStaging = clearMediaDropStaging
+        self.endMediaPlayback = endMediaPlayback
         self.clearDiagnostics = clearDiagnostics
         self.now = now
         self.userDefaults = userDefaults
@@ -252,6 +255,8 @@ final class SessionStore {
         clearImageCache()
         clearAttachmentCache()
         clearMediaDropStaging()
+        // The player and its staged copies: nothing of this account plays or stays after it.
+        endMediaPlayback()
         clearDiagnostics()
         signedInUser.clear()
         // The account's displayed profile goes with the id — it is *displayed* before any
