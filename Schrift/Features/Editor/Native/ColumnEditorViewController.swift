@@ -399,6 +399,7 @@ struct ColumnEditorScreen: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(ImageLoader.self) private var images: ImageLoader?
     @Environment(VideoPosterLoader.self) private var posters: VideoPosterLoader?
+    @Environment(AttachmentLoader.self) private var attachments: AttachmentLoader?
 
     var body: some View {
         NavigationStack {
@@ -463,8 +464,8 @@ struct ColumnEditorScreen: View {
             }
             ColumnTextHost(
                 model: model, contentSize: uiContentSizeCategory(for: dynamicTypeSize), labels: .document(loc),
-                theme: theme, images: images, posters: posters, serverOrigin: serverOrigin, isOffline: isOffline,
-                uploads: uploads,
+                theme: theme, images: images, posters: posters, attachments: attachments, serverOrigin: serverOrigin,
+                isOffline: isOffline, uploads: uploads,
                 uploadingBlocks: uploads?.uploadingBlocks ?? [], waitingUploads: uploads?.waitingBlocks ?? [],
                 failedUploads: uploads?.failedBlocks ?? [], documentTitle: documentTitle,
                 onOpenDocument: onOpenDocument ?? model.onOpenDocument,
@@ -583,6 +584,7 @@ private struct ColumnTextHost: UIViewRepresentable {
     let theme: AppTheme
     let images: ImageLoader?
     let posters: VideoPosterLoader?
+    let attachments: AttachmentLoader?
     let serverOrigin: String
     let isOffline: Bool
     var uploads: NativeMediaUploads? = nil
@@ -610,6 +612,7 @@ private struct ColumnTextHost: UIViewRepresentable {
             session.textView.blockControls.labels = labels
             session.textView.blockControls.images = images
             session.textView.blockControls.posters = posters
+            session.textView.blockControls.attachments = attachments
             session.textView.blockControls.serverOrigin = serverOrigin
             session.input?.serverOrigin = serverOrigin
             session.input?.mediaUploads = uploads

@@ -74,7 +74,9 @@
   replacing it) — `project.yml`'s target `info:` block generates that template
   to `Generated/Info.plist` from the spec on every `xcodegen generate`, exactly
   like the `.xcodeproj` itself: git-ignored, fully reproducible, never
-  hand-edited or committed. Don't add a second hand-maintained Info.plist for
+  hand-edited or committed. The other array keys live in that template too:
+  `UIAppFonts`, and `UIBackgroundModes` (`audio`, which picture in picture in
+  the media player needs). Don't add a second hand-maintained Info.plist for
   anything else without the same "no `INFOPLIST_KEY_*` route exists" check
   first — most keys do have one.
 - **Formatting**: Swift sources are formatted with Apple's **swift-format**

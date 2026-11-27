@@ -701,6 +701,7 @@ final class NativeEditorSession {
 
     private static func configureSourceTextView(_ textView: NativeTextView) {
         textView.accessibilityIdentifier = "nativeEditor.source.text"
+        textView.blockControls.showsCodeLanguage = false
         textView.autocorrectionType = .no
         textView.spellCheckingType = .no
         textView.autocapitalizationType = .none

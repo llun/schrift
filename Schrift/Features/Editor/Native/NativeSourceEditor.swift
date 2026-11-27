@@ -100,9 +100,6 @@ final class NativeSourceEditorViewController: UIViewController {
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.isScrollEnabled = true
         textView.alwaysBounceVertical = true
-        textView.textContainerInset = UIEdgeInsets(
-            top: DocsSpacing.spaceBase, left: DocsSpacing.gutter, bottom: DocsSpacing.spaceBase,
-            right: DocsSpacing.gutter)
         view.addSubview(textView)
         NSLayoutConstraint.activate([
             textView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -134,11 +131,29 @@ final class NativeSourceEditorViewController: UIViewController {
         }
         session.textView.blockControls.labels = labels
         let category = contentSize ?? view.traitCollection.preferredContentSizeCategory
+        updateTextInset(for: category)
         let presentation = NativeTextPresentation(contentSize: category, labels: labels)
         guard appliedPresentation != presentation else { return }
         appliedPresentation = presentation
         session.surface.updatePresentation(
             traits: UITraitCollection(preferredContentSizeCategory: category), labels: labels)
+    }
+
+    /// A `mathBlock`/`diagram` source is a code block whose header row (where
+    /// its language control would sit) is drawn above the first line; without
+    /// that much padding the row is clipped under the navigation bar.
+    private func updateTextInset(for category: UIContentSizeCategory) {
+        guard let session = sourceSession else { return }
+        let header =
+            session.source == .inlineMath
+            ? 0
+            : UIFontMetrics(forTextStyle: .body).scaledValue(
+                for: NativeBlockMetrics.codeHeaderHeight,
+                compatibleWith: UITraitCollection(preferredContentSizeCategory: category))
+        let inset = UIEdgeInsets(
+            top: DocsSpacing.spaceBase + header, left: DocsSpacing.gutter, bottom: DocsSpacing.spaceBase,
+            right: DocsSpacing.gutter)
+        if session.textView.textContainerInset != inset { session.textView.textContainerInset = inset }
     }
 
     private func showGone() {

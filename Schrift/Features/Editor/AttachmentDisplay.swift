@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 /// An uploaded file attachment a document links to, recognised in the markdown
 /// the server exports.
@@ -183,12 +184,26 @@ func attachmentDisplayTitle(_ display: AttachmentDisplay) -> String {
 /// refuse the long tail of perfectly ordinary documents (`.pages`, `.epub`,
 /// `.heic`, …) and make the feature useless for them. What is listed is
 /// everything that renders as web content: HTML and its variants, the archive
-/// formats that wrap it, and SVG/XML, which carry external references.
+/// formats that wrap it, SVG/XML, which carry external references, and
+/// playlists, whose entries the player fetches itself. Any other extension the
+/// system types as HTML, XML or a playlist is refused too.
 func attachmentIsPreviewable(_ display: AttachmentDisplay) -> Bool {
-    ![
-        "html", "htm", "xhtml", "xht", "shtml", "svg", "svgz", "xml", "xsl", "xslt",
-        "mht", "mhtml", "webarchive", "epub", "webloc", "url", "eml", "emlx",
-    ].contains(display.fileExtension.lowercased())
+    attachmentExtensionIsPreviewable(display.fileExtension)
+}
+
+/// `attachmentIsPreviewable` by file extension alone: also gates a native media
+/// block's pending upload, which has a picked file name but no server url yet,
+/// and every file handed to the player.
+func attachmentExtensionIsPreviewable(_ fileExtension: String) -> Bool {
+    let fileExtension = fileExtension.lowercased()
+    guard
+        ![
+            "html", "htm", "shtml", "shtm", "xhtml", "xhtm", "xht", "svg", "svgz", "xml", "xsl", "xslt",
+            "mht", "mhtml", "webarchive", "epub", "webloc", "url", "eml", "emlx", "m3u", "m3u8",
+        ].contains(fileExtension)
+    else { return false }
+    guard !fileExtension.isEmpty, let type = UTType(filenameExtension: fileExtension) else { return true }
+    return !type.conforms(to: .html) && !type.conforms(to: .xml) && !type.conforms(to: .playlist)
 }
 
 // MARK: - Private

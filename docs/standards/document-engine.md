@@ -1786,8 +1786,22 @@ to the classic editor.
   native only) and the formatting bar's Attach menu (Photo, File, Video, Audio, PDF —
   `NativeAttachChoice` → `insertMediaBlock(node:)`, the same path with no "/query" to consume;
   Photo and File stand in for the image and file blocks, whose inspector holds the photo picker
-  and the file importer) insert and set `requestedMedia`, which opens the inspector; a media card tap or
-  VoiceOver activation (`NativeBlockControls.onOpenMedia`) opens `NativeMediaInspector` (a sheet,
+  and the file importer) insert and set `requestedMedia`, which opens the inspector. A media card tap or
+  VoiceOver activation is routed by `NativeMediaTap.route` (pure; `NativeMediaPlaybackTests`): video
+  and audio play, image, file and PDF preview (`NativeMediaPresenter`: `AVPlayerViewController`,
+  `QLPreviewController`), from a queued upload's bytes, this server's upload through
+  `AttachmentLoader` (video and audio streamed to disk, capped), an image through `ImageLoader`, or
+  any other https file on the tap (offline: a notice; a document: the browser; video and audio:
+  downloaded cookie-free by `RemoteMediaClient` and played from the staged file, since the player
+  must never get a remote URL); a block with no url, an `uploadLoader`, a non-https other-site URL,
+  a playlist or a type QuickLook must not render (`attachmentExtensionIsPreviewable`) opens the
+  inspector instead. `NativeMediaPresenter.start` plays only in a still-presented player, with
+  `forbidAll` reference restrictions; `endSession` (from `SessionStore.forgetSignedInIdentity`)
+  stops it and deletes `tmp/SchriftMediaPreview`. Another site's audio, file or PDF card shows its
+  host as the detail line. The
+  card's Options button (`mediaOptionButtons`, editing only) and the block menu's Options
+  (`mediaOptionsTarget` → `requestedMedia`) call `NativeBlockControls.onOpenMedia`, which opens
+  `NativeMediaInspector` (a sheet,
   `nativeMedia.*` identifiers): name and caption (one command on submit or Done), Show preview,
   Width (Original or 240–640 pt, plus the block's own), Alignment, Upload photo (image), Upload file
   (types by kind), Link (`isAuthoredURL`; the name becomes its last path segment, the web's
@@ -2095,7 +2109,12 @@ to the classic editor.
   and `TableEditorViewController`) edits live with Done / `Escape` / `⌘Return`, Return = newline in
   `mathBlock`/`diagram` and exit-after-chip in `.inlineMath`, slash/formatting/link/indent gating in
   `NativeInputCoordinator` (including plain-text paste fallback inside source buffers and newline
-  rejection in `.inlineMath`), and IME `provisional.json` recovery. `sourceSlashItems` adds
+  rejection in `.inlineMath`), and IME `provisional.json` recovery. The sheet's text view starts
+  below the navigation bar with the code block's header row inside it (a `mathBlock`/`diagram`
+  source is a code block, whose header row is drawn above the first line), and a source surface
+  shows no code-language control: `mathBlock`/`diagram` are their own block types with no
+  language prop (the web's `@blocknote/diagram-block` fixes mermaid), so there is nothing to
+  pick. `sourceSlashItems` adds
   `mathBlock` and `inlineMath` (both auto-opening `NativeSourceEditor`), and `diagram` (seeding
   `SourceBlock.defaultDiagramSource`).
   **Tests:** `BlockNoteSourceOracleTests` (13 tests), `DocumentEngineSourceTests` (10 tests),

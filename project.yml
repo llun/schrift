@@ -65,6 +65,12 @@ targets:
         # (Resources/Fonts/MaterialSymbols-LICENSE.txt).
         UIAppFonts:
           - MaterialSymbolsOutlined-Icons.ttf
+        # A media block's video keeps playing in picture in picture (and its
+        # audio after the app leaves the screen): AVPlayerViewController offers
+        # picture in picture only with this background mode. Also an array, so
+        # it lives in this template rather than an INFOPLIST_KEY_* setting.
+        UIBackgroundModes:
+          - audio
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.llun.Schrift

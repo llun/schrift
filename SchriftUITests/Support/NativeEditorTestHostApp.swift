@@ -10,6 +10,8 @@ struct NativeEditorTestHostApp: App {
     @State private var replicaDirectory: URL?
     /// `--native-media`: images (served by `MediaFixture`, never a network) and tables.
     @State private var images = MediaFixture.loader()
+    /// `--native-media-play`: the video's bytes, already in the attachment cache (no request).
+    @State private var playAttachments = MediaPlayFixture.attachments()
     private let fixture: Data
 
     init() {
@@ -63,6 +65,7 @@ struct NativeEditorTestHostApp: App {
             } else if ProcessInfo.processInfo.arguments.contains("--native-open") {
                 NativeOpenFixture(mode: .standard)
                     .environment(localization)
+                    .environment(playAttachments)
             } else {
                 readerFixture
             }
@@ -365,6 +368,12 @@ private struct NativeOpenFixture: View {
         // file after the first paragraph (no image loader: no request).
         if ProcessInfo.processInfo.arguments.contains("--native-media-edit") {
             checkpoint = try MediaEditFixture.inserting(into: checkpoint, after: "owned-0")
+        }
+        // `--native-media-play`: an uploaded video on this server, its bytes cached.
+        if ProcessInfo.processInfo.arguments.contains("--native-media-play") {
+            checkpoint = try MediaEditFixture.inserting(
+                into: checkpoint, after: "owned-0",
+                media: [("owned-video", "video", ["name": "clip.mp4", "url": MediaPlayFixture.videoURL])])
         }
         return checkpoint
     }
@@ -892,7 +901,16 @@ private struct DragControls: View {
 /// `--native-media-edit` (PR13a): BlockNote 0.56's image and file blocks as
 /// the web writes them (schema-ordered props, no content).
 private enum MediaEditFixture {
-    static func inserting(into state: Data, after blockID: String) throws -> Data {
+    static func inserting(
+        into state: Data, after blockID: String,
+        media: [(id: String, node: String, props: [String: String])] = [
+            (
+                "owned-image", "image",
+                ["name": "harbour.png", "url": "https://images.example/harbour.png", "caption": "Old caption"]
+            ),
+            ("owned-file", "file", ["name": "notes.txt", "url": "https://files.example/notes.txt"]),
+        ]
+    ) throws -> Data {
         let doc = YDoc(clientID: 3, gc: true)
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(state))
@@ -910,14 +928,33 @@ private enum MediaEditFixture {
             }
             return .element("blockContainer", [("id", .string(id))], [.element(node, fields, [])])
         }
-        try writer.insertBlocks(
-            [
-                block(
-                    "owned-image", "image",
-                    ["name": "harbour.png", "url": "https://images.example/harbour.png", "caption": "Old caption"]),
-                block("owned-file", "file", ["name": "notes.txt", "url": "https://files.example/notes.txt"]),
-            ], into: group, after: left)
+        try writer.insertBlocks(media.map { block($0.id, $0.node, $0.props) }, into: group, after: left)
         return try YStateEncoder.encodeStateAsUpdate(doc)
+    }
+}
+
+/// `--native-media-play`: a video uploaded to this (offline) server, whose bytes the attachment
+/// loader already cached, so a tap plays it from disk and the fixture issues no request.
+private enum MediaPlayFixture {
+    static let origin = "https://native-fixture.invalid"
+    static let videoURL =
+        "\(origin)/media/44444444-4444-4444-8444-444444444444/attachments/55555555-5555-4555-8555-555555555555.mp4"
+
+    @MainActor static func attachments() -> AttachmentLoader? {
+        guard ProcessInfo.processInfo.arguments.contains("--native-media-play"),
+            let display = parseAttachmentLink("[clip](\(videoURL))", serverOrigin: origin)
+        else { return nil }
+        let cache = AttachmentCacheStore(
+            directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("NativeMediaPlayFixture", isDirectory: true))
+        _ = cache.store(Data(repeating: 0, count: 64), for: display)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OfflineURLProtocol.self]
+        return AttachmentLoader(
+            client: DocsAPIClient(
+                baseURL: URL(string: "\(origin)/api/v1.0/")!, session: URLSession(configuration: configuration),
+                cookieProvider: { [] }),
+            serverOrigin: origin, cache: cache)
     }
 }
 

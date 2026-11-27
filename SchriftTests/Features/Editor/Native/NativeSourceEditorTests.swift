@@ -1786,4 +1786,141 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         XCTAssertTrue(xml?.contains("<mathblock>abcxy\n  z</mathblock>") == true, xml ?? "")
         XCTAssertTrue(xml?.contains("<math>a</math>") == true, xml ?? "")
     }
+
+    // MARK: - Sheet layout & the code language row
+
+    /// A `mathBlock`, `diagram`, and inline `math` in one document: the three
+    /// source sheets, each opened by its own request.
+    private func makeSourceSheetState() throws -> Data {
+        try makeYDocState { tx, group in
+            var after: YItem?
+            for (id, node, text) in [
+                ("mx", SourceBlock.mathBlock, "x^2 + y^2"),
+                ("dx", SourceBlock.diagram, "graph TD\n    A --> B"),
+            ] {
+                let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+                after = try YWrite.insertAfter(tx, into: group, after: after, [.type(container)])
+                try YWrite.mapSet(tx, on: container, key: "id", .any([.string(id)]))
+                let element = YType(typeRef: .xmlElement(nodeName: node))
+                try YWrite.insertAfter(tx, into: container, after: nil, [.type(element)])
+                let content = YType(typeRef: .xmlText)
+                try YWrite.insertAfter(tx, into: element, after: nil, [.type(content)])
+                try content.insert(0, text, nil)
+            }
+            let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: after, [.type(container)])
+            try YWrite.mapSet(tx, on: container, key: "id", .any([.string("px")]))
+            let paragraph = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: container, after: nil, [.type(paragraph)])
+            let math = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            try YWrite.insertAfter(tx, into: paragraph, after: nil, [.type(math)])
+            let content = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: math, after: nil, [.type(content)])
+            try content.insert(0, "b", nil)
+        }
+    }
+
+    private var sourceSheetRequests: [(name: String, request: NativeSourceRequest)] {
+        [
+            ("math", .block(blockID: "mx")), ("diagram", .block(blockID: "dx")),
+            ("inline math", .inlineMath(blockID: "px", utf16Offset: 0)),
+        ]
+    }
+
+    /// The code block's header row (where its language control sits) is drawn
+    /// above the first line. The sheet's text view must start below the
+    /// navigation bar with that row inside it, or the row is clipped under the
+    /// title bar — the owner's TestFlight report.
+    private func assertHeaderRowBelowTheNavigationBar(
+        _ harness: Harness, request: NativeSourceRequest, name: String,
+        category: UIContentSizeCategory = .large, size: CGSize = CGSize(width: 390, height: 844),
+        style: UIUserInterfaceStyle = .light, file: StaticString = #filePath, line: UInt = #line
+    ) async throws {
+        let editor = NativeSourceEditorViewController(document: harness.session, request: request)
+        editor.contentSize = category
+        await editor.load()
+        XCTAssertTrue(editor.isLoaded, name, file: file, line: line)
+        let nav = UINavigationController(rootViewController: editor)
+        let window = hostController(nav, width: size.width, height: size.height)
+        window.overrideUserInterfaceStyle = style
+        defer { window.isHidden = true }
+        editor.view.layoutIfNeeded()
+        let session = try XCTUnwrap(editor.sourceSession, name, file: file, line: line)
+        let textView = session.textView
+        textView.layoutIfNeeded()
+        let layout = try XCTUnwrap(textView.textLayoutManager, name, file: file, line: line)
+        layout.textViewportLayoutController.layoutViewport()
+        var first: NSTextLayoutFragment?
+        layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: [.ensuresLayout]) {
+            first = $0
+            return false
+        }
+        let fragment = try XCTUnwrap(first, name, file: file, line: line)
+        let header =
+            (textView.textStorage.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?
+            .paragraphSpacingBefore ?? 0
+        let rowTop = textView.convert(
+            CGPoint(x: 0, y: textView.textContainerInset.top + fragment.layoutFragmentFrame.minY - header),
+            to: window
+        ).y
+        let barBottom = nav.navigationBar.convert(nav.navigationBar.bounds, to: window).maxY
+        XCTAssertGreaterThanOrEqual(
+            rowTop, barBottom, "\(name): the language row is clipped under the title bar", file: file, line: line)
+        if session.source != .inlineMath {
+            XCTAssertGreaterThanOrEqual(
+                header, DocsSpacing.spaceLG, "\(name): the header row fits the language control", file: file,
+                line: line)
+        }
+        editor.close()
+    }
+
+    func testSourceSheetHeaderRowSitsBelowTheNavigationBar() async throws {
+        let harness = try await makeHarness(state: makeSourceSheetState())
+        addTeardownBlock { await harness.close() }
+        for sheet in sourceSheetRequests {
+            try await assertHeaderRowBelowTheNavigationBar(harness, request: sheet.request, name: sheet.name)
+        }
+    }
+
+    func testSourceSheetHeaderRowSitsBelowTheNavigationBarAtLargeTypeInLandscape() async throws {
+        let harness = try await makeHarness(state: makeSourceSheetState())
+        addTeardownBlock { await harness.close() }
+        try await assertHeaderRowBelowTheNavigationBar(
+            harness, request: .block(blockID: "dx"), name: "diagram",
+            category: .accessibilityExtraExtraExtraLarge, size: CGSize(width: 844, height: 390), style: .dark)
+    }
+
+    /// A `mathBlock`/`diagram` is its own block type with no language prop (the
+    /// web's `@blocknote/diagram-block` fixes mermaid), so its source sheet
+    /// offers no language control; a real code block keeps its own.
+    func testSourceSheetsOfferNoCodeLanguageControl() async throws {
+        let harness = try await makeHarness(state: makeSourceSheetState())
+        addTeardownBlock { await harness.close() }
+        for sheet in sourceSheetRequests {
+            let editor = NativeSourceEditorViewController(document: harness.session, request: sheet.request)
+            await editor.load()
+            let nav = UINavigationController(rootViewController: editor)
+            let window = hostController(nav)
+            editor.view.layoutIfNeeded()
+            let session = try XCTUnwrap(editor.sourceSession, sheet.name)
+            session.textView.layoutIfNeeded()
+            XCTAssertTrue(
+                session.textView.blockControls.languageButtons.isEmpty,
+                "\(sheet.name): a source surface has no code language")
+            window.isHidden = true
+            editor.close()
+        }
+
+        let code = BlockNoteBlock(
+            node: "codeBlock", props: [("language", .string("swift"))], runs: [InlineRun("let x = 1")], id: "code")
+        let codeHarness = try await makeHarness([code])
+        addTeardownBlock { await codeHarness.close() }
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        codeHarness.view.frame = window.bounds
+        window.addSubview(codeHarness.view)
+        window.isHidden = false
+        codeHarness.view.layoutIfNeeded()
+        defer { window.isHidden = true }
+        XCTAssertNotNil(codeHarness.view.blockControls.languageButtons["code"], "a code block keeps its language")
+    }
 }

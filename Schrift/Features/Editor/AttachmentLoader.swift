@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 /// Where an attachment's bytes have got to.
 ///
@@ -50,10 +51,17 @@ enum AttachmentLoadState: Equatable, Sendable {
     /// them once. A content failure is never recorded, and the automatic attempt is not re-recorded, so no loop.
     private var transportFailures: Set<String> = []
 
-    init(client: DocsAPIClient, serverOrigin: String, cache: AttachmentCacheStore = AttachmentCacheStore()) {
+    /// The most a video or audio attachment downloads; it streams to disk rather than memory.
+    private let mediaByteLimit: Int
+
+    init(
+        client: DocsAPIClient, serverOrigin: String, cache: AttachmentCacheStore = AttachmentCacheStore(),
+        mediaByteLimit: Int = mediaDownloadByteLimit
+    ) {
         self.client = client
         self.serverOrigin = serverOrigin
         self.cache = cache
+        self.mediaByteLimit = mediaByteLimit
     }
 
     func state(for display: AttachmentDisplay) -> AttachmentLoadState? {
@@ -177,11 +185,21 @@ enum AttachmentLoadState: Equatable, Sendable {
     private func fetch(_ display: AttachmentDisplay, path: String, isAutomaticRetry: Bool) async {
         let key = display.urlString
         do {
-            let data = try await client.mediaData(path: path)
             // A cache write that fails (a full disk) costs the offline copy, not
             // the download: `.failed` so the card offers a retry rather than
             // claiming a file that isn't there.
-            states[key] = cache.store(data, for: display).map(AttachmentLoadState.cached) ?? .failed
+            if UTType(filenameExtension: display.fileExtension)?.conforms(to: .audiovisualContent) == true {
+                // Video and audio can be large: streamed to disk and capped, never whole in memory.
+                let download = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("SchriftAttachmentDownload-\(UUID().uuidString)", isDirectory: false)
+                defer { try? FileManager.default.removeItem(at: download) }
+                try await client.mediaFile(path: path, to: download, byteLimit: mediaByteLimit)
+                states[key] =
+                    cache.store(movingFileAt: download, for: display).map(AttachmentLoadState.cached) ?? .failed
+            } else {
+                let data = try await client.mediaData(path: path)
+                states[key] = cache.store(data, for: display).map(AttachmentLoadState.cached) ?? .failed
+            }
             transportFailures.remove(key)
         } catch {
             states[key] = .failed

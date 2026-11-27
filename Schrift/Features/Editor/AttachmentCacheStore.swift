@@ -108,6 +108,16 @@ final class AttachmentCacheStore {
         return url
     }
 
+    /// `store` for bytes already on disk (a streamed video or audio download): moves the file in.
+    func store(movingFileAt source: URL, for display: AttachmentDisplay) -> URL? {
+        guard let url = fileURL(for: display) else { return nil }
+        ensureDirectory()
+        try? fileManager.removeItem(at: url)
+        guard (try? fileManager.moveItem(at: source, to: url)) != nil else { return nil }
+        evictBeyondLimits()
+        return url
+    }
+
     func removeAll() {
         try? fileManager.removeItem(at: directory)
     }
