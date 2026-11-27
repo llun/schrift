@@ -58,15 +58,17 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
         let drafts = PendingDraftStore(userDefaults: defaults)
         let attachments = PendingAttachmentStore(userDefaults: defaults, directory: attachmentDirectory)
         let creates = PendingDocumentCreateStore(userDefaults: defaults)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: drafts,
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: creates, attachmentStore: attachments,
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
+            serverOrigin: origin, mediaCheckMaxAttempts: 2,
+            mediaCheckRetryInterval: .milliseconds(1), backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         return Environment(
-            coordinator: DocumentSaveCoordinator(
-                client: client, draftStore: drafts,
-                contentCache: DocumentContentCacheStore(directory: cacheDirectory),
-                createStore: creates, attachmentStore: attachments,
-                listCache: DocumentCacheStore(userDefaults: defaults),
-                childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
-                serverOrigin: origin, mediaCheckMaxAttempts: 2,
-                mediaCheckRetryInterval: .milliseconds(1), backgroundTasks: .noop, sleep: neverSleep),
+            coordinator: coordinator,
             drafts: drafts, attachments: attachments, creates: creates, defaults: defaults)
     }
 

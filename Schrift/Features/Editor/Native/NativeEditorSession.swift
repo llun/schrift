@@ -13,7 +13,7 @@ enum NativeEditUnavailableReason: Equatable, Sendable {
     /// `abilities.update` is false, a remembered denial holds, or the live/server
     /// check downgraded this session via `becomeReader`.
     case noEditAccess
-    /// Native-owned replica opened while the experimental native editor switch is off.
+    /// Native-owned replica opened while the user has turned the native editor switch off.
     case nativeSwitchOff
     /// A newly created server document still has a checkpointed create pending sync.
     case pendingSync
@@ -1206,7 +1206,7 @@ final class NativeEditorOpen {
         self.preference = preference
         self.livePreference = livePreference
         self.replicaHooks = replicaHooks
-        // Preserve the immediate default-off classic renderer. This initial
+        // Switch off: the classic renderer shows immediately. This initial
         // value only chooses the initial view; every safe open rereads the key.
         let initialPreference = preference()
         self.enabled = initialPreference

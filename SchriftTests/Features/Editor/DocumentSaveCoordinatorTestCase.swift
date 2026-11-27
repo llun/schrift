@@ -81,6 +81,9 @@ class DocumentSaveCoordinatorTestCase: XCTestCase {
             isLiveReplicaHeld: isLiveReplicaHeld,
             sleep: sleep
         )
+        // Pinned off: the default reads `UserDefaults.standard`, where the native editor is on,
+        // so these classic tests would otherwise run the native path.
+        coordinator.nativeEditorEnabled = { false }
         return (coordinator, draftStore, contentCache)
     }
 

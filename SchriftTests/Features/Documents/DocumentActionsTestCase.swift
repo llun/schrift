@@ -57,6 +57,9 @@ class DocumentActionsTestCase: XCTestCase {
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        // Pinned off: the default reads `UserDefaults.standard`, where the native editor is on,
+        // so these classic tests would otherwise run the native path.
+        coordinator.nativeEditorEnabled = { false }
         let signedIn = SignedInUserStore(userDefaults: defaults)
         signedIn.remember(signedInUserID ?? ownerID)
         return Environment(

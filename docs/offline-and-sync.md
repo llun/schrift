@@ -7,10 +7,10 @@
 > [`architecture.md`](architecture.md) for the overall architecture and
 > [`AGENTS.md`](../AGENTS.md) for the operational conventions.
 
-> **PR02 activation (slice B, 2026-11-08):** with the default-off
-> `schrift.nativeEditor` switch on, eligible Docs 6 documents type into a durable
-> replica and save through the coordinator; see "Native typing activation" below.
-> Old Markdown-draft migration, local-create key migration and a total shadow for
+> **Native typing activation:** with the `schrift.nativeEditor` switch on (on by
+> default), eligible Docs 6 documents type into a durable replica and save
+> through the coordinator; see "Native typing activation" below. Old
+> Markdown-draft migration, local-create key migration and a total shadow for
 > rich documents are not done. The checkpoints below record how the components
 > were built.
 

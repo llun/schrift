@@ -94,6 +94,9 @@ class DocumentPinTestCase: XCTestCase {
             attachmentStore: PendingAttachmentStore(userDefaults: defaults), listCache: cache,
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults), serverOrigin: origin,
             backgroundTasks: .noop, sleep: neverSleep)
+        // Pinned off: the default reads `UserDefaults.standard`, where the native editor is on,
+        // so these classic tests would otherwise run the native path.
+        coordinator.nativeEditorEnabled = { false }
         let home = HomeViewModel(
             client: client, cache: cache, saveCoordinator: coordinator, userDefaults: defaults, signedInUser: signedIn)
         let options = OptionsViewModel(

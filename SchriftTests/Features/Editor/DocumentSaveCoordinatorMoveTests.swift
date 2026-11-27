@@ -55,6 +55,7 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
                 userDefaults: defaults, directory: cacheDirectory.appendingPathComponent("attachments")),
             listCache: listCache, childrenCache: childrenCache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         return Environment(
             coordinator: coordinator, creates: creates, listCache: listCache,
             childrenCache: childrenCache, contentCache: contentCache, defaults: defaults)
@@ -115,6 +116,7 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
             listCache: env.listCache, childrenCache: env.childrenCache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
 
         XCTAssertFalse(coordinator.moveLocalDocument(documentID: child.id, newParentID: parent.id))
         XCTAssertNil(env.creates.create(for: child.id)?.parentID, "unchanged")
@@ -165,6 +167,7 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
             listCache: env.listCache, childrenCache: env.childrenCache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
 
         XCTAssertFalse(
             coordinator.moveLocalDocument(documentID: root.id, newParentID: grandchild.id),
@@ -430,6 +433,7 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
                 directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             listCache: env.listCache, childrenCache: env.childrenCache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
 
         async let pass: Void = coordinator.syncPendingDrafts()
         await waitUntil { MockURLProtocol.deferredDeliveryCount > 0 }
@@ -499,6 +503,7 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
                 directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             listCache: env.listCache, childrenCache: env.childrenCache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop, sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
 
         async let pass: Void = coordinator.syncPendingDrafts()
         await waitUntil { MockURLProtocol.deferredDeliveryCount > 0 }

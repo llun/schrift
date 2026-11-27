@@ -61,12 +61,16 @@ class DocumentSaveCoordinatorReplayTestCase: XCTestCase {
         let creates = PendingDocumentCreateStore(userDefaults: defaults)
         let lists = DocumentCacheStore(userDefaults: defaults)
         let children = DocumentChildrenCacheStore(userDefaults: defaults)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: drafts,
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: creates, listCache: lists, childrenCache: children,
+            serverOrigin: origin, appBuild: appBuild, backgroundTasks: .noop, sleep: sleep)
+        // Pinned off: the default reads `UserDefaults.standard`, where the native editor is on,
+        // so these classic tests would otherwise run the native path.
+        coordinator.nativeEditorEnabled = { false }
         return Environment(
-            coordinator: DocumentSaveCoordinator(
-                client: client, draftStore: drafts,
-                contentCache: DocumentContentCacheStore(directory: cacheDirectory),
-                createStore: creates, listCache: lists, childrenCache: children,
-                serverOrigin: origin, appBuild: appBuild, backgroundTasks: .noop, sleep: sleep),
+            coordinator: coordinator,
             drafts: drafts, creates: creates, lists: lists, children: children, defaults: defaults)
     }
 

@@ -152,6 +152,7 @@ final class LiveEditingIntegrationTests: XCTestCase {
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop,
             sleep: neverSleep)
+        coordinator.nativeEditorEnabled = { false }  // classic: the standard default is native-on
         let viewModel = EditorViewModel(
             client: client,
             documentID: documentID,

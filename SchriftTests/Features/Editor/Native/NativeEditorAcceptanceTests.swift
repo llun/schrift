@@ -296,7 +296,9 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
     func testClassicEditorAndBlockNoteApplyEditNonRegression() async throws {
         let env = makeAcceptanceEnvironment()
         defer { env.clean() }
-        XCTAssertFalse(NativeEditorPreference.isEnabled(env.defaults), "default preference must remain OFF")
+        // The switch is on by default now; this test drives the classic route explicitly.
+        env.defaults.set(false, forKey: NativeEditorPreference.key)
+        XCTAssertFalse(NativeEditorPreference.isEnabled(env.defaults), "an explicit off must stay off")
 
         // Build a rich YDoc baseline with callout + paragraph + auxiliary root.
         let doc = YDoc(clientID: 12, gc: true)
