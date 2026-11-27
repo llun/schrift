@@ -1,0 +1,65 @@
+Schrift/Core/Networking/MediaDownload.swift
+  s_4fb28ab57323fe::t_9ab43878db5907 1-159
+docs/architecture.md
+  s_4fb28ab57323fe::t_8fb5e76b019789 1219-1220,2782-2783
+  s_4fb28ab57323fe::t_604570d6810e3c 1210-1218,2781,2795-2799
+SchriftTests/Features/Editor/AttachmentCardViewTests.swift
+  s_4fb28ab57323fe::t_1a013e968bc596 57,63-64
+  s_4fb28ab57323fe::t_fda29009f72ceb 65
+  s_4fb28ab57323fe::t_9dc6833cb9b0e3 66-69
+docs/standards/document-engine.md
+  s_4fb28ab57323fe::t_604570d6810e3c 1792-1800
+Schrift/Features/Editor/Native/NativeMediaPlayback.swift
+  s_4fb28ab57323fe::t_a740366eb04c85 186-192
+  s_4fb28ab57323fe::t_e5de7f3d0820f6 17-19,41,67-73,105,107-109,112,114,120-122,124-134,137-138,140-141,152,154,181-185,193-216,220
+  s_4fb28ab57323fe::t_68c7fb53fd6596 43,49,54,123,135-136,139,155
+SchriftTests/Core/Auth/SessionStoreIdentitySideEffectsTests.swift
+  s_4fb28ab57323fe::t_36fbfa965004f6 233,239-240,245,251,256,261-274
+SchriftTests/Features/Editor/AttachmentLoaderTests.swift
+  s_4fb28ab57323fe::t_1a013e968bc596 57-101
+Schrift/Features/Editor/AttachmentLoader.swift
+  s_4fb28ab57323fe::t_68c7fb53fd6596 191
+  s_4fb28ab57323fe::t_edff3daa946907 197-198
+  s_4fb28ab57323fe::t_b04713e418256d 2,54-60,64,192-196,199-202
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_4fb28ab57323fe::t_73ea8f8b216549 127-151,254-256,258-269,272-276
+docs/standards/networking.md
+  s_4fb28ab57323fe::t_4a4a578bbc1002 3-5
+  s_4fb28ab57323fe::t_604570d6810e3c 9-13,110-111
+Schrift/Features/Editor/Native/NativeBlockAttachment.swift
+  s_4fb28ab57323fe::t_c0528943a5ac68 352-355,359,361
+  s_4fb28ab57323fe::t_9229efddd42841 356
+  s_4fb28ab57323fe::t_68c7fb53fd6596 360
+Schrift/Features/Editor/AttachmentCacheStore.swift
+  s_4fb28ab57323fe::t_b04713e418256d 111-120
+Schrift/Features/Editor/AttachmentDisplay.swift
+  s_4fb28ab57323fe::t_46afca5f65faa8 2,187-189,195-196,198-200,203-205
+  s_4fb28ab57323fe::t_68c7fb53fd6596 201-202,206
+Schrift/Core/Networking/AttachmentEndpoints.swift
+  s_4fb28ab57323fe::t_73ea8f8b216549 128-133
+Schrift/Core/Auth/SessionStore.swift
+  s_4fb28ab57323fe::t_d6ae7fc3959208 36,106,113,258
+  s_4fb28ab57323fe::t_68c7fb53fd6596 259
+SchriftTests/Features/Editor/Native/NativeMediaPlaybackTests.swift
+  s_4fb28ab57323fe::t_ce327e382c9106 83-92,95-96,99-103,163-188,312-335,338-380,383-437
+  s_4fb28ab57323fe::t_edff3daa946907 93-94,97-98,336-337,381-382
+  s_4fb28ab57323fe::t_a858e205962b33 438
+Schrift/Features/Editor/Native/NativeBlockControls.swift
+  s_4fb28ab57323fe::t_a740366eb04c85 349-351
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c1062238f093d93040bd79f8f76d8da48c308ced",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
