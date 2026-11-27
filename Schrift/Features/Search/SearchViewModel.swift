@@ -118,10 +118,15 @@ final class SearchViewModel {
     /// Search appeared, or the sign-in session changed under it: the previous session's server
     /// rows and Quick access stop showing at once, before the screen's tasks search again, and the
     /// on-device index is read afresh (`invalidateLocalIndex`).
+    /// The signed-in account's list, or none while no account is known.
+    func reloadRecentSearches() {
+        recentSearches = store.searches
+    }
+
     func beginSession(signInGeneration: Int) {
         self.signInGeneration = signInGeneration
         // An account change cleared them (`SessionStore`); a same-account re-login kept them.
-        recentSearches = store.searches
+        reloadRecentSearches()
         invalidateLocalIndex()
     }
 

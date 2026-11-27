@@ -334,4 +334,23 @@ final class SearchViewModelTests: XCTestCase {
 
         XCTAssertTrue(viewModel.recentSearches.isEmpty)
     }
+
+    /// The account id learned after the session began makes its list readable again.
+    func testRecentSearchesReloadOnceTheAccountIsKnown() {
+        let suiteName = "SearchViewModelTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let signedInUser = SignedInUserStore(userDefaults: userDefaults)
+        let account = UUID()
+        signedInUser.remember(account)
+        RecentSearchesStore(userDefaults: userDefaults).add("Roadmap")
+        signedInUser.clear()
+        let viewModel = makeViewModel(store: RecentSearchesStore(userDefaults: userDefaults))
+        XCTAssertEqual(viewModel.recentSearches, [])
+
+        signedInUser.remember(account)
+        viewModel.reloadRecentSearches()
+
+        XCTAssertEqual(viewModel.recentSearches, ["Roadmap"])
+    }
 }
