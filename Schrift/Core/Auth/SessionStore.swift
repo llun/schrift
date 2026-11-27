@@ -41,6 +41,8 @@ final class SessionStore {
     private let endMediaPlayback: () -> Void
     private let clearWebCache: () -> Void
     private let clearWebSiteData: (_ includingCookies: Bool) -> Void
+    /// Recent searches are what one person typed: cleared on an account change and sign-out.
+    private let clearRecentSearches: () -> Void
     private let clearDiagnostics: () -> Void
     var imageCacheScope: String? { imageCacheSessionID?.uuidString }
 
@@ -132,6 +134,7 @@ final class SessionStore {
         clearWebSiteData: @escaping (_ includingCookies: Bool) -> Void = {
             clearWebLoginSiteData(includingCookies: $0)
         },
+        clearRecentSearches: @escaping () -> Void = { RecentSearchesStore().clear() },
         clearDiagnostics: @escaping () -> Void = { NativeEditorDiagnosticsStore.shared.reset() },
         now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
@@ -141,6 +144,7 @@ final class SessionStore {
         self.endMediaPlayback = endMediaPlayback
         self.clearWebCache = clearWebCache
         self.clearWebSiteData = clearWebSiteData
+        self.clearRecentSearches = clearRecentSearches
         self.clearDiagnostics = clearDiagnostics
         self.now = now
         self.userDefaults = userDefaults
@@ -198,6 +202,7 @@ final class SessionStore {
             || (!provablySameAccount && (isAuthenticated || hasConfirmedRecord || launchedWithUnreadableMarker))
         {
             clearWebSiteData(false)
+            clearRecentSearches()
         }
         // "" records a confirmed sign-in by an account nobody can name.
         userDefaults.set(userID?.uuidString ?? "", forKey: Self.webLoginConfirmedUserKey)
@@ -360,6 +365,7 @@ final class SessionStore {
         // An intentional sign-out: everything the login web view keeps, cookies and the IdP's
         // single sign-on included, so the next person on the device has to sign in themselves.
         clearWebSiteData(true)
+        clearRecentSearches()
         // The IdP's cookies too: the login copies every WebKit cookie into this storage.
         cookieStorage.removeCookies(since: .distantPast)
         userDefaults.removeObject(forKey: Self.webLoginConfirmedUserKey)

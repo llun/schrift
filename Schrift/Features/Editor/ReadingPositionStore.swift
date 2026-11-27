@@ -153,6 +153,9 @@ func topVisibleBlockID(in frames: [UUID: CGRect]) -> UUID? {
 /// UserDefaults-backed reading positions, one per document, keyed by server origin and
 /// document id (`readingPositionKey`) and capped to the `limit` most recently read.
 ///
+/// Positions belong to the signed-in account: each key is prefixed with its id, and with no
+/// known account nothing is read or saved, so one account never resumes where another left off.
+///
 /// Like the other stores it never throws to callers: an unreadable blob reads as empty and is
 /// replaced by the next save. It is **cleared on sign-out** (RootView's `onSignOut`, next to the
 /// content caches): a position is not unsynced work, and it is only meaningful against the
@@ -161,6 +164,7 @@ final class ReadingPositionStore {
     private static let key = "dev.llun.Schrift.readingPositions"
 
     private let userDefaults: UserDefaults
+    private let signedInUser: SignedInUserStore
     private let limit: Int
     private let now: () -> Date
     private let encoder: JSONEncoder
@@ -171,6 +175,7 @@ final class ReadingPositionStore {
         now: @escaping () -> Date = Date.init
     ) {
         self.userDefaults = userDefaults
+        self.signedInUser = SignedInUserStore(userDefaults: userDefaults)
         self.limit = limit
         self.now = now
         // Millisecond precision, like the other recency-carrying stores: whole seconds would
@@ -184,27 +189,34 @@ final class ReadingPositionStore {
     }
 
     func position(serverOrigin: String, documentID: UUID) -> ReadingPosition? {
-        loadEntries()[readingPositionKey(serverOrigin: serverOrigin, documentID: documentID)]
+        guard let key = accountKey(serverOrigin: serverOrigin, documentID: documentID) else { return nil }
+        return loadEntries()[key]
     }
 
     func save(
         blockID: UUID, fingerprint: String, blockIndex: Int, serverOrigin: String, documentID: UUID
     ) {
+        guard let key = accountKey(serverOrigin: serverOrigin, documentID: documentID) else { return }
         let position = ReadingPosition(
             blockID: blockID, fingerprint: fingerprint, blockIndex: blockIndex, savedAt: now())
-        let key = readingPositionKey(serverOrigin: serverOrigin, documentID: documentID)
         saveEntries(recordingReadingPosition(position, forKey: key, in: loadEntries(), limit: limit))
     }
 
     func remove(serverOrigin: String, documentID: UUID) {
+        guard let key = accountKey(serverOrigin: serverOrigin, documentID: documentID) else { return }
         var entries = loadEntries()
-        guard entries.removeValue(forKey: readingPositionKey(serverOrigin: serverOrigin, documentID: documentID)) != nil
-        else { return }
+        guard entries.removeValue(forKey: key) != nil else { return }
         saveEntries(entries)
     }
 
     func removeAll() {
         userDefaults.removeObject(forKey: Self.key)
+    }
+
+    private func accountKey(serverOrigin: String, documentID: UUID) -> String? {
+        guard let owner = signedInUser.userID else { return nil }
+        return "\(owner.uuidString.lowercased())|"
+            + readingPositionKey(serverOrigin: serverOrigin, documentID: documentID)
     }
 
     private func loadEntries() -> [String: ReadingPosition] {

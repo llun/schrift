@@ -120,6 +120,8 @@ final class SearchViewModel {
     /// on-device index is read afresh (`invalidateLocalIndex`).
     func beginSession(signInGeneration: Int) {
         self.signInGeneration = signInGeneration
+        // An account change cleared them (`SessionStore`); a same-account re-login kept them.
+        recentSearches = store.searches
         invalidateLocalIndex()
     }
 

@@ -316,4 +316,20 @@ final class SearchViewModelTests: XCTestCase {
             isFavorite: false, depth: 1, numchild: 0, path: "0001",
             createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
     }
+
+    /// An account change clears the stored searches from another instance; the screen's next
+    /// session shows that, not the previous account's list.
+    func testANewSessionRereadsRecentSearches() {
+        let suiteName = "SearchViewModelTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        RecentSearchesStore(userDefaults: userDefaults).add("Roadmap")
+        let viewModel = makeViewModel(store: RecentSearchesStore(userDefaults: userDefaults))
+        XCTAssertEqual(viewModel.recentSearches, ["Roadmap"])
+
+        RecentSearchesStore(userDefaults: userDefaults).clear()
+        viewModel.beginSession(signInGeneration: 1)
+
+        XCTAssertTrue(viewModel.recentSearches.isEmpty)
+    }
 }

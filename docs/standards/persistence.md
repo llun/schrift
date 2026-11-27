@@ -263,7 +263,9 @@
 - **"Continue reading" positions** (`ReadingPositionStore`,
   `dev.llun.Schrift.readingPositions`, one JSON blob in UserDefaults) remember which
   block was at the top of the screen when a document was left, so reopening scrolls
-  back to it. Keyed by `readingPositionKey(serverOrigin:documentID:)`, capped to 200
+  back to it. Keyed by the signed-in account's id plus
+  `readingPositionKey(serverOrigin:documentID:)` (no account known: nothing read or
+  saved), capped to 200
   documents by the pure `recordingReadingPosition` (least recently saved evicted; the
   entry being written always survives), dates in milliseconds. A position is a block id
   plus `readingPositionFingerprint` — an FNV-1a hash of the block's normalised first 160
@@ -273,6 +275,10 @@
   index among equals), else nothing, and nothing when the block is within the first two.
   **Cleared on sign-out** in RootView's `onSignOut` beside the content caches (it is
   reading history, not unsynced work, so unlike drafts it does not outlive the session).
+- **Recent searches** (`RecentSearchesStore`, `dev.llun.Schrift.recentSearches`) are what
+  one person typed: `SessionStore` clears them on an account change (the same "not provably
+  the same account" rule as the login web view's site data) and at sign-out, and the
+  search screen re-reads them when the session changes.
   `ReadingPositionSession` (in `EditorView`'s `@State`) decides the restore once per open
   and **writes nothing until it has** — before then the viewport is at the top and
   persisting would overwrite the very position about to be restored. Deciding and scrolling

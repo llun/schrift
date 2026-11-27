@@ -11,29 +11,23 @@ func addingRecentSearch(_ query: String, to existing: [String], limit: Int = 8) 
     return updated
 }
 
-@Observable
 final class RecentSearchesStore {
     private static let key = "dev.llun.Schrift.recentSearches"
 
     private let userDefaults: UserDefaults
-    private(set) var searches: [String]
+    /// Read from storage each time: `SessionStore` clears it from another instance on an
+    /// account change, and the search screen re-reads it when the session changes.
+    var searches: [String] { userDefaults.array(forKey: Self.key) as? [String] ?? [] }
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
-        if let raw = userDefaults.array(forKey: Self.key) as? [String] {
-            self.searches = raw
-        } else {
-            self.searches = []
-        }
     }
 
     func add(_ query: String) {
-        searches = addingRecentSearch(query, to: searches)
-        userDefaults.set(searches, forKey: Self.key)
+        userDefaults.set(addingRecentSearch(query, to: searches), forKey: Self.key)
     }
 
     func clear() {
-        searches = []
         userDefaults.removeObject(forKey: Self.key)
     }
 }

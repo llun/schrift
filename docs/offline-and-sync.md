@@ -3488,8 +3488,9 @@ the top of the screen when the document was left, so reopening — online or off
 from the content cache or the network — scrolls back to where the reader was.
 
 `ReadingPositionStore` (`dev.llun.Schrift.readingPositions`, one JSON dictionary in
-UserDefaults) is keyed by server origin and document id and capped at 200 entries, least
-recently read first. An entry is a block id, a hash of the block's normalised text and its
+UserDefaults) is keyed by the signed-in account, server origin and document id and capped
+at 200 entries, least recently read first. With no known account nothing is read or saved,
+so one account never resumes where another left off. An entry is a block id, a hash of the block's normalised text and its
 index; block ids are re-minted by every parse, so after a relaunch the hash (not the id)
 finds the block, and a document edited elsewhere still resolves as long as that passage
 survives. Anything that cannot be matched, or lies in the first two blocks, restores nothing.
