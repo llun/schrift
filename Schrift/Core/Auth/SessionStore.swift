@@ -137,6 +137,7 @@ final class SessionStore {
                 // An unconfirmed cookie handover clears the persisted key until /users/me/ confirms;
                 // if the app relaunches before confirmation, wipe any unscoped attachments left by it.
                 clearAttachmentCache()
+                clearWebCache()
                 userDefaults.set(namespace.uuidString, forKey: Self.imageCacheSessionKey)
             }
             // A session stored by a build that predates the ThisDeviceOnly
