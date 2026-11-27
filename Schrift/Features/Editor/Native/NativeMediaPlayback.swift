@@ -64,13 +64,29 @@ enum NativeMediaTap: Equatable {
 enum NativeMediaPresenter {
     /// The player's accessibility identifier (UI tests find the presented player by it).
     static let playerIdentifier = "nativeMedia.player"
-    /// Where a preview's or a download's file is staged; one file at a time, gone at sign-out.
+    /// Where a preview's or a download's file is staged; a new one prunes those no preview or
+    /// player still shows (`openFiles`), and all are gone at sign-out.
     static let stagingDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("SchriftMediaPreview", isDirectory: true)
     /// The player on screen (or in picture in picture) and the download it waits for, so that
     /// sign-out or an account switch can stop both (`endSession`).
     private(set) static weak var activePlayer: AVPlayerViewController?
     private static var activeLoad: Task<Void, Never>?
+    private static var activePlayerFile: URL?
+    /// Staged files an open QuickLook preview still reads.
+    static var openPreviewFiles = Set<URL>()
+
+    /// Deletes staged files nothing on screen still shows.
+    static func pruneStaging() {
+        var open = openPreviewFiles
+        if activePlayer != nil, let activePlayerFile { open.insert(activePlayerFile) }
+        let manager = FileManager.default
+        let files = (try? manager.contentsOfDirectory(at: stagingDirectory, includingPropertiesForKeys: nil)) ?? []
+        let kept = Set(open.map { $0.standardizedFileURL.path })
+        for file in files where !kept.contains(file.standardizedFileURL.path) {
+            try? manager.removeItem(at: file)
+        }
+    }
 
     static func show(_ tap: NativeMediaTap, from view: UIView, controls: NativeBlockControls) {
         guard let host = topViewController(of: view) else { return }
@@ -123,6 +139,7 @@ enum NativeMediaPresenter {
         guard file.isFileURL, player.presentingViewController != nil, !player.isBeingDismissed else { return }
         let asset = AVURLAsset(
             url: file, options: [AVURLAssetReferenceRestrictionsKey: AVAssetReferenceRestrictions.forbidAll.rawValue])
+        if player === activePlayer { activePlayerFile = file }
         player.player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
         player.player?.play()
     }
@@ -136,6 +153,8 @@ enum NativeMediaPresenter {
         activePlayer?.player?.replaceCurrentItem(with: nil)
         activePlayer?.dismiss(animated: false)
         activePlayer = nil
+        activePlayerFile = nil
+        openPreviewFiles = []
         try? FileManager.default.removeItem(at: stagingDirectory)
     }
 
@@ -181,7 +200,7 @@ enum NativeMediaPresenter {
     /// Another site's video or audio, as the one staged file, named for its served type (or its
     /// url's extension when the type says nothing); a playlist or markup is refused.
     static func download(_ url: URL, client: RemoteMediaClient, failure: Resolution) async -> Resolution {
-        try? FileManager.default.removeItem(at: stagingDirectory)
+        pruneStaging()
         let file = stagingDirectory.appendingPathComponent(UUID().uuidString, isDirectory: false)
         let mimeType: String?
         do {
@@ -218,7 +237,7 @@ enum NativeMediaPresenter {
     static func stage(_ data: Data, fileExtension: String) -> URL? {
         guard !fileExtension.isEmpty else { return nil }
         let directory = stagingDirectory
-        try? FileManager.default.removeItem(at: directory)
+        pruneStaging()
         let file = directory.appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -244,13 +263,21 @@ enum NativeMediaPresenter {
 }
 
 /// QuickLook over one file; it is its own data source (QuickLook holds that weakly).
-private final class NativeMediaPreviewController: QLPreviewController, QLPreviewControllerDataSource {
+final class NativeMediaPreviewController: QLPreviewController, QLPreviewControllerDataSource {
     private let url: URL
 
     init(url: URL) {
         self.url = url
         super.init(nibName: nil, bundle: nil)
         dataSource = self
+        NativeMediaPresenter.openPreviewFiles.insert(url)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isBeingDismissed || presentingViewController == nil {
+            NativeMediaPresenter.openPreviewFiles.remove(url)
+        }
     }
 
     required init?(coder: NSCoder) { nil }

@@ -452,4 +452,19 @@ final class NativeMediaPlaybackTests: NativeEditingTestCase {
         XCTAssertEqual((player.player?.currentItem?.asset as? AVURLAsset)?.url, file)
         window.rootViewController?.dismiss(animated: false)
     }
+
+    /// Two previews close together: staging the second keeps the file the first still shows.
+    func testStagingAnotherPreviewKeepsAnOpenPreviewsFile() throws {
+        NativeMediaPresenter.endSession()
+        defer { NativeMediaPresenter.endSession() }
+        let first = try XCTUnwrap(NativeMediaPresenter.stage(Data([1, 2, 3]), fileExtension: "png"))
+        let preview = NativeMediaPreviewController(url: first)
+        let second = try XCTUnwrap(NativeMediaPresenter.stage(Data([4, 5, 6]), fileExtension: "png"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: first.path), "the open preview's file stays")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
+        NativeMediaPresenter.openPreviewFiles.remove(first)
+        _ = try XCTUnwrap(NativeMediaPresenter.stage(Data([7]), fileExtension: "png"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.path), "a closed preview's file is pruned")
+        withExtendedLifetime(preview) {}
+    }
 }
