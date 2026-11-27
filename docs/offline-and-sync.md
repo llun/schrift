@@ -1520,8 +1520,10 @@ to what the Home list passes (still a `Document` / id).
   is invoked in the root flow). Full document bodies must not survive sign-out on
   disk. Covered by a test (sign out → `content(for:)` returns nil).
   `AttachmentCacheStore().removeAll()` sits on the same line for the same reason
-  (see below). Both are called from `RootView`'s `onSignOut` closure, **not**
-  from `SessionStore.signOut()` — a new sign-out path must call them explicitly.
+  (see below). The content cache is cleared from `RootView`'s `onSignOut` closure,
+  **not** from `SessionStore.signOut()` — a new sign-out path must call it
+  explicitly; the attachment cache is cleared there and also by `SessionStore`
+  itself (`clearAttachmentCache`, on sign-in, cookie handover and sign-out).
 
 ### 7. Attachment bytes: `AttachmentCacheStore` (2026-08-07)
 
