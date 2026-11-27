@@ -330,7 +330,8 @@ final class SessionStore {
     /// replaced — a slow request in flight across a silent re-login, say — and reading it as
     /// the new session failing would put up the very sheet the silent attempt just avoided.
     func noteSessionExpired(requestStartedAt: ContinuousClock.Instant? = nil) {
-        guard isAuthenticated, !needsReauthentication else { return }
+        // A sign-out under way ends the session anyway; no re-login may start under it.
+        guard isAuthenticated, !needsReauthentication, !isSigningOut else { return }
         if let requestStartedAt, let lastSignIn, requestStartedAt < lastSignIn { return }
         let silentJustSucceeded = lastSilentSignIn.map { now() - $0 < silentReauthenticationCooldown }
         reauthenticationAttempt += 1
@@ -349,7 +350,7 @@ final class SessionStore {
     /// attempt is actually running, so a late timeout can neither re-open a sheet the user just
     /// answered nor raise one after a successful silent sign-in.
     func escalateReauthentication(attempt: Int) {
-        guard isSilentlyReauthenticating, attempt == reauthenticationAttempt else { return }
+        guard isSilentlyReauthenticating, attempt == reauthenticationAttempt, !isSigningOut else { return }
         silentReauthenticationExhausted = true
         isReauthenticationInteractive = true
     }

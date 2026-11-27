@@ -150,27 +150,27 @@ final class ReauthenticationViewModelTests: XCTestCase {
         XCTAssertNil(SignedInUserStore(userDefaults: userDefaults).userID)
     }
 
-    /// A sign-out while a silent re-login's `/users/me/` is on the wire wins: the stale login
-    /// must not sign the session back in after it.
+    /// A sign-out while a silent re-login's `/users/me/` is on the wire wins, whether that
+    /// confirmation then succeeds or fails: no sign-in after it, and no error either.
     func testASignOutDuringTheConfirmationIsNotUndone() async throws {
-        let requestStarted = expectation(description: "confirmation on the wire")
-        let release = DispatchSemaphore(value: 0)
-        let viewModel = try makeViewModel { _ in
-            requestStarted.fulfill()
-            release.wait()
-            return .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
+        for status in [200, 500] {
+            let gate = MockURLProtocol.ResponseGate()
+            let viewModel = try makeViewModel { _ in
+                .init(statusCode: status, headers: [:], body: Data("{}".utf8), error: nil, releasedBy: gate)
+            }
+
+            let login = Task { await viewModel.handleLoginComplete() }
+            await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+            try viewModel.sessionStore.signOut()
+            gate.open()
+            let signedIn = await login.value
+
+            XCTAssertFalse(signedIn, "\(status)")
+            XCTAssertNil(viewModel.errorKey, "\(status): nothing failed; the login was superseded")
+            XCTAssertFalse(viewModel.sessionStore.isAuthenticated, "\(status)")
+            XCTAssertFalse(viewModel.isConfirming, "\(status)")
+            MockURLProtocol.reset()
         }
-
-        let login = Task { await viewModel.handleLoginComplete() }
-        await fulfillment(of: [requestStarted], timeout: 10)
-        try viewModel.sessionStore.signOut()
-        release.signal()
-        let signedIn = await login.value
-
-        XCTAssertFalse(signedIn)
-        XCTAssertNil(viewModel.errorKey, "nothing failed; the login was superseded")
-        XCTAssertFalse(viewModel.sessionStore.isAuthenticated)
-        XCTAssertFalse(viewModel.isConfirming)
     }
 
     /// RootView's sign-out drains saves before it calls `signOut`; a re-login completing in
@@ -189,7 +189,6 @@ final class ReauthenticationViewModelTests: XCTestCase {
         XCTAssertFalse(signedIn)
         XCTAssertNil(viewModel.errorKey)
         XCTAssertEqual(viewModel.sessionStore.signInGeneration, generation, "RootView's sign-out guard still holds")
-        XCTAssertTrue(viewModel.sessionStore.needsReauthentication, "nothing was signed back in")
         XCTAssertNil(signedInUser.userID, "the written cookies may be another account's")
     }
 

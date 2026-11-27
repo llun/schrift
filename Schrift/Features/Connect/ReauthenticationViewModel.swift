@@ -59,19 +59,26 @@ final class ReauthenticationViewModel {
         defer { isConfirming = false }
 
         let client = apiClientFactory(serverURL)
-        do {
-            let userID = try await client.confirmSession()
+        // Checked after the confirmation, failed or not: a sign-out or another login meanwhile
+        // makes this login stale, and a stale one shows no error.
+        func isStale() -> Bool {
             guard sessionStore.isAuthenticated, !sessionStore.isSigningOut,
                 sessionStore.signInGeneration == generation
             else {
                 // Signed out meanwhile: the confirmation may have set cookies after the delete.
                 // (Signed in, a newer login owns the identity; leave it be.)
                 if !sessionStore.isAuthenticated { sessionStore.discardStaleLoginCookies() }
-                return false
+                return true
             }
+            return false
+        }
+        do {
+            let userID = try await client.confirmSession()
+            if isStale() { return false }
             try sessionStore.signIn(serverURL: serverURL, userID: userID)
             return true
         } catch {
+            if isStale() { return false }
             errorKey = .reauth_error_sign_in_failed
             return false
         }

@@ -312,6 +312,23 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertEqual(cookies.cookies(for: serverURL) ?? [], [])
     }
 
+    /// No re-login starts or escalates to the sheet under a sign-out that is draining saves.
+    func testNoReauthenticationStartsOrEscalatesWhileSigningOut() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: serverURL)
+        store.beginSignOut()
+        store.noteSessionExpired()
+        XCTAssertFalse(store.needsReauthentication, "a 401 during the drain starts nothing")
+
+        store.endSignOut()
+        store.noteSessionExpired()
+        XCTAssertTrue(store.isSilentlyReauthenticating)
+        store.beginSignOut()
+        store.escalateReauthentication(attempt: store.reauthenticationAttempt)
+        XCTAssertFalse(store.isReauthenticationInteractive, "no sheet over a sign-out")
+    }
+
     /// The default wiring: sign-out deletes a media preview's staged copy.
     func testSignOutDeletesStagedMediaPreviews() throws {
         let store = SessionStore(
