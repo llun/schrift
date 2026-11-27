@@ -269,14 +269,21 @@ final class DocumentCollaborationManagerLifecycleTests: DocumentCollaborationMan
     }
 
     /// With no account known, a reconnect redials nothing: the cookies could be anyone's.
+    /// A reconnect after the account became unknown (a re-login's handover) closes the
+    /// previous account's socket and replica instead of redialing them.
     func testReconnectWithNoKnownAccountClosesTheSession() async throws {
         let spy = ManagerSocketFactorySpy()
-        let manager = makeManager(spy: spy, account: { nil })
-        _ = manager.acquireSession(for: docID)
+        let box = AccountBox(value: UUID())
+        let manager = makeManager(spy: spy, account: { box.value })
+        let hold = try XCTUnwrap(manager.acquireSession(for: docID))
+        await waitUntil { spy.sockets.count == 1 }
 
+        box.value = nil
         manager.reconnect()
 
         XCTAssertEqual(manager.activeDocumentCount, 0)
+        XCTAssertFalse(manager.holds(hold))
+        await waitUntil { spy.sockets.first?.cancelCloseCode == .goingAway }
         await waitAndConfirmNever { spy.sockets.count > 1 }
     }
 

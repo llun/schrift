@@ -737,9 +737,10 @@ final class DocumentCollaborationManager {
         let account = accountProvider()
         var releasedHeldReplica = false
         for (id, entry) in entries where !entry.holders.isEmpty {
-            // A socket opened under another account's cookies (or before any was known) is
-            // never rebuilt: it goes, and the screen holding it re-asks once it sees
-            // `sessionsRevision` move.
+            // An entry is rebuilt only for the known account it was opened for. Otherwise it
+            // goes — socket and replica — so its local state never reaches another account's
+            // socket; the screen holding it re-asks (`sessionsRevision`) and starts a fresh
+            // replica from the server under the cookies now live.
             guard let account, entry.account == account else {
                 entry.lingerTask?.cancel()
                 entry.session?.stop()
