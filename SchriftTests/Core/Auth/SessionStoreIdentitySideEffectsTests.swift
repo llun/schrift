@@ -261,6 +261,26 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertEqual(playbackEnds, 3, "sign-out stops the player")
     }
 
+    /// The login web view's page cache goes with the account; a mere expiry keeps it.
+    func testAccountTransitionsClearTheWebLoginCache() throws {
+        var webCacheClears = 0
+        let store = SessionStore(
+            userDefaults: userDefaults,
+            keychain: FakeKeychainStore(),
+            cookieStorage: FakeCookieStorage(),
+            clearWebCache: { webCacheClears += 1 })
+
+        try store.signIn(serverURL: serverURL)
+        XCTAssertEqual(webCacheClears, 1)
+        store.noteSessionExpired()
+        store.cancelReauthentication()
+        XCTAssertEqual(webCacheClears, 1, "mere expiry must keep caches")
+        store.noteSessionCookiesReplaced()
+        XCTAssertEqual(webCacheClears, 2)
+        try store.signOut()
+        XCTAssertEqual(webCacheClears, 3)
+    }
+
     /// The default wiring: sign-out deletes a media preview's staged copy.
     func testSignOutDeletesStagedMediaPreviews() throws {
         let store = SessionStore(
