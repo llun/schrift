@@ -46,6 +46,8 @@ struct SignedInUserStore {
     /// only if it has not moved, so account A's late response never names B.
     var epoch: Int { userDefaults.integer(forKey: Self.epochKey) }
 
+    var session: SignedInSession { SignedInSession(userID: userID, epoch: epoch) }
+
     /// Write through from any successful `/users/me/`. Idempotent, and a nil id (the field is
     /// Optional on the wire) is ignored rather than clearing a good value — a server that omits
     /// it on one response has told us nothing about the account.
@@ -66,5 +68,31 @@ struct SignedInUserStore {
     func clear() {
         userDefaults.removeObject(forKey: Self.key)
         userDefaults.set(epoch &+ 1, forKey: Self.epochKey)
+    }
+}
+
+/// Who was signed in when some work started, so that work can tell, when it settles, whether
+/// it still belongs to the session in front of it.
+struct SignedInSession: Equatable, Sendable {
+    let userID: UUID?
+    let epoch: Int
+
+    /// The account this session's work belongs to, judged from `now`: the one it named, or the
+    /// one the same sign-in has since been named as (an unchanged epoch means the same cookies).
+    func owner(now: SignedInSession) -> UUID? {
+        userID ?? (now.epoch == epoch ? now.userID : nil)
+    }
+
+    /// Whether `now` names an account this session's work cannot be shown as: a different one,
+    /// or any one at all when this session never knew whose it was and the sign-in has changed.
+    /// Unknown now is not another account — the work waits, unsent, until it is named.
+    func isAnotherAccount(than now: SignedInSession) -> Bool {
+        guard let current = now.userID else { return false }
+        return owner(now: now) != current
+    }
+
+    /// Whether `now` is still this sign-in, under a known account.
+    func isStill(_ now: SignedInSession) -> Bool {
+        now.epoch == epoch && now.userID != nil && (userID == nil || userID == now.userID)
     }
 }

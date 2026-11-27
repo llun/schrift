@@ -210,6 +210,64 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
         XCTAssertTrue(bodies.sawContentPatch)
     }
 
+    /// The pass authorises on a live `/users/me/` but reads the draft through the stored
+    /// identity. Unknown (an unconfirmed handover), the draft reads as absent — and the commit
+    /// would remove the record and bytes that are the only way to resolve its placeholder.
+    func testAPassWithNoKnownAccountRemovesNoPhoto() async {
+        let log = RequestRecorder()
+        stubPipeline(log: log)
+        let defaults = makeDefaults()
+        let placeholder = seedPhoto(defaults, uploadedURLString: "/media/key.jpg")
+        PendingDraftStore(userDefaults: defaults).save(
+            PendingDraft(documentID: documentID, title: "Doc", markdown: "![](\(placeholder))", updatedAt: Date()))
+        SignedInUserStore(userDefaults: defaults).clear()
+        let env = makeEnvironment(sharing: defaults)
+
+        await env.coordinator.syncPendingDrafts()
+
+        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
+        XCTAssertNotNil(env.attachments.attachment(for: localID))
+        XCTAssertNotNil(env.attachments.data(for: localID))
+        SignedInUserStore(userDefaults: defaults).remember(owner)
+        XCTAssertEqual(env.drafts.draft(for: documentID)?.markdown, "![](\(placeholder))")
+    }
+
+    /// Another account signing in during the upload: the commit waits for the owner's next pass,
+    /// which finds the URL checkpointed and uploads nothing twice.
+    func testAnAccountSwitchDuringTheUploadCommitsNothing() async {
+        let log = RequestRecorder()
+        stubPipeline(log: log)
+        let gate = MockURLProtocol.ResponseGate()
+        let outer = MockURLProtocol.stubHandler!
+        MockURLProtocol.stubHandler = { request in
+            let stub = outer(request)
+            guard request.url?.absoluteString.contains("attachment-upload") == true else { return stub }
+            return .init(
+                statusCode: stub.statusCode, headers: stub.headers, body: stub.body, error: stub.error,
+                releasedBy: gate)
+        }
+        let defaults = makeDefaults()
+        let placeholder = seedPhoto(defaults)
+        PendingDraftStore(userDefaults: defaults).save(
+            PendingDraft(documentID: documentID, title: "Doc", markdown: "![](\(placeholder))", updatedAt: Date()))
+        let env = makeEnvironment(sharing: defaults)
+
+        let coordinator = env.coordinator
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.clear()
+        signedIn.remember(otherUser)
+        gate.open()
+        await pass.value
+
+        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
+        XCTAssertNotNil(env.attachments.attachment(for: localID)?.uploadedURLString, "checkpointed, kept")
+        signedIn.clear()
+        signedIn.remember(owner)
+        XCTAssertEqual(env.drafts.draft(for: documentID)?.markdown, "![](\(placeholder))")
+    }
+
     func testACheckpointedRecordIsNotUploadedTwice() async {
         let log = RequestRecorder()
         stubPipeline(log: log)

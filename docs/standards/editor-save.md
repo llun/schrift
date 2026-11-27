@@ -822,7 +822,10 @@ markdown write endpoint**. Understand this before touching the save path:
   per-document latest-wins coalescing; background-task assertion; draft replay). A draft
   belongs to the account that saved it: the store's plain reads, and so `storedDraft`, the
   titles and every replay, see only the signed-in account's, and none while it is unknown;
-  protections read `allDraftsOfEveryAccount()` (see
+  protections read `allDraftsOfEveryAccount()`. The editor passes the sign-in it loaded under
+  (`loadedSession`) to every enqueue, so its edits are filed under that account and sent only
+  while it is signed in; `EditorScreen` replaces the view model when another account signs in
+  under a mounted screen (see
   [`docs/offline-and-sync.md`](../offline-and-sync.md#drafts-belong-to-an-account)).
   View models **enqueue** on the coordinator — they never call the client to
   persist edits themselves.

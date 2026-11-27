@@ -37,6 +37,8 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
         let suiteName = "DocumentSaveCoordinatorMoveTests.\(UUID().uuidString)"
         suiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
+        // The replay passes read drafts through the signed-in account, as in the app.
+        SignedInUserStore(userDefaults: defaults).remember(ownerID)
         let cacheDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("DocumentSaveCoordinatorMoveTests/\(UUID().uuidString)", isDirectory: true)
         cacheDirectories.append(cacheDirectory)

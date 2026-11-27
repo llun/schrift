@@ -726,6 +726,52 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
 
     /// The undo is one request wide and can lose — but it must never lose the user's *work*.
     /// The document simply reads as deleted by someone else at the next fetch.
+    /// The pass authorises on a live `/users/me/` but reads drafts through the stored identity;
+    /// while that is unknown (an unconfirmed handover) it must change nothing.
+    func testAPassWithNoKnownAccountSendsAndRemovesNothing() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.drafts.save(draft(serverID))
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log)
+        SignedInUserStore(userDefaults: env.defaults).clear()
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(log.count(ofMethod: "DELETE"), 0)
+        XCTAssertTrue(env.coordinator.isPendingDelete(documentID: serverID), "the tombstone waits")
+        SignedInUserStore(userDefaults: env.defaults).remember(user)
+        XCTAssertEqual(env.drafts.draft(for: serverID)?.markdown, "the user's only copy")
+    }
+
+    /// Another account signing in while the DELETE is on the wire: the completion would remove
+    /// *that* account's draft and cached body. It waits for the owner's next pass instead.
+    func testAnAccountSwitchDuringTheRequestCompletesNothing() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.drafts.save(draft(serverID))
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        let deleteGate = MockURLProtocol.ResponseGate()
+        stubDeletePipeline(log: log, releasedBy: deleteGate)
+
+        let coordinator = env.coordinator
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
+        let signedIn = SignedInUserStore(userDefaults: env.defaults)
+        signedIn.clear()
+        signedIn.remember(otherUser)
+        env.drafts.save(
+            PendingDraft(documentID: serverID, title: "Doc", markdown: "the other account's", updatedAt: Date()))
+        deleteGate.open()
+        await pass.value
+
+        XCTAssertTrue(env.coordinator.isPendingDelete(documentID: serverID), "completed by the owner's pass")
+        XCTAssertEqual(env.drafts.draft(for: serverID)?.markdown, "the other account's")
+        signedIn.clear()
+        signedIn.remember(user)
+        XCTAssertEqual(env.drafts.draft(for: serverID)?.markdown, "the user's only copy")
+    }
+
     func testAnUndoDuringTheRequestKeepsEveryLocalTrace() async {
         let log = RequestRecorder()
         let env = makeEnvironment()

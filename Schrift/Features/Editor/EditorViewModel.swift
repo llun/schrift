@@ -198,6 +198,11 @@ final class EditorViewModel {
     let client: DocsAPIClient
     let documentID: UUID
     let saveCoordinator: DocumentSaveCoordinator
+    /// The sign-in this screen loaded under. Its edits are filed under that account and sent
+    /// only while it is the one signed in, and its fetches reach the content cache only while the
+    /// same sign-in is in front of it — a screen outliving a re-login must neither show nor send
+    /// one account's work as another's.
+    @ObservationIgnored let loadedSession: SignedInSession
     /// `siteOrigin(for: serverURL)`, which is what turns a standalone
     /// `[name](url)` line into a `.attachment` block rather than a paragraph.
     ///
@@ -349,6 +354,7 @@ final class EditorViewModel {
         self.documentID = documentID
         self.title = title
         self.saveCoordinator = saveCoordinator
+        self.loadedSession = saveCoordinator.signedInSession
         self.entryIntent = entryIntent
         self.serverOrigin = serverOrigin
         self.signedInUser = signedInUser
@@ -1374,7 +1380,8 @@ final class EditorViewModel {
             } else {
                 saveCoordinator.enqueue(
                     documentID: documentID, title: pushTitle, markdown: draft.markdown,
-                    baseline: adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: pushTitle))
+                    baseline: adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: pushTitle),
+                    editedIn: loadedSession)
             }
         case .conflict:
             // The server moved on under a baseline-carrying draft. Record it so the
@@ -1463,7 +1470,7 @@ final class EditorViewModel {
                 markdown: markdown,
                 syncedAt: Date(),
                 serverUpdatedAt: formatted.updatedAt
-            ))
+            ), during: loadedSession)
     }
 
     /// Clean content on screen — nothing local to protect, so a changed server
@@ -1509,7 +1516,7 @@ final class EditorViewModel {
                 markdown: serverCopy,
                 syncedAt: now,
                 serverUpdatedAt: formatted.updatedAt
-            ))
+            ), during: loadedSession)
         if serverChanged(fetched: fetched) {
             if isEditing {
                 // Stash behind the "Updated" banner without installing. The
@@ -1719,7 +1726,7 @@ final class EditorViewModel {
                 markdown: markdown,
                 syncedAt: now,
                 serverUpdatedAt: formatted.updatedAt
-            ))
+            ), during: loadedSession)
     }
 
     /// Installs content as the on-screen document. Every path that puts content on
@@ -4153,7 +4160,7 @@ final class EditorViewModel {
                 markdown: serverCopy,
                 syncedAt: now,
                 serverUpdatedAt: formatted.updatedAt
-            ))
+            ), during: loadedSession)
         hasLocalCopy = true
         lastSyncedAt = now
         markAvailableAgain()
@@ -4204,7 +4211,9 @@ final class EditorViewModel {
         savedMarkdown = markdown
         savedTitle = title
         displayedSourceMarkdown = markdown
-        saveCoordinator.enqueue(documentID: documentID, title: title, markdown: markdown, baseline: serverBaseline)
+        saveCoordinator.enqueue(
+            documentID: documentID, title: title, markdown: markdown, baseline: serverBaseline,
+            editedIn: loadedSession)
     }
 
     /// Manual save: flushes dirty edits, and retries the last content after a
@@ -4236,7 +4245,7 @@ final class EditorViewModel {
             }
             saveCoordinator.enqueue(
                 documentID: documentID, title: savedTitle, markdown: savedMarkdown,
-                baseline: saveCoordinator.storedDraft(documentID: documentID)?.baseline)
+                baseline: saveCoordinator.storedDraft(documentID: documentID)?.baseline, editedIn: loadedSession)
         case .idle, .saving, .saved:
             break
         }
@@ -4828,7 +4837,7 @@ final class EditorViewModel {
         guard !hasUnmodelableLocalEdit else { return }
         saveCoordinator.enqueueLiveSnapshot(
             documentID: documentID, snapshot: snapshot, projectedMarkdown: projectedMarkdown,
-            title: title, baseline: serverBaseline)
+            title: title, baseline: serverBaseline, editedIn: loadedSession)
         savedMarkdown = projectedMarkdown
         displayedSourceMarkdown = projectedMarkdown
         lastSyncedAt = Date()

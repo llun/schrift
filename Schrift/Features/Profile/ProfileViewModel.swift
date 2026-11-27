@@ -12,6 +12,9 @@ final class ProfileViewModel {
     private let cachedUser: CurrentUserCacheStore
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let onSignedInUserChanged: (@MainActor () -> Void)?
+    /// A `/users/me/` inside sign-in `epoch` named its account: the coordinator hands that
+    /// account what the sign-in saved while unnamed.
+    @ObservationIgnored private let onSessionNamed: (@MainActor (_ epoch: Int, _ userID: UUID) -> Void)?
     /// Keyed on the session generation, so a re-login (which bumps it) always reloads.
     @ObservationIgnored private var freshness = LoadFreshness<Int>()
     /// Set by `load()` when the account fetch answered with account detail.
@@ -22,9 +25,11 @@ final class ProfileViewModel {
         signedInUser: SignedInUserStore = SignedInUserStore(),
         cachedUser: CurrentUserCacheStore = CurrentUserCacheStore(),
         now: @escaping () -> Date = { Date() },
-        onSignedInUserChanged: (@MainActor () -> Void)? = nil
+        onSignedInUserChanged: (@MainActor () -> Void)? = nil,
+        onSessionNamed: (@MainActor (_ epoch: Int, _ userID: UUID) -> Void)? = nil
     ) {
         self.onSignedInUserChanged = onSignedInUserChanged
+        self.onSessionNamed = onSessionNamed
         self.now = now
         self.client = client
         self.signedInUser = signedInUser
@@ -94,6 +99,7 @@ final class ProfileViewModel {
         // there is one cancellation window here rather than two.
         let previousUserID = signedInUser.userID
         signedInUser.remember(freshUser?.id)
+        if let id = freshUser?.id { onSessionNamed?(epoch, id) }
         // Screens waiting on the account (an open waiting-edits page) observe the pin revision.
         if signedInUser.userID != previousUserID { onSignedInUserChanged?() }
         // The version row hides itself when nil, so there is nothing to preserve and a stale

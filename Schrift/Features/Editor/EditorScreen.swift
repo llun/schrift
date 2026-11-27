@@ -21,6 +21,9 @@ struct EditorScreen: View {
     var signInGeneration: Int = 0
 
     @State private var viewModel: EditorViewModel
+    /// Builds a fresh model for the same document, for when another account signs in under a
+    /// screen that stays mounted (the re-login sheet): the old one's content is that account's.
+    private let makeViewModel: @MainActor () -> EditorViewModel
     /// Retained past `init` because the Pages drawer reads the same store the
     /// view model writes; a test that isolates one must isolate both.
     private let childrenCache: DocumentChildrenCacheStore
@@ -48,8 +51,8 @@ struct EditorScreen: View {
         onCreatedDocument: ((Document) -> Void)? = nil,
         signInGeneration: Int = 0
     ) {
-        _viewModel = State(
-            initialValue: EditorViewModel(
+        let makeViewModel = { @MainActor (entryIntent: NewDocumentEntryIntent?) in
+            EditorViewModel(
                 client: client,
                 documentID: documentID,
                 title: title,
@@ -60,7 +63,10 @@ struct EditorScreen: View {
                 childrenCache: childrenCache,
                 diagnostics: diagnostics,
                 availability: availability
-            ))
+            )
+        }
+        _viewModel = State(initialValue: makeViewModel(entryIntent))
+        self.makeViewModel = { makeViewModel(nil) }
         self.childrenCache = childrenCache
         self.reach = reach
         self.serverHost = serverHost
@@ -91,5 +97,15 @@ struct EditorScreen: View {
             onCreatedDocument: onCreatedDocument,
             signInGeneration: signInGeneration
         )
+        // A new model is a new editor: the old one disappears, flushing its edits under the
+        // account it loaded for — kept for that account, never sent under this one.
+        .id(ObjectIdentifier(viewModel))
+        .onChange(of: signInGeneration) { _, _ in replaceIfAnotherAccount() }
+        .onChange(of: viewModel.signedInUserID) { _, _ in replaceIfAnotherAccount() }
+    }
+
+    private func replaceIfAnotherAccount() {
+        guard viewModel.loadedSession.isAnotherAccount(than: viewModel.saveCoordinator.signedInSession) else { return }
+        viewModel = makeViewModel()
     }
 }

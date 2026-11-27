@@ -180,6 +180,41 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertNotNil(signedIn.userID)
     }
 
+    /// Edits saved while a re-login's handover was unconfirmed belong to the account the
+    /// confirmation names: nothing changed hands between the two.
+    func testConfirmingAHandoverAdoptsTheDraftsSavedWhileItWasUnconfirmed() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        let account = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        try store.signIn(serverURL: serverURL, userID: account)
+        store.noteSessionCookiesReplaced()
+        let drafts = PendingDraftStore(userDefaults: userDefaults)
+        let documentID = UUID()
+        drafts.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Meanwhile", updatedAt: Date()))
+
+        try store.signIn(serverURL: serverURL, userID: account)
+
+        XCTAssertEqual(drafts.draft(for: documentID)?.markdown, "# Meanwhile")
+    }
+
+    /// A stale login's cookies arriving in between mean the confirmation may name another
+    /// account than the one whose session the drafts were written in: they stay set aside.
+    func testAHandoverThatChangedHandsAgainAdoptsNothing() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        let account = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        try store.signIn(serverURL: serverURL, userID: account)
+        store.noteSessionCookiesReplaced()
+        let drafts = PendingDraftStore(userDefaults: userDefaults)
+        let documentID = UUID()
+        drafts.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Meanwhile", updatedAt: Date()))
+        store.discardStaleLoginCookies()
+
+        try store.signIn(serverURL: serverURL, userID: account)
+
+        XCTAssertNil(drafts.draft(for: documentID))
+    }
+
     func testSigningOutForgetsTheAccountId() throws {
         let signedIn = SignedInUserStore(userDefaults: userDefaults)
         let store = SessionStore(

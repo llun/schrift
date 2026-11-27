@@ -94,6 +94,8 @@ let pendingDraftClockTolerance: TimeInterval = 120
 final class PendingDraftStore {
     private static let draftsKey = "dev.llun.Schrift.pendingDrafts"
     private static let ownersAssignedKey = "dev.llun.Schrift.pendingDrafts.ownersAssigned"
+    private static let earlierBlobCountKey = "dev.llun.Schrift.pendingDrafts.ownersAssigned.unreadableCount"
+    private static let earlierBlobOwnerKey = "dev.llun.Schrift.pendingDrafts.ownersAssigned.unreadableOwner"
     private static let quarantineKey = "dev.llun.Schrift.pendingDrafts.unreadable"
     private static let additionalQuarantineKey = "dev.llun.Schrift.pendingDrafts.unreadable.additional"
     /// Shared by every instance and every `UserDefaults`: it memoizes the decode of whatever
@@ -119,32 +121,97 @@ final class PendingDraftStore {
         self.decoder = decoder
     }
 
-    /// Stamps the draft with the signed-in account (a native draft keeps its replica's) and
-    /// replaces only that account's draft of the document. Saved while no account is known, it
-    /// is set aside in a slot of its own for this sign-in, so it replaces no one's work either.
-    func save(_ draft: PendingDraft) {
+    /// Stamps the draft with the signed-in account (a native draft keeps its replica's, and a
+    /// draft already stamped keeps its stamp) and replaces only that account's draft of the
+    /// document. With no account to name it is set aside in a slot of its own for the sign-in
+    /// it was written in (`epoch`, the current one by default), so it replaces no one's work
+    /// either; `adoptDraftsSavedWhileUnknown` hands that slot over once the same sign-in is
+    /// named.
+    func save(_ draft: PendingDraft, setAsideIn epoch: Int? = nil) {
         quarantineUnreadableDataIfNeeded()
         var drafts = loadAll()
-        let stamped = draft.owned(by: draft.owner ?? signedInUser.userID)
+        let stamped = draft.owned(by: draft.owner ?? (epoch == nil ? signedInUser.userID : nil))
         if let owner = stamped.owner {
             drafts = drafts.filter { $0.value.documentID != draft.documentID || $0.value.owner != owner }
-            drafts["\(owner.uuidString)|\(draft.documentID.uuidString)"] = stamped
+            drafts[Self.key(owner: owner, documentID: draft.documentID)] = stamped
         } else {
-            drafts["unknown-\(signedInUser.epoch)|\(draft.documentID.uuidString)"] = stamped
+            drafts[Self.setAsideKey(epoch: epoch ?? signedInUser.epoch, documentID: draft.documentID)] = stamped
         }
         persist(drafts)
     }
 
+    /// The sign-in the plain reads are scoped to.
+    var session: SignedInSession { signedInUser.session }
+
     func draft(for documentID: UUID) -> PendingDraft? {
-        allDrafts().last { $0.documentID == documentID }
+        draft(for: documentID, owner: signedInUser.userID)
+    }
+
+    /// `owner`'s draft, whoever is signed in: for work that started under that account and
+    /// settles after a switch (a save landing, a replay).
+    func draft(for documentID: UUID, owner: UUID?) -> PendingDraft? {
+        guard let owner else { return nil }
+        return allDraftsOfEveryAccount().last { $0.documentID == documentID && $0.owner == owner }
+    }
+
+    /// The draft written in `session`: its account's, or — for a sign-in never named — the slot
+    /// set aside for it.
+    func draft(for documentID: UUID, in session: SignedInSession) -> PendingDraft? {
+        if let owner = session.userID { return draft(for: documentID, owner: owner) }
+        return loadAll()[Self.setAsideKey(epoch: session.epoch, documentID: documentID)]
     }
 
     func remove(documentID: UUID) {
-        guard let owner = signedInUser.userID else { return }
+        remove(documentID: documentID, owner: signedInUser.userID)
+    }
+
+    func remove(documentID: UUID, in session: SignedInSession) {
+        if let owner = session.userID { return remove(documentID: documentID, owner: owner) }
+        quarantineUnreadableDataIfNeeded()
+        var drafts = loadAll()
+        drafts[Self.setAsideKey(epoch: session.epoch, documentID: documentID)] = nil
+        persist(drafts)
+    }
+
+    func remove(documentID: UUID, owner: UUID?) {
+        guard let owner else { return }
         quarantineUnreadableDataIfNeeded()
         var drafts = loadAll()
         drafts = drafts.filter { $0.value.documentID != documentID || $0.value.owner != owner }
         persist(drafts)
+    }
+
+    /// The sign-in `epoch` has been named as `owner` — by a `/users/me/` that ran inside it, so
+    /// with the same cookies — and the drafts set aside while it was unknown are that account's.
+    /// One whose document already has a draft of `owner`'s stays set aside: replacing either
+    /// would lose work. Returns whether anything moved.
+    @discardableResult
+    func adoptDraftsSavedWhileUnknown(epoch: Int, owner: UUID) -> Bool {
+        let prefix = "unknown-\(epoch)|"
+        var drafts = loadAll()
+        let slots = drafts.filter { $0.key.hasPrefix(prefix) }
+        var moved = false
+        for (key, draft) in slots where draft.owner == nil {
+            guard !drafts.values.contains(where: { $0.documentID == draft.documentID && $0.owner == owner }) else {
+                continue
+            }
+            drafts[key] = nil
+            drafts[Self.key(owner: owner, documentID: draft.documentID)] = draft.owned(by: owner)
+            moved = true
+        }
+        if moved {
+            quarantineUnreadableDataIfNeeded()
+            persist(drafts)
+        }
+        return moved
+    }
+
+    private static func setAsideKey(epoch: Int, documentID: UUID) -> String {
+        "unknown-\(epoch)|\(documentID.uuidString)"
+    }
+
+    private static func key(owner: UUID, documentID: UUID) -> String {
+        "\(owner.uuidString)|\(documentID.uuidString)"
     }
 
     func allDrafts() -> [PendingDraft] {
@@ -160,19 +227,28 @@ final class PendingDraftStore {
     /// carry no owner, so they go to the account signed in at that moment. With none known (signed
     /// out, or a login handover not yet confirmed — which may be another account's) they are set
     /// aside instead, and the flag keeps a later sign-in from claiming them. Native drafts need
-    /// nothing: their replica names the account. An unreadable store is left for its recovery and
-    /// asked again at the next launch.
+    /// nothing: their replica names the account.
+    ///
+    /// Blobs that do not decode yet (live or quarantined) are earlier-build drafts too, but their
+    /// repair can come at any later launch, under any account. So the account signed in now is
+    /// recorded with how many such blobs there are, and `recoverQuarantinedDrafts` gives exactly
+    /// that account — or nobody — their ownerless drafts.
     func assignOwnersToEarlierDrafts() {
         guard !userDefaults.bool(forKey: Self.ownersAssignedKey) else { return }
-        if let data = userDefaults.data(forKey: Self.draftsKey) {
-            guard var drafts = decoded(data) else { return }
-            if let owner = signedInUser.userID {
-                for (key, draft) in drafts where draft.owner == nil {
-                    drafts[key] = nil
-                    drafts["\(owner.uuidString)|\(draft.documentID.uuidString)"] = draft.owned(by: owner)
-                }
-                persist(drafts)
+        let owner = signedInUser.userID
+        if let data = userDefaults.data(forKey: Self.draftsKey), var drafts = decoded(data), let owner {
+            for (key, draft) in drafts where draft.owner == nil {
+                drafts[key] = nil
+                drafts[Self.key(owner: owner, documentID: draft.documentID)] = draft.owned(by: owner)
             }
+            persist(drafts)
+        }
+        // A live blob that does not decode is quarantined behind the ones already there, so the
+        // first `count` recovery blobs are exactly these.
+        let unreadable = quarantinedData.count + (liveDataIsUnreadable ? 1 : 0)
+        if unreadable > 0 {
+            userDefaults.set(unreadable, forKey: Self.earlierBlobCountKey)
+            userDefaults.set(owner?.uuidString, forKey: Self.earlierBlobOwnerKey)
         }
         userDefaults.set(true, forKey: Self.ownersAssignedKey)
     }
@@ -234,17 +310,33 @@ final class PendingDraftStore {
         quarantineUnreadableDataIfNeeded()
         guard !quarantinedData.isEmpty else { return true }
         var drafts = loadAll()
-        for data in quarantinedData {
+        let earlierBlobs = userDefaults.integer(forKey: Self.earlierBlobCountKey)
+        let earlierOwner = userDefaults.string(forKey: Self.earlierBlobOwnerKey).flatMap(UUID.init(uuidString:))
+        for (index, data) in quarantinedData.enumerated() {
             guard let recovered = decoded(data) else { return false }
-            for (id, draft) in recovered {
-                if let live = drafts[id], live.updatedAt >= draft.updatedAt { continue }
-                drafts[id] = draft
+            for (key, draft) in Self.ownersFromKeys(recovered) {
+                // An earlier-build draft goes to the account recorded at the first launch of this
+                // build, never to whoever happens to be signed in at the repair.
+                let isEarlier = index < earlierBlobs && draft.owner == nil && !key.contains("|")
+                let draft = isEarlier ? draft.owned(by: earlierOwner) : draft
+                guard let owner = draft.owner else {
+                    if let live = drafts[key], live.updatedAt >= draft.updatedAt { continue }
+                    drafts[key] = draft
+                    continue
+                }
+                // One draft per account and document, whichever key either copy sat under.
+                let existing = drafts.filter { $0.value.documentID == draft.documentID && $0.value.owner == owner }
+                if existing.values.contains(where: { $0.updatedAt >= draft.updatedAt }) { continue }
+                for liveKey in existing.keys { drafts[liveKey] = nil }
+                drafts[Self.key(owner: owner, documentID: draft.documentID)] = draft
             }
         }
         guard let data = try? encoder.encode(drafts) else { return false }
         userDefaults.set(data, forKey: Self.draftsKey)
         userDefaults.removeObject(forKey: Self.quarantineKey)
         userDefaults.removeObject(forKey: Self.additionalQuarantineKey)
+        userDefaults.removeObject(forKey: Self.earlierBlobCountKey)
+        userDefaults.removeObject(forKey: Self.earlierBlobOwnerKey)
         return true
     }
 
@@ -254,7 +346,11 @@ final class PendingDraftStore {
         guard let data = userDefaults.data(forKey: Self.draftsKey), let drafts = decoded(data) else {
             return [:]
         }
-        return drafts.reduce(into: [:]) { result, entry in
+        return Self.ownersFromKeys(drafts)
+    }
+
+    private static func ownersFromKeys(_ drafts: [String: PendingDraft]) -> [String: PendingDraft] {
+        drafts.reduce(into: [:]) { result, entry in
             let (key, draft) = entry
             let parts = key.split(separator: "|")
             let keyOwner = parts.count == 2 ? UUID(uuidString: String(parts[0])) : nil

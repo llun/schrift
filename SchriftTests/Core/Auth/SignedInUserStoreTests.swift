@@ -85,4 +85,34 @@ final class SignedInUserStoreTests: XCTestCase {
 
         XCTAssertNil(SignedInUserStore(userDefaults: defaults).userID)
     }
+
+    // MARK: - SignedInSession
+
+    func testASessionsWorkBelongsToTheAccountItNamedOrTheSameSignInLaterNamed() {
+        let a = UUID()
+        let b = UUID()
+        XCTAssertEqual(SignedInSession(userID: a, epoch: 1).owner(now: SignedInSession(userID: b, epoch: 2)), a)
+        XCTAssertEqual(SignedInSession(userID: nil, epoch: 1).owner(now: SignedInSession(userID: b, epoch: 1)), b)
+        XCTAssertNil(SignedInSession(userID: nil, epoch: 1).owner(now: SignedInSession(userID: b, epoch: 2)))
+    }
+
+    func testAScreenIsReplacedOnlyWhenAnotherAccountIsKnown() {
+        let a = UUID()
+        let loadedForA = SignedInSession(userID: a, epoch: 1)
+        XCTAssertFalse(loadedForA.isAnotherAccount(than: SignedInSession(userID: nil, epoch: 2)), "unknown waits")
+        XCTAssertFalse(loadedForA.isAnotherAccount(than: SignedInSession(userID: a, epoch: 3)), "same account")
+        XCTAssertTrue(loadedForA.isAnotherAccount(than: SignedInSession(userID: UUID(), epoch: 3)))
+        let loadedUnnamed = SignedInSession(userID: nil, epoch: 1)
+        XCTAssertFalse(loadedUnnamed.isAnotherAccount(than: SignedInSession(userID: a, epoch: 1)), "same sign-in")
+        XCTAssertTrue(loadedUnnamed.isAnotherAccount(than: SignedInSession(userID: a, epoch: 2)))
+    }
+
+    func testASessionIsStillCurrentOnlyWithinTheSameSignInAndAccount() {
+        let a = UUID()
+        let session = SignedInSession(userID: a, epoch: 1)
+        XCTAssertTrue(session.isStill(SignedInSession(userID: a, epoch: 1)))
+        XCTAssertFalse(session.isStill(SignedInSession(userID: a, epoch: 2)), "a sign-out wiped it meanwhile")
+        XCTAssertFalse(session.isStill(SignedInSession(userID: UUID(), epoch: 1)))
+        XCTAssertFalse(session.isStill(SignedInSession(userID: nil, epoch: 1)))
+    }
 }

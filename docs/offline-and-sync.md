@@ -734,7 +734,11 @@ Design decisions:
   and writes nothing. Bodies an earlier build kept flat in `ContentCache/` are moved
   into the account signed in at the first launch of this build
   (`moveEarlierBodiesIntoAccountFolder`, from `SchriftApp.init`, once behind a flag),
-  or deleted when none is known — they are re-downloadable.
+  or deleted when none is known — they are re-downloadable. A body fetched or saved under
+  one sign-in is written only while that sign-in is still in front of us
+  (`save(_:during:)`), so a late response reaches neither another account's folder nor a
+  folder a sign-out wiped. A view model that outlives a re-login (Attachments) asks for the
+  reader on every load and drops a read that began under another account.
 - **Not SQLite or Core Data** (considered and rejected). The access pattern is a
   pure key-value store — ≤50 entries, whole-blob reads, single `@MainActor`
   writer — which a directory of files already is, with no schema/migration
@@ -809,7 +813,7 @@ see the caption precedence in §4.)
 - Files keep **default iOS data protection**
   (`NSFileProtectionCompleteUntilFirstUserAuthentication`), matching the
   UserDefaults-backed stores. Never weaken protection.
-- **Excluded from backups**: the `ContentCache` directory is marked
+- **Excluded from backups**: the `ContentCache` root and every account folder are marked
   `isExcludedFromBackup`. Cached content is re-downloadable from the server, so
   full document bodies from a private self-hosted instance should not flow into
   iCloud/device backups; unsaved work is still covered by `PendingDraftStore`,
@@ -1518,30 +1522,66 @@ to what the Home list passes (still a `Document` / id).
 
 Every `PendingDraft` carries `ownerUserID` (Optional on decode, like every field added
 to it). `PendingDraftStore.save` stamps the signed-in account (a native draft keeps its
-replica's `scope.ownerUserID`) and stores it under `<owner>|<document>`, so two
-accounts' drafts of one shared document never replace each other. `draft(for:)`,
-`allDrafts()` and `remove(documentID:)` see only the signed-in account's drafts, and
-nothing while `SignedInUserStore` answers nil — so the editor restore, the local-document
-titles and every replay in `DocumentSaveCoordinator` fail closed exactly as the
-owner-scoped create and delete stores do. A draft saved while no account is known goes to
-a slot of its own for that sign-in (`unknown-<epoch>|<document>`): shown to nobody,
-replayed by nobody, never replacing anyone's work. Nothing ever deletes another account's
+replica's `scope.ownerUserID`, a draft already stamped keeps its stamp) and stores it under
+`<owner>|<document>`, so two accounts' drafts of one shared document never replace each
+other. `draft(for:)`, `allDrafts()` and `remove(documentID:)` see only the signed-in
+account's drafts, and nothing while `SignedInUserStore` answers nil — so the editor restore,
+the local-document titles and every replay in `DocumentSaveCoordinator` fail closed exactly
+as the owner-scoped create and delete stores do. Nothing ever deletes another account's
 draft; it stays on disk, hidden, until that account signs in again.
 
-Protections that must hold whoever is signed in read
-`allDraftsOfEveryAccount()` instead: the conflict-hold rehydration (a fresh sign-in
-builds the coordinator before `/users/me/` answers), backup protection, the replica
-purge/eviction keep-set, ownership repair and `clearNativeOwnership`, native ownership
-derived from a draft, and whether a queued photo is still referenced.
+Protections that must hold whoever is signed in read `allDraftsOfEveryAccount()` instead:
+backup protection, the replica purge/eviction keep-set, ownership repair and
+`clearNativeOwnership`, native ownership derived from a draft, the "belongs to another
+account" refusals, whether a queued photo is still referenced, and whether any account has
+classic edits waiting — native mode does not seed a replica (and so an ownership marker) over
+those; it opens the document read-only.
+
+**Work carries the sign-in it started in** (`SignedInSession`: the account id, or nil, and
+`SignedInUserStore.epoch`). An editor captures it when it loads and passes it to `enqueue`:
+the draft is filed under that account, and sent only while that account is the one signed in
+(an unnamed sign-in sends its own edits while its epoch is unchanged). A save captures it at
+`start`, so `finish` stamps and removes *that* account's draft and writes the content cache
+only while the same sign-in is in front of it (`DocumentContentCacheStore.save(_:during:)`);
+the editor's fetches write the cache under the same rule. `EditorScreen` replaces its view
+model when another known account is signed in under it (`SignedInSession.isAnotherAccount`),
+so a screen left open across the re-login sheet shows nothing of the previous account's, and
+its last flush is kept for that account rather than sent as this one.
+
+**In-memory per-document state is per account too.** The parked saves (`queued`), the
+content on the wire, the last confirmed push and the conflict holds live in
+`AccountScoped` maps read and written for the account drafts are scoped to: after an in-place
+re-login as someone else, the previous account's parked saves and holds are neither shown,
+released nor sent, and they are there again when that account returns. The holds are
+rehydrated at start from every account's drafts, each under its owner, because a fresh sign-in
+builds the coordinator before `/users/me/` answers.
+
+**The replay passes change nothing while the identities disagree.** The create, attachment and
+delete passes authorise on a live `/users/me/` but read drafts through `SignedInUserStore`;
+each requires the two to name the same account before it starts and again after every await
+(a switch can land mid-pass) — otherwise it would read the owner's body as absent and POST an
+empty document, drop a photo record whose placeholder is still in the hidden draft, or
+complete a deletion against another account's draft. `HomeViewModel.syncPendingDrafts`
+refreshes an unknown identity before the replay.
+
+**Drafts saved while the account is unknown** go to a slot of their own for that sign-in
+(`unknown-<epoch>|<document>`): shown to nobody, replayed by nobody, replacing no one's work.
+When the same sign-in is named — an epoch-guarded `/users/me/` (`HomeViewModel`,
+`ProfileViewModel`), or `SessionStore.signIn` confirming a handover nothing has replaced since
+— `adoptDraftsSavedWhileUnknown` re-keys them to that account, unless it already has a draft
+of the document (then the slot stays set aside).
 
 Drafts from before account scoping carry no owner. `SchriftApp.init` calls
 `assignOwnersToEarlierDrafts()` once (a persisted flag) before any sign-in can name an
 account, so a sign-in that follows a sign-out cannot claim the previous account's work:
 they go to the account signed in at that launch, or — with none known, including a
 login handover not yet confirmed, which may be another account's — they keep their bare
-`<document>` key and are set aside. Drafts an older build writes after that also land on
-a bare key and stay set aside. An older build re-encodes drafts without `ownerUserID`,
-so the store reads the owner back from the key prefix.
+`<document>` key and are set aside. Blobs that do not decode yet are recorded with that same
+account (or none), and `recoverQuarantinedDrafts` gives their ownerless drafts to exactly it,
+never to whoever is signed in at the repair, keeping one draft per account and document.
+Drafts an older build writes after the migration also land on a bare key and stay set aside.
+An older build re-encodes drafts without `ownerUserID`, so the store reads the owner back from
+the key prefix.
 
 ### 6. Delete & sign-out keep local state consistent
 

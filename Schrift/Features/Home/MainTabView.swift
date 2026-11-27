@@ -71,10 +71,13 @@ struct MainTabView: View {
                 client: viewModel.client,
                 onSignedInUserChanged: { [saveCoordinator = viewModel.saveCoordinator] in
                     saveCoordinator.pins.sessionIdentityDidChange()
+                },
+                onSessionNamed: { [saveCoordinator = viewModel.saveCoordinator] epoch, userID in
+                    saveCoordinator.adoptDraftsSavedWhileUnknown(epoch: epoch, owner: userID)
                 }))
         _attachmentsViewModel = State(
             initialValue: AttachmentsViewModel(
-                serverOrigin: serverOrigin,
+                serverOrigin: serverOrigin, signedInUser: viewModel.signedInUser,
                 isPendingDelete: { [saveCoordinator = viewModel.saveCoordinator, user = viewModel.signedInUser] in
                     saveCoordinator.isListablePendingDelete(documentID: $0, currentUserID: user.userID)
                 }))
@@ -189,7 +192,8 @@ struct MainTabView: View {
                     )
                 case .attachments:
                     AttachmentsScreen(
-                        viewModel: attachmentsViewModel, isOffline: viewModel.availability.isOffline)
+                        viewModel: attachmentsViewModel, isOffline: viewModel.availability.isOffline,
+                        signInGeneration: signInGeneration)
                 }
             }
         }

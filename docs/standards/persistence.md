@@ -259,15 +259,18 @@
   bodies are too large for UserDefaults): one folder per account
   (`ContentCache/<user id lowercased>/`), resolved from `SignedInUserStore` on every
   call so a long-lived instance follows an account change and reads nothing while the
-  account is unknown; stateless over that folder, `isExcludedFromBackup`, every
-  account's cleared on sign-out, never logged. Its eviction selection is a top-level
+  account is unknown; stateless over that folder, `isExcludedFromBackup` (the root
+  too), every account's cleared on sign-out, never logged. A write that carries the
+  sign-in it was fetched under (`save(_:during:)`) is dropped once that sign-in changed. Its eviction selection is a top-level
   pure free function (`contentCacheEvictions`), applied per account folder.
 - **Work from before account scoping is assigned once, in `SchriftApp.init`** — before
   any sign-in can name an account: `PendingDraftStore.assignOwnersToEarlierDrafts()`
   and `DocumentContentCacheStore.moveEarlierBodiesIntoAccountFolder()` give it to the
   account signed in at that moment, each behind its own UserDefaults flag. With none
   known, drafts are set aside (kept, shown to nobody) and flat cached bodies are
-  deleted. Unowned drafts an older build writes afterwards stay set aside.
+  deleted. Draft blobs that do not decode yet are recorded with that same account, which
+  is what `recoverQuarantinedDrafts` gives their ownerless drafts. Unowned drafts an
+  older build writes afterwards stay set aside.
 - **"Continue reading" positions** (`ReadingPositionStore`,
   `dev.llun.Schrift.readingPositions`, one JSON blob in UserDefaults) remember which
   block was at the top of the screen when a document was left, so reopening scrolls

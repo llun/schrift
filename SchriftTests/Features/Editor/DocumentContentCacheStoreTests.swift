@@ -289,4 +289,28 @@ final class DocumentContentCacheStoreTests: XCTestCase {
             FileManager.default.fileExists(
                 atPath: directory.appendingPathComponent("\(documentID.uuidString.lowercased()).json").path))
     }
+
+    /// A response that lands after the session changed is written nowhere.
+    func testABodyFetchedUnderAnotherSessionIsNotWritten() {
+        let defaults = makeDefaults(signedIn: accountA)
+        let store = DocumentContentCacheStore(root: directory, userDefaults: defaults)
+        let fetchedUnder = SignedInUserStore(userDefaults: defaults).session
+
+        signIn(accountB, in: defaults)
+        store.save(makeEntry(markdown: "# A's"), during: fetchedUnder)
+        XCTAssertNil(store.content(for: documentID), "not into B's folder")
+
+        signIn(accountA, in: defaults)
+        store.save(makeEntry(markdown: "# A's"), during: fetchedUnder)
+        XCTAssertNil(store.content(for: documentID), "nor back into A's after its sign-in changed")
+        store.save(makeEntry(markdown: "# A's"), during: SignedInUserStore(userDefaults: defaults).session)
+        XCTAssertEqual(store.content(for: documentID)?.markdown, "# A's")
+    }
+
+    func testTheRootIsExcludedFromBackupToo() throws {
+        let defaults = makeDefaults(signedIn: accountA)
+        DocumentContentCacheStore(root: directory, userDefaults: defaults).save(makeEntry())
+        let values = try directory.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        XCTAssertEqual(values.isExcludedFromBackup, true)
+    }
 }

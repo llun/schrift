@@ -411,4 +411,96 @@ final class PendingDraftStoreTests: XCTestCase {
         XCTAssertNil(store.draft(for: earlier), "the next sign-in may be another account: never claimed")
         XCTAssertEqual(store.allDraftsOfEveryAccount().map(\.markdown), ["# Earlier"], "kept on disk")
     }
+
+    // MARK: - Drafts set aside while no account was known
+
+    func testDraftsSetAsideInASignInGoToTheAccountItIsNamedAs() {
+        let (store, defaults) = makeStore()
+        signIn(nil, in: defaults)
+        let epoch = SignedInUserStore(userDefaults: defaults).epoch
+        let documentID = UUID()
+        store.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Meanwhile", updatedAt: Date()))
+        let otherEpoch = UUID()
+        store.save(
+            PendingDraft(documentID: otherEpoch, title: "Doc", markdown: "# Earlier", updatedAt: Date()),
+            setAsideIn: epoch - 1)
+        SignedInUserStore(userDefaults: defaults).remember(owner)
+
+        XCTAssertNil(store.draft(for: documentID), "unnamed until adopted")
+        XCTAssertTrue(store.adoptDraftsSavedWhileUnknown(epoch: epoch, owner: owner))
+
+        XCTAssertEqual(store.draft(for: documentID)?.markdown, "# Meanwhile")
+        XCTAssertNil(store.draft(for: otherEpoch), "another sign-in's slot is never given away")
+    }
+
+    func testAnAdoptionNeverReplacesTheAccountsOwnDraft() {
+        let (store, defaults) = makeStore()
+        let documentID = UUID()
+        store.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date()))
+        signIn(nil, in: defaults)
+        let epoch = SignedInUserStore(userDefaults: defaults).epoch
+        store.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Meanwhile", updatedAt: Date()))
+        SignedInUserStore(userDefaults: defaults).remember(owner)
+
+        XCTAssertFalse(store.adoptDraftsSavedWhileUnknown(epoch: epoch, owner: owner))
+
+        XCTAssertEqual(store.draft(for: documentID)?.markdown, "# Mine")
+        XCTAssertEqual(store.allDraftsOfEveryAccount().count, 2, "both kept")
+    }
+
+    // MARK: - Unreadable drafts from before account scoping
+
+    func testAnEarlierBlobRepairedLaterGoesToTheFirstLaunchAccountNotTheCurrentOne() throws {
+        let (store, defaults) = makeStore()
+        let key = "dev.llun.Schrift.pendingDrafts"
+        defaults.set(Data("damaged by an earlier build".utf8), forKey: key)
+        store.assignOwnersToEarlierDrafts()
+        signIn(otherAccount, in: defaults)
+        // A decoder repair ships: the blob now reads as an earlier-build draft with no owner.
+        let earlier = UUID()
+        try storeLegacyDraft(earlier, markdown: "# Earlier", in: defaults)
+        let repaired = try XCTUnwrap(defaults.data(forKey: key))
+        defaults.set(repaired, forKey: "dev.llun.Schrift.pendingDrafts.unreadable")
+        defaults.removeObject(forKey: key)
+
+        XCTAssertTrue(store.recoverQuarantinedDrafts())
+
+        XCTAssertNil(store.draft(for: earlier), "never the account signed in at the repair")
+        signIn(owner, in: defaults)
+        XCTAssertEqual(store.draft(for: earlier)?.markdown, "# Earlier")
+    }
+
+    func testAnEarlierBlobWithNoFirstLaunchAccountStaysSetAside() throws {
+        let (store, defaults) = makeStore()
+        signIn(nil, in: defaults)
+        defaults.set(Data("damaged".utf8), forKey: "dev.llun.Schrift.pendingDrafts.unreadable")
+        store.assignOwnersToEarlierDrafts()
+        signIn(owner, in: defaults)
+        let earlier = UUID()
+        try storeLegacyDraft(earlier, markdown: "# Earlier", in: defaults)
+        let repaired = try XCTUnwrap(defaults.data(forKey: "dev.llun.Schrift.pendingDrafts"))
+        defaults.set(repaired, forKey: "dev.llun.Schrift.pendingDrafts.unreadable")
+        defaults.removeObject(forKey: "dev.llun.Schrift.pendingDrafts")
+
+        XCTAssertTrue(store.recoverQuarantinedDrafts())
+
+        XCTAssertNil(store.draft(for: earlier))
+        XCTAssertEqual(store.allDraftsOfEveryAccount().map(\.markdown), ["# Earlier"], "kept")
+    }
+
+    func testRecoveryKeepsOneDraftPerAccountAndDocument() throws {
+        let (store, defaults) = makeStore()
+        let recovered = makeDraft(markdown: "older", updatedAt: Date(timeIntervalSince1970: 1_000))
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        // Recovered under a bare key, while the live copy sits under `<owner>|<document>`.
+        defaults.set(
+            try encoder.encode([recovered.documentID.uuidString: recovered]),
+            forKey: "dev.llun.Schrift.pendingDrafts.unreadable")
+        store.save(makeDraft(markdown: "newer", updatedAt: Date(timeIntervalSince1970: 2_000)))
+
+        XCTAssertTrue(store.recoverQuarantinedDrafts())
+
+        XCTAssertEqual(store.allDraftsOfEveryAccount().map(\.markdown), ["newer"])
+    }
 }

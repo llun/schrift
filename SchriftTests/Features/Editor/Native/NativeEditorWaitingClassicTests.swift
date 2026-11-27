@@ -933,13 +933,17 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         if case .waitingClassicEdits = open.route { return XCTFail("the draft must not be shown") }
         if case .classic = open.route { return XCTFail("nil account must never open classic") }
 
-        await open.resolveConflictKeepingServer(viewModel: env.model, isOffline: false, canUpdate: true)
+        // Nor is the owner's conflict, so there is no Keep server to offer: online, the server
+        // copy opens natively and read-only.
+        XCTAssertNil(env.coordinator.conflict(for: env.documentID))
+        open.close()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
         guard case .native(let session) = open.route else {
-            return XCTFail(
-                "Keep server with nil signedInUser must open native read-only instead of .classic, got \(open.route)")
+            return XCTFail("nil signedInUser must open native read-only instead of .classic, got \(open.route)")
         }
         XCTAssertNil(session.input, "nil account native session must be read-only")
-        XCTAssertEqual(open.editUnavailableReason, .signedOut)
+        // The owner's classic draft still waits on the device, which is the first reason given.
+        XCTAssertEqual(open.editUnavailableReason, .classicDraft)
         XCTAssertEqual(session.surface.blocks.map(\.visibleText).joined(separator: "\n"), serverText)
     }
 

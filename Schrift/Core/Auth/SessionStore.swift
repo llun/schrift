@@ -74,6 +74,9 @@ final class SessionStore {
     /// stays off until it (or `signOut`) runs; `needsReauthentication` alone is not enough,
     /// because cancelling the sheet clears it while those cookies are still live.
     private var cookiesAwaitingConfirmation = false
+    /// The identity epoch a web login's handover left behind. Still current at `signIn`, nothing
+    /// changed hands since, so the confirming `/users/me/` names the account of that sign-in.
+    private var handoverEpoch: Int?
     /// RootView's sign-out is draining native saves before it calls `signOut`. A re-login
     /// finishing in that window would bump `signInGeneration` and RootView would drop the
     /// sign-out, so no re-login may complete until it ends (`endSignOut` or `signOut`).
@@ -163,8 +166,16 @@ final class SessionStore {
         try keychain.save(Data([1]), forKey: Self.authenticatedKeychainKey)
         // Invalidate the old disk namespace before saving replacement cookies,
         // so an interruption cannot restore new credentials with old images.
+        let confirmedEpoch =
+            cookiesAwaitingConfirmation && handoverEpoch == signedInUser.epoch ? handoverEpoch : nil
+        handoverEpoch = nil
         forgetSignedInIdentity()
         signedInUser.remember(userID)
+        // Drafts saved while the handover was unconfirmed were saved by this account.
+        if let confirmedEpoch, let userID {
+            PendingDraftStore(userDefaults: userDefaults).adoptDraftsSavedWhileUnknown(
+                epoch: confirmedEpoch, owner: userID)
+        }
         let cookiesPersisted = persistSessionCookies(for: serverURL)
         self.serverURL = serverURL
         self.isAuthenticated = true
@@ -247,6 +258,7 @@ final class SessionStore {
     func noteSessionCookiesReplaced() {
         cookiesAwaitingConfirmation = true
         forgetSignedInIdentity()
+        handoverEpoch = signedInUser.epoch
         // The identity may have changed under screens that survived the sheet, exactly as at
         // `signIn` — clearing the stores is only half of scoping the account row to the session.
         signInGeneration += 1

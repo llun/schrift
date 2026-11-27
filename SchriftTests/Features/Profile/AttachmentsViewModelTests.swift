@@ -132,6 +132,27 @@ final class AttachmentsViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.groups.map(\.documentID), [docA])
     }
 
+    /// The view model outlives a re-login, so each load reads the folder of the account in
+    /// front of it — never the one that was signed in when it was built.
+    func testALoadAfterAnAccountChangeShowsOnlyTheNewAccountsFiles() async {
+        let suite = "AttachmentsViewModelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(UUID())
+        let cache = DocumentContentCacheStore(root: directory, userDefaults: defaults)
+        cache.save(content(docA, link("a.pdf", document: docA, file: fileOne), at: 1))
+        let viewModel = AttachmentsViewModel(contentCache: cache, serverOrigin: origin, signedInUser: signedIn)
+        await viewModel.load()
+        XCTAssertEqual(viewModel.groups.map(\.documentID), [docA])
+
+        signedIn.clear()
+        signedIn.remember(UUID())
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.groups, [])
+    }
+
     func testLoadPicksUpDocumentsCachedSinceTheLastLoad() async {
         let cache = DocumentContentCacheStore(directory: directory)
         let viewModel = AttachmentsViewModel(contentCache: cache, serverOrigin: origin)

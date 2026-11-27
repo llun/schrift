@@ -60,7 +60,8 @@ class DocumentSaveCoordinatorTestCase: XCTestCase {
     func makeCoordinator(
         backgroundTasks: BackgroundTaskProvider = .noop,
         isLiveReplicaHeld: @escaping @MainActor (UUID) -> Bool = { _ in false },
-        sleep: @escaping @Sendable (Duration) async throws -> Void = neverSleep
+        sleep: @escaping @Sendable (Duration) async throws -> Void = neverSleep,
+        accountScopedCache: Bool = false
     ) -> (DocumentSaveCoordinator, PendingDraftStore, DocumentContentCacheStore) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
@@ -68,7 +69,11 @@ class DocumentSaveCoordinatorTestCase: XCTestCase {
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         // Drafts are shown and replayed only for the signed-in account they belong to.
         SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(signedInUserID)
-        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        // One folder per account, keyed on this suite's identity, when a test switches accounts.
+        let contentCache =
+            accountScopedCache
+            ? DocumentContentCacheStore(root: cacheDirectory, userDefaults: UserDefaults(suiteName: suiteName)!)
+            : DocumentContentCacheStore(directory: cacheDirectory)
         // Isolate the owner marker and replica storage: the defaults would
         // otherwise be `UserDefaults.standard` and Application Support, where a
         // marker left by another run could make a document read-only here.

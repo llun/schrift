@@ -2147,7 +2147,7 @@ final class NativeEditorOpen {
     ) -> NativeEditUnavailableReason? {
         let coordinator = viewModel.saveCoordinator
         let documentID = viewModel.documentID
-        let hasClassicDraft = coordinator.storedDraft(documentID: documentID).map { $0.replica == nil } ?? false
+        let hasClassicDraft = coordinator.hasClassicDraftOfAnyAccount(documentID: documentID)
         return Self.resolveUnavailableReason(
             enabled: enabled,
             hasEditAccess: hasEditAccess,
@@ -2200,14 +2200,15 @@ final class NativeEditorOpen {
     }
 
     /// Typing also needs no live owner (a native session never takes the live
-    /// write path), no pending create or delete and no classic draft.
+    /// write path), no pending create or delete and no classic draft — any account's: the
+    /// seed's ownership marker would take the document from that account's classic writer.
     private func mayType(_ viewModel: EditorViewModel) -> Bool {
         let coordinator = viewModel.saveCoordinator
         let documentID = viewModel.documentID
         return !viewModel.isDocumentPendingDelete
             && !coordinator.hasCheckpointedCreate(forServerID: documentID)
             && !coordinator.isLiveHeld(documentID: documentID)
-            && (coordinator.storedDraft(documentID: documentID).map { $0.replica != nil } ?? true)
+            && !coordinator.hasClassicDraftOfAnyAccount(documentID: documentID)
     }
 
     /// The open that asked for an awaited result is still the one on screen.

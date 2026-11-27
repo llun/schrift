@@ -129,7 +129,11 @@ final class DocumentContentCacheStore {
         return try? decoder.decode(CachedDocumentContent.self, from: data)
     }
 
-    func save(_ entry: CachedDocumentContent) {
+    /// `session` is the sign-in the body was fetched or saved under: a response that lands after
+    /// the session changed is written nowhere, so it can neither reach another account's folder
+    /// nor come back after a sign-out wiped it.
+    func save(_ entry: CachedDocumentContent, during session: SignedInSession? = nil) {
+        if let session, pinnedDirectory == nil, !session.isStill(signedInUser.session) { return }
         guard let directory, let data = try? encoder.encode(entry) else { return }
         ensureDirectory(directory)
         try? data.write(to: Self.fileURL(for: entry.documentID, in: directory), options: .atomic)
@@ -200,11 +204,15 @@ final class DocumentContentCacheStore {
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         // Cached content is re-downloadable from the user's own server; full
         // document bodies must not flow into iCloud/device backups. Unsaved
-        // work still backs up via PendingDraftStore.
-        var url = directory
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        try? url.setResourceValues(values)
+        // work still backs up via PendingDraftStore. The root too, so nothing
+        // written beside the account folders (an older build's flat files) is
+        // backed up either.
+        for folder in Set([directory, pinnedDirectory == nil ? root : directory]) {
+            var url = folder
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try? url.setResourceValues(values)
+        }
     }
 
     /// The eviction index comes from file modification dates: every path that

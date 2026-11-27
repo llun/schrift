@@ -491,15 +491,12 @@ final class HomeViewModel {
     /// inside the view model (like `load()`'s `recoverDrafts()`), so the view never
     /// drives networking/persistence directly.
     func syncPendingDrafts() async {
-        await saveCoordinator.syncPendingDrafts()
         // The passive half of the same recovery: reconnect and foreground are when a session
-        // left without an identity should re-ask. Ordering against the replay above is free —
-        // the three passes take their account from a live `/users/me/` of their own and never
-        // read `SignedInUserStore` — so it goes after, leaving the replay the first thing this
-        // path does. Free for *correctness*, not for traffic: each of those passes fetches the
-        // very answer this is about to ask for and discards it, so a reconnect with pending
-        // work can send four identical requests. The fix would be a write-through in the
-        // coordinator rather than a reordering here.
+        // left without an identity should re-ask. **Before the replay**: the passes authorise on
+        // a live `/users/me/` of their own but read drafts through `SignedInUserStore`, and they
+        // change nothing while the two disagree — so asking first is what lets this trigger make
+        // progress after an unconfirmed handover or a blip. Each pass still fetches the same
+        // answer again, so a reconnect with pending work can send several identical requests.
         //
         // **A re-learn is followed by a load, and `refreshSignedInUser` does it.** `SignedInUserStore`
         // is deliberately neither `@Observable` nor cached, so reading it registers no SwiftUI
@@ -510,12 +507,12 @@ final class HomeViewModel {
         // caller gets it. Gated on having actually learned something, which is rare, rather than
         // on having asked.
         //
-        // It can therefore double up with the `onDocumentMigrated` load below when a create
-        // pass migrates during the replay above and the identity was unknown — both are
-        // generation-guarded and latest-wins, so that costs one redundant list fetch, not a
-        // wrong list. Note `load()` also clears any undismissed error banner, which is new on
+        // It can therefore double up with the `onDocumentMigrated` load below when the identity
+        // was unknown and the replay then migrates a create — both are generation-guarded and
+        // latest-wins, so that costs one redundant list fetch, not a wrong list. Note `load()` also clears any undismissed error banner, which is new on
         // the foreground path but identical to what the migrated-row load already does.
         await refreshSignedInUserIfUnknown()
+        await saveCoordinator.syncPendingDrafts()
         // **A migrated document must not vanish from a live Home.** The replay drops the
         // record, so the local row is correctly withheld the instant it migrates — but the
         // *real* row only exists in `fetchedRecentDocuments`, which still holds the fetch from
@@ -593,6 +590,8 @@ final class HomeViewModel {
         guard signedInUser.epoch == epoch else { return }
         let previousOwner = signedInUser.userID
         signedInUser.remember(user.id)
+        // The same sign-in, now named: what it saved while unnamed is this account's.
+        if let id = user.id { saveCoordinator.adoptDraftsSavedWhileUnknown(epoch: epoch, owner: id) }
         // Unconditional: a sign-in now remembers the new id before this runs.
         saveCoordinator.pins.sessionIdentityDidChange()
         // Same response, one more consumer: Profile shows this account from disk when there is

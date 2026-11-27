@@ -90,7 +90,13 @@ final class AttachmentsViewModel {
 
     /// Reads every cached document body. Called off the main actor: it is up to
     /// the cache's whole limit of files read and JSON-decoded.
-    private let readContents: @Sendable () async -> [CachedDocumentContent]
+    private let readContents: (@Sendable () async -> [CachedDocumentContent])?
+    /// The cache is one folder per account and this view model outlives a re-login (it is
+    /// `MainTabView` state), so each load asks for the folder of the account in front of it.
+    private let contentCache: DocumentContentCacheStore
+    private let signedInUser: SignedInUserStore
+    /// The account the groups on screen were read for.
+    private var loadedOwner: UUID?
     private let serverOrigin: String
     /// A document the user has deleted whose deletion is still queued keeps its
     /// content-cache entry until the deletion lands; it is withheld here, as
@@ -104,15 +110,13 @@ final class AttachmentsViewModel {
     /// loads); nil reads `contentCache`.
     init(
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(), serverOrigin: String,
+        signedInUser: SignedInUserStore = SignedInUserStore(),
         isPendingDelete: @escaping @MainActor (UUID) -> Bool = { _ in false },
         readContents: (@Sendable () async -> [CachedDocumentContent])? = nil
     ) {
-        if let readContents {
-            self.readContents = readContents
-        } else {
-            let read = contentCache.allContentsReader()
-            self.readContents = { read() }
-        }
+        self.readContents = readContents
+        self.contentCache = contentCache
+        self.signedInUser = signedInUser
         self.serverOrigin = serverOrigin
         self.isPendingDelete = isPendingDelete
     }
@@ -126,13 +130,23 @@ final class AttachmentsViewModel {
     func load() async {
         loadGeneration += 1
         let generation = loadGeneration
-        let readContents = readContents
+        let owner = signedInUser.userID
+        // Another account's list never stays on screen while this one's is read.
+        if owner != loadedOwner {
+            groups = []
+            rows = []
+            hasLoaded = false
+        }
+        let read = contentCache.allContentsReader()
+        let readContents = readContents ?? { read() }
         let origin = serverOrigin
         let parsed = await Task.detached(priority: .userInitiated) {
             let contents = await readContents()
             return attachmentLibraryGroups(from: contents, serverOrigin: origin)
         }.value
-        guard generation == loadGeneration else { return }
+        // A read that began under another account is that account's.
+        guard generation == loadGeneration, signedInUser.userID == owner else { return }
+        loadedOwner = owner
         groups = parsed.filter { !isPendingDelete($0.documentID) }
         rows = attachmentLibraryRows(groups)
         hasLoaded = true
