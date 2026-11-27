@@ -80,6 +80,9 @@ final class SessionStore {
     /// stays off until it (or `signOut`) runs; `needsReauthentication` alone is not enough,
     /// because cancelling the sheet clears it while those cookies are still live.
     private var cookiesAwaitingConfirmation = false
+    /// The Keychain could not be read at launch (locked), so "signed out" here is not a known
+    /// sign-out: the next sign-in treats the login web view's site data as someone else's.
+    private var launchedWithUnreadableMarker = false
     /// RootView's sign-out is draining native saves before it calls `signOut`. A re-login
     /// finishing in that window would bump `signInGeneration` and RootView would drop the
     /// sign-out, so no re-login may complete until it ends (`endSignOut` or `signOut`).
@@ -148,7 +151,9 @@ final class SessionStore {
         self.signedInUser = signedInUser ?? SignedInUserStore(userDefaults: userDefaults)
         self.cachedUser = CurrentUserCacheStore(userDefaults: userDefaults)
         self.serverURL = userDefaults.url(forKey: Self.serverURLKey)
-        self.isAuthenticated = (try? keychain.load(forKey: Self.authenticatedKeychainKey)) != nil
+        let marker = Result { try keychain.load(forKey: Self.authenticatedKeychainKey) }
+        self.isAuthenticated = (try? marker.get()) != nil
+        if case .failure = marker { launchedWithUnreadableMarker = true }
         // Synchronous, so the cookies are back in the shared storage before
         // RootView builds the API client and the first request fires.
         if isAuthenticated {
@@ -189,12 +194,15 @@ final class SessionStore {
         let webLogins = userDefaults.integer(forKey: Self.webLoginsSinceConfirmKey)
         let hasConfirmedRecord = userDefaults.object(forKey: Self.webLoginConfirmedUserKey) != nil
         let provablySameAccount = confirmedUserID != nil && confirmedUserID == userID
-        if webLogins > 1 || (!provablySameAccount && (isAuthenticated || hasConfirmedRecord)) {
+        if webLogins > 1
+            || (!provablySameAccount && (isAuthenticated || hasConfirmedRecord || launchedWithUnreadableMarker))
+        {
             clearWebSiteData(false)
         }
         // "" records a confirmed sign-in by an account nobody can name.
         userDefaults.set(userID?.uuidString ?? "", forKey: Self.webLoginConfirmedUserKey)
         userDefaults.removeObject(forKey: Self.webLoginsSinceConfirmKey)
+        launchedWithUnreadableMarker = false
         // Invalidate the old disk namespace before saving replacement cookies,
         // so an interruption cannot restore new credentials with old images.
         forgetSignedInIdentity()
@@ -352,6 +360,8 @@ final class SessionStore {
         // An intentional sign-out: everything the login web view keeps, cookies and the IdP's
         // single sign-on included, so the next person on the device has to sign in themselves.
         clearWebSiteData(true)
+        // The IdP's cookies too: the login copies every WebKit cookie into this storage.
+        cookieStorage.removeCookies(since: .distantPast)
         userDefaults.removeObject(forKey: Self.webLoginConfirmedUserKey)
         userDefaults.removeObject(forKey: Self.webLoginsSinceConfirmKey)
         // A session change like any other: a native editor still mounted closes and reopens
@@ -360,8 +370,6 @@ final class SessionStore {
         generationClock.advance()
         try keychain.delete(forKey: Self.authenticatedKeychainKey)
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
-        // The IdP's cookies too: the login copies every WebKit cookie into this storage.
-        cookieStorage.removeCookies(since: .distantPast)
         endReauthentication()
         silentReauthenticationExhausted = false
         lastSilentSignIn = nil

@@ -423,6 +423,24 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         }
     }
 
+    /// Signed in on a build that kept no confirmed record, then a launch that cannot read the
+    /// Keychain: the next sign-in on Connect still drops the web view's site data.
+    func testASignInAfterAnUnreadableLaunchWithNoRecordStillClears() throws {
+        let keychain = FakeKeychainStore()
+        try keychain.save(Data([1]), forKey: "dev.llun.Schrift.isAuthenticated")
+        keychain.failingLoadKeys = ["dev.llun.Schrift.isAuthenticated"]
+        var clears: [Bool] = []
+        let locked = SessionStore(
+            userDefaults: userDefaults, keychain: keychain, cookieStorage: FakeCookieStorage(),
+            clearWebSiteData: { clears.append($0) })
+        keychain.failingLoadKeys = []
+
+        locked.noteSessionCookiesReplaced()
+        try locked.signIn(serverURL: serverURL, userID: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
+
+        XCTAssertEqual(clears, [false])
+    }
+
     func testOnlyAMissingMarkerCountsAsSignedOutAtLaunch() throws {
         let keychain = FakeKeychainStore()
         XCTAssertTrue(SessionStore.hasNoSignInMarker(keychain: keychain))
