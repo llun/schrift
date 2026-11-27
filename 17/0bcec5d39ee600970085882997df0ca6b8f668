@@ -1,0 +1,33 @@
+Schrift/App/RootView.swift
+  s_f193227df3df34::t_e97131c36a1070 31-47,318-325
+Schrift/Core/Auth/SessionStore.swift
+  s_f193227df3df34::t_854dbea9771099 77-79
+Schrift/Features/Editor/PendingDraftStore.swift
+  s_f193227df3df34::t_61d963e951f905 91-93,146-147,156
+SchriftTests/App/SyncTriggerTests.swift
+  s_f193227df3df34::t_5140610cff174f 27-44
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAccountTests.swift
+  s_f193227df3df34::t_62bd2a706f24ec 12-15
+SchriftTests/Features/Editor/EditorPhotoInsertionTests.swift
+  s_f193227df3df34::t_cac8c57eb73c07 779,791-793,799,808-810,896,902-908,919,925-932,944,956-963,993,998-999,1003,1016,1021-1022,1035,1044,1049,1051-1052
+SchriftTests/Features/Editor/EditorViewModelAccountTests.swift
+  s_f193227df3df34::t_575ae72964ed93 13-16
+docs/standards/persistence.md
+  s_f193227df3df34::t_aed327ef7298b5 71-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "170bcec5d39ee600970085882997df0ca6b8f668",
+  "prompts": {},
+  "sessions": {
+    "s_f193227df3df34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dbe81370-1886-4254-8a96-847487f9d822",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
