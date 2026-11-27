@@ -85,8 +85,10 @@
   and sign-out through SessionStore's injected `clearImageCache` callback, and the
   login web view's disk and memory cache through `clearWebCache` (also on a relaunch
   after an unconfirmed handover, and `SchriftApp.init` clears it at every launch;
-  cookies stay, for the IdP's single sign-on); keep that stronger account-isolation
-  lifecycle. See [`docs/offline-and-sync.md`](../offline-and-sync.md).
+  cookies stay, for the IdP's single sign-on). Its other site data (local storage,
+  IndexedDB, …) goes through `clearWebSiteData` on a re-login that is not provably the
+  same account, and an intentional sign-out removes everything it keeps, cookies and the
+  IdP's single sign-on included. Keep that stronger account-isolation lifecycle. See [`docs/offline-and-sync.md`](../offline-and-sync.md).
 - **The account's displayed profile is cached too** (`CurrentUserCacheStore`,
   `dev.llun.Schrift.currentUser`), because `/users/me/` is the only source of the
   email and names and it is a network call: `ProfileViewModel` held it in memory

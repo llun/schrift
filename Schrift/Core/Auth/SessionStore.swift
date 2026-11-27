@@ -35,6 +35,10 @@ final class SessionStore {
     private let clearMediaDropStaging: () -> Void
     private let endMediaPlayback: () -> Void
     private let clearWebCache: () -> Void
+    private let clearWebSiteData: (_ includingCookies: Bool) -> Void
+    /// Who was signed in before a web login handed over its cookies, so `signIn` can tell a
+    /// re-login by the same account from an account change.
+    private var userIDBeforeHandover: UUID?
     private let clearDiagnostics: () -> Void
     var imageCacheScope: String? { imageCacheSessionID?.uuidString }
 
@@ -110,6 +114,9 @@ final class SessionStore {
         clearMediaDropStaging: @escaping () -> Void = { NativeMediaDropPaste.removeStagingRoot() },
         endMediaPlayback: @escaping () -> Void = { NativeMediaPresenter.endSession() },
         clearWebCache: @escaping () -> Void = { clearWebLoginCache() },
+        clearWebSiteData: @escaping (_ includingCookies: Bool) -> Void = {
+            clearWebLoginSiteData(includingCookies: $0)
+        },
         clearDiagnostics: @escaping () -> Void = { NativeEditorDiagnosticsStore.shared.reset() },
         now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
@@ -118,6 +125,7 @@ final class SessionStore {
         self.clearMediaDropStaging = clearMediaDropStaging
         self.endMediaPlayback = endMediaPlayback
         self.clearWebCache = clearWebCache
+        self.clearWebSiteData = clearWebSiteData
         self.clearDiagnostics = clearDiagnostics
         self.now = now
         self.userDefaults = userDefaults
@@ -161,6 +169,13 @@ final class SessionStore {
     func signIn(serverURL: URL, userID: UUID? = nil) throws {
         userDefaults.set(serverURL, forKey: Self.serverURLKey)
         try keychain.save(Data([1]), forKey: Self.authenticatedKeychainKey)
+        let previousUserID = signedInUser.userID ?? userIDBeforeHandover
+        // A re-login that cannot be shown to be the same account drops the previous one's
+        // site data in the login web view; cookies stay, for single sign-on.
+        if isAuthenticated, previousUserID == nil || previousUserID != userID {
+            clearWebSiteData(false)
+        }
+        userIDBeforeHandover = nil
         // Invalidate the old disk namespace before saving replacement cookies,
         // so an interruption cannot restore new credentials with old images.
         forgetSignedInIdentity()
@@ -256,6 +271,7 @@ final class SessionStore {
     /// Everything that answers *whose session is this*, forgotten together. One body, so a
     /// later piece of account-scoped state has one place to be added rather than three.
     private func forgetSignedInIdentity() {
+        if let id = signedInUser.userID { userIDBeforeHandover = id }
         let namespace = UUID()
         imageCacheSessionID = namespace
         // Cookie handover precedes /users/me confirmation. Keep its new
@@ -299,6 +315,10 @@ final class SessionStore {
         // Belt-and-braces beside `RootView`'s own clear: a second sign-out path added later
         // should not have to remember this one.
         forgetSignedInIdentity()
+        userIDBeforeHandover = nil
+        // An intentional sign-out: everything the login web view keeps, cookies and the IdP's
+        // single sign-on included, so the next person on the device has to sign in themselves.
+        clearWebSiteData(true)
         // A session change like any other: a native editor still mounted closes and reopens
         // (read-only, no account) instead of typing on under a forgotten identity.
         signInGeneration += 1

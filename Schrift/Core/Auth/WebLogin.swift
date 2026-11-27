@@ -39,3 +39,19 @@ let webLoginCacheDataTypes: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsite
 func clearWebLoginCache() {
     WKWebsiteDataStore.default().removeData(ofTypes: webLoginCacheDataTypes, modifiedSince: .distantPast) {}
 }
+
+/// Everything the login web view stores: on a sign-out, cookies too (the IdP's single sign-on
+/// with them, so the next sign-in asks for a password); on an account change, all but cookies.
+@MainActor
+func webLoginSiteDataTypes(includingCookies: Bool) -> Set<String> {
+    var types = WKWebsiteDataStore.allWebsiteDataTypes()
+    if !includingCookies { types.remove(WKWebsiteDataTypeCookies) }
+    return types
+}
+
+@MainActor
+func clearWebLoginSiteData(includingCookies: Bool) {
+    WKWebsiteDataStore.default().removeData(
+        ofTypes: webLoginSiteDataTypes(includingCookies: includingCookies), modifiedSince: .distantPast
+    ) {}
+}

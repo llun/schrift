@@ -312,6 +312,43 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertFalse(store.isReauthenticationInteractive, "no sheet over a sign-out")
     }
 
+    /// Sign-out clears everything the login web view keeps, cookies too; a re-login clears its
+    /// site data (not cookies) unless it is provably the same account; a silent re-login by the
+    /// same account and a fresh sign-in clear nothing.
+    func testWebSiteDataIsClearedAtSignOutAndOnAnAccountChange() throws {
+        let accountA = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let accountB = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        var clears: [Bool] = []
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage(),
+            clearWebSiteData: { clears.append($0) })
+
+        try store.signIn(serverURL: serverURL, userID: accountA)
+        XCTAssertEqual(clears, [], "a fresh sign-in")
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL, userID: accountA)
+        XCTAssertEqual(clears, [], "the same account re-logging in keeps single sign-on and its site data")
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL, userID: accountB)
+        XCTAssertEqual(clears, [false], "an account change: site data, not cookies")
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL, userID: nil)
+        XCTAssertEqual(clears, [false, false], "an account nobody can name counts as a change")
+        try store.signOut()
+        XCTAssertEqual(clears, [false, false, true], "sign-out: everything, cookies included")
+        try store.signIn(serverURL: serverURL, userID: accountB)
+        XCTAssertEqual(clears, [false, false, true], "signing in after a sign-out")
+    }
+
+    func testTheSiteDataClearKeepsCookiesOnlyOnAnAccountChange() {
+        XCTAssertFalse(webLoginSiteDataTypes(includingCookies: false).contains(WKWebsiteDataTypeCookies))
+        XCTAssertTrue(webLoginSiteDataTypes(includingCookies: true).contains(WKWebsiteDataTypeCookies))
+        XCTAssertTrue(
+            webLoginSiteDataTypes(includingCookies: false).isSuperset(of: [
+                WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeIndexedDBDatabases, WKWebsiteDataTypeDiskCache,
+            ]))
+    }
+
     /// The default wiring: sign-out deletes a media preview's staged copy.
     func testSignOutDeletesStagedMediaPreviews() throws {
         let store = SessionStore(
