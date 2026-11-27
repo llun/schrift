@@ -1,0 +1,53 @@
+SchriftTests/Features/Editor/Native/NativeEditorPreferenceTests.swift
+  s_4fb28ab57323fe::t_397acd2ed117b1 15-16,25
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayTestCase.swift
+  s_4fb28ab57323fe::t_6dc9cc48f66bef 64-71,73
+SchriftTests/Features/Editor/EditorPageLinkPickerTests.swift
+  s_4fb28ab57323fe::t_57ea01074b30b6 72
+docs/native-editor-acceptance.md
+  s_4fb28ab57323fe::t_8f312d8928a17d 10,35,117,166-168,238
+SchriftTests/Features/Documents/DocumentPinTestCase.swift
+  s_4fb28ab57323fe::t_6dc9cc48f66bef 97-99
+SchriftTests/Features/Editor/DocumentSaveCoordinatorMoveTests.swift
+  s_4fb28ab57323fe::t_57ea01074b30b6 58,119,170,436,506
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTestCase.swift
+  s_4fb28ab57323fe::t_6dc9cc48f66bef 84-86
+SchriftTests/Features/Documents/DocumentActionsDeleteTests.swift
+  s_4fb28ab57323fe::t_57ea01074b30b6 102,143,178,210,266,296,324
+SchriftTests/Features/Documents/MoveDocumentViewModelTests.swift
+  s_4fb28ab57323fe::t_57ea01074b30b6 52
+SchriftTests/Features/Editor/DocumentSaveCoordinatorCreateTests.swift
+  s_4fb28ab57323fe::t_57ea01074b30b6 50,70,475,484,543,583,988
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAttachmentReplayTests.swift
+  s_4fb28ab57323fe::t_f828e079f87731 61-69,71
+SchriftTests/Features/Editor/DocumentSaveCoordinatorDeleteTests.swift
+  s_4fb28ab57323fe::t_6dc9cc48f66bef 68-79,81
+SchriftTests/Features/Home/HomeViewModelLoadTests.swift
+  s_4fb28ab57323fe::t_57ea01074b30b6 568
+SchriftTests/Features/Options/OptionsViewModelTests.swift
+  s_4fb28ab57323fe::t_57ea01074b30b6 91,185,214,264,284
+SchriftTests/Features/Editor/LiveEditingIntegrationTests.swift
+  s_4fb28ab57323fe::t_57ea01074b30b6 155
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_4fb28ab57323fe::t_3486ecb9c4c280 16,1209
+SchriftTests/Features/Documents/DocumentActionsTestCase.swift
+  s_4fb28ab57323fe::t_6dc9cc48f66bef 60-62
+Schrift/Features/Editor/EditorScreen.swift
+  s_4fb28ab57323fe::t_3486ecb9c4c280 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ff2b6c58bdb8c888f2e97a171b3a51254479a71b",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
