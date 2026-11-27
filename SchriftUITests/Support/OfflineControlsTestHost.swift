@@ -20,6 +20,8 @@ struct OfflineControlsTestHost: View {
         defaults.removePersistentDomain(forName: suite)
         // Editing belongs to a known account: with none, pages are read-only.
         SignedInUserStore(userDefaults: defaults).remember(UUID(uuidString: "0D0D0D0D-0D0D-4D0D-8D0D-0D0D0D0D0D0D")!)
+        // The editor screens MainTabView builds read the standard defaults, as in the app.
+        SignedInUserStore().remember(UUID(uuidString: "0D0D0D0D-0D0D-4D0D-8D0D-0D0D0D0D0D0D")!)
         self.defaults = defaults
         let path = OfflineFixturePath()
         self.path = path
