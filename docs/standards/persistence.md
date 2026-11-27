@@ -290,5 +290,7 @@
 - **Recent searches** (`RecentSearchesStore`, `dev.llun.Schrift.recentSearches.<user id>`)
   are what one person typed: one list per account, nothing shown or stored while the
   account is unknown, and `SessionStore` clears every list on an account change (the same
-  "not provably the same account" rule as the login web view's site data) and at sign-out.
+  "not provably the same account" rule as the login web view's site data) and at sign-out —
+  from `signIn` and `signOut`, **not** `forgetSignedInIdentity()`, which also runs when the
+  same account re-logs in and would empty the list every time.
   The search screen re-reads the list when the session changes.

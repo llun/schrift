@@ -371,6 +371,32 @@ final class ReadingPositionTests: XCTestCase {
         XCTAssertNil(store.position(serverOrigin: origin, documentID: documentID))
     }
 
+    @MainActor func testASessionOpenedForOneAccountRestoresNothingForAnother() {
+        let (session, store, documentID) = makeSession()
+        let blocks = (0..<6).map { EditorBlock(kind: .paragraph, text: "paragraph \($0)") }
+        store.save(
+            blockID: blocks[4].id, fingerprint: readingPositionFingerprint(of: blocks[4]), blockIndex: 4,
+            serverOrigin: origin, documentID: documentID)
+        SignedInUserStore(userDefaults: userDefaults).remember(
+            UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
+
+        XCTAssertNil(session.beginRestore(blocks: blocks, userHasScrolled: false))
+    }
+
+    /// Opened while no account was known, the session belongs to the first account named.
+    @MainActor func testASessionOpenedWithNoAccountSavesForTheFirstOneNamed() {
+        let signedInUser = SignedInUserStore(userDefaults: userDefaults)
+        signedInUser.clear()
+        let (session, store, documentID) = makeSession()
+        let blocks = (0..<6).map { EditorBlock(kind: .paragraph, text: "paragraph \($0)") }
+        session.beginRestore(blocks: blocks, userHasScrolled: false)
+        signedInUser.remember(accountA)
+
+        session.persist(blocks: blocks, topVisibleBlockID: blocks[4].id)
+
+        XCTAssertEqual(store.position(serverOrigin: origin, documentID: documentID)?.blockIndex, 4)
+    }
+
     @MainActor func testSessionRestoresOnceAndOffersBackToTop() {
         let blocks = paragraphs(10)
         let (session, store, id) = makeSession()

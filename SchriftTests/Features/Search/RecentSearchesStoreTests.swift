@@ -69,8 +69,10 @@ final class RecentSearchesStorePersistenceTests: XCTestCase {
         signedInUser.remember(accountA)
         XCTAssertEqual(store.searches, ["roadmap"])
 
+        userDefaults.set(["shared"], forKey: "dev.llun.Schrift.recentSearches")  // an earlier build's list
         store.clear()
         XCTAssertEqual(store.searches, [])
+        XCTAssertNil(userDefaults.object(forKey: "dev.llun.Schrift.recentSearches"))
         signedInUser.remember(UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
         XCTAssertEqual(store.searches, [], "every account's list goes")
     }

@@ -64,8 +64,9 @@ func readingRestoreScrollStep(
     @ObservationIgnored private var pendingScrollBlockID: UUID?
     @ObservationIgnored private var offerTask: Task<Void, Never>?
     /// The account this open belongs to: an editor left on screen across a re-login as someone
-    /// else must not read or write that account's positions.
-    @ObservationIgnored private let owner: UUID?
+    /// else must not read or write that account's positions. Opened while no account was known,
+    /// it belongs to the first one named (that open began under the new session's cookies).
+    @ObservationIgnored private var owner: UUID?
 
     init(
         store: ReadingPositionStore = ReadingPositionStore(), serverOrigin: String, documentID: UUID,
@@ -176,5 +177,9 @@ func readingRestoreScrollStep(
         }
     }
 
-    private var isOwnersSession: Bool { owner != nil && store.currentUserID == owner }
+    private var isOwnersSession: Bool {
+        guard let current = store.currentUserID else { return false }
+        if owner == nil { owner = current }
+        return current == owner
+    }
 }

@@ -62,9 +62,8 @@ func readingPositionFingerprint(of block: EditorBlock) -> String {
     return String(hash, radix: 16)
 }
 
-/// The UserDefaults key of one document's position, scoped by server so that the same
-/// document id on two servers (or a server the user signs out of and into again as someone
-/// else, once the store is cleared) can never read the other's.
+/// The server-and-document part of a position's key, so the same document id on two servers
+/// can never read the other's (`ReadingPositionStore` prefixes it with the account).
 func readingPositionKey(serverOrigin: String, documentID: UUID) -> String {
     var origin = serverOrigin.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     while origin.hasSuffix("/") { origin.removeLast() }
@@ -150,8 +149,8 @@ func topVisibleBlockID(in frames: [UUID: CGRect]) -> UUID? {
     return best?.id
 }
 
-/// UserDefaults-backed reading positions, one per document, keyed by server origin and
-/// document id (`readingPositionKey`) and capped to the `limit` most recently read.
+/// UserDefaults-backed reading positions, one per account and document, capped to the `limit`
+/// most recently read.
 ///
 /// Positions belong to the signed-in account: each key is prefixed with its id, and with no
 /// known account nothing is read or saved, so one account never resumes where another left off.
