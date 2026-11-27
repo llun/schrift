@@ -419,14 +419,6 @@ struct EditorView: View {
             switch nativeOpen.route {
             case .native(let session):
                 session.input?.refreshInlinePicker()
-                // Opened read-only while the account was unconfirmed: now that it is named,
-                // open again so editing comes back by itself.
-                if nativeOpen.editUnavailableReason == .accountUnconfirmed, viewModel.signedInUserID != nil {
-                    nativeOpen.reopen(
-                        viewModel: viewModel, isOffline: showsOffline,
-                        canUpdate: pinRow?.abilities.update == true,
-                        canMention: pinRow?.abilities.mention == true)
-                }
             case .waitingClassicEdits:
                 nativeOpen.reopen(
                     viewModel: viewModel, isOffline: showsOffline,

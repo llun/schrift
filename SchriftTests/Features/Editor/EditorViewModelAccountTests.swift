@@ -10,8 +10,10 @@ final class EditorViewModelAccountTests: EditorViewModelTestCase {
     private let accountB = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
 
     private func signIn(_ account: UUID?) {
-        guard let suite = draftSuiteNames.first else { return XCTFail("no editor suite") }
-        let signedIn = SignedInUserStore(userDefaults: UserDefaults(suiteName: suite)!)
+        guard let suite = draftSuiteNames.first,
+            let defaults = UserDefaults(suiteName: suite)
+        else { return XCTFail("no editor suite") }
+        let signedIn = SignedInUserStore(userDefaults: defaults)
         signedIn.clear()
         signedIn.remember(account)
     }

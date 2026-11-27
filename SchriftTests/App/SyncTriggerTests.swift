@@ -24,4 +24,22 @@ final class SyncTriggerTests: XCTestCase {
         XCTAssertEqual(collaborationScenePhaseAction(.background), .suspend)
         XCTAssertEqual(collaborationScenePhaseAction(.inactive), .ignore)
     }
+
+    /// A silent re-login of the same account happens routinely at launch; closing its live
+    /// sessions there would drop a mounted socket. Only a confirmed account change closes.
+    func testCollaborationSignInActionClosesOnlyOnAConfirmedAccountChange() {
+        let account = UUID()
+        XCTAssertEqual(
+            collaborationSignInAction(isAwaitingConfirmation: true, account: nil), .none,
+            "a handover's cookies are not confirmed yet")
+        XCTAssertEqual(
+            collaborationSignInAction(isAwaitingConfirmation: true, account: account), .none,
+            "the account it names decides, not the handover")
+        XCTAssertEqual(
+            collaborationSignInAction(isAwaitingConfirmation: false, account: account), .closeOthers(account),
+            "the same account keeps its sessions; another account's go")
+        XCTAssertEqual(
+            collaborationSignInAction(isAwaitingConfirmation: false, account: nil), .closeAll,
+            "a confirmation that named nobody proves nothing about the open sessions")
+    }
 }

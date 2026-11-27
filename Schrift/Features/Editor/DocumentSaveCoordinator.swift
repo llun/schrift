@@ -3888,7 +3888,6 @@ final class DocumentSaveCoordinator {
             // copy, or it would later win over this draft (the editor restores a parked save
             // first, and a release would push it).
             queued[documentID, owner: owner] = nil
-            if now.userID == nil, inFlight[documentID] == nil { states[documentID] = .pendingSync }
             return
         }
         // Enqueue-hold: while a conflict is recorded, persist the draft and the

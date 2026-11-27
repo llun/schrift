@@ -28,6 +28,23 @@ func collaborationScenePhaseAction(_ phase: ScenePhase) -> CollaborationScenePha
     }
 }
 
+/// What a sign-in change should do to live collaboration sessions. A handover's cookies are not
+/// confirmed yet, so nothing: the account it names decides. A confirmed account closes every
+/// session opened for another (or before any was known); a confirmation that named nobody closes
+/// them all. The same account silently re-logging in keeps its sessions — dropping a mounted
+/// socket there would be a routine launch-time teardown.
+enum CollaborationSignInAction: Equatable {
+    case none
+    case closeOthers(UUID)
+    case closeAll
+}
+
+func collaborationSignInAction(isAwaitingConfirmation: Bool, account: UUID?) -> CollaborationSignInAction {
+    if isAwaitingConfirmation { return .none }
+    guard let account else { return .closeAll }
+    return .closeOthers(account)
+}
+
 private struct AuthenticatedHomeContainer: View {
     @State private var viewModel: HomeViewModel
     @State private var collaboration: DocumentCollaborationManager
@@ -298,7 +315,14 @@ private struct AuthenticatedHomeContainer: View {
             // Nothing announces the previous account; `reauthenticated` learns the new one.
             collaboration.forgetLocalAwareness()
             // Live replicas and sockets opened for another account go once this one is known.
-            if let account = SignedInUserStore().userID { collaboration.closeSessions(otherThan: account) }
+            switch collaborationSignInAction(
+                isAwaitingConfirmation: sessionStore.isAwaitingConfirmation,
+                account: SignedInUserStore().userID)
+            {
+            case .none: break
+            case .closeOthers(let account): collaboration.closeSessions(otherThan: account)
+            case .closeAll: collaboration.closeAll()
+            }
         }
         // The account can also be learned without a re-login (a `/users/me/` retried after a failed
         // confirmation); `pins.revision` moves when it is.

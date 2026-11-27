@@ -74,6 +74,9 @@ final class SessionStore {
     /// stays off until it (or `signOut`) runs; `needsReauthentication` alone is not enough,
     /// because cancelling the sheet clears it while those cookies are still live.
     private var cookiesAwaitingConfirmation = false
+    /// A web login's cookies are in the shared storage and no confirmation has accepted them
+    /// yet, so the account they belong to is not known.
+    var isAwaitingConfirmation: Bool { cookiesAwaitingConfirmation }
     /// RootView's sign-out is draining native saves before it calls `signOut`. A re-login
     /// finishing in that window would bump `signInGeneration` and RootView would drop the
     /// sign-out, so no re-login may complete until it ends (`endSignOut` or `signOut`).

@@ -9,8 +9,10 @@ final class DocumentSaveCoordinatorAccountTests: DocumentSaveCoordinatorTestCase
     private let otherAccount = UUID(uuidString: "6B6B6B6B-6B6B-4B6B-8B6B-6B6B6B6B6B6B")!
 
     private func signIn(_ account: UUID?) {
-        guard let suite = draftSuiteNames.last else { return XCTFail("no coordinator suite") }
-        let signedIn = SignedInUserStore(userDefaults: UserDefaults(suiteName: suite)!)
+        guard let suite = draftSuiteNames.last,
+            let defaults = UserDefaults(suiteName: suite)
+        else { return XCTFail("no coordinator suite") }
+        let signedIn = SignedInUserStore(userDefaults: defaults)
         signedIn.clear()
         signedIn.remember(account)
     }

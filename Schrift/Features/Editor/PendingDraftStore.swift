@@ -88,10 +88,9 @@ let pendingDraftClockTolerance: TimeInterval = 120
 /// conflict holds), never for showing or sending.
 ///
 /// Stored under `<owner>|<document>`, so two accounts' drafts of one shared document never
-/// replace each other. A bare `<document>` key is a draft from an earlier build that
-/// `assignOwnersToEarlierDrafts` could name no account for, or one an older build wrote after
-/// it ran; an `unknown-<epoch>|<document>` key is one saved with no account known. Both are set
-/// aside: shown to nobody and replayed by nobody, but kept.
+/// replace each other. A bare `<document>` key is a draft with no account to name — one from an
+/// earlier build that `assignOwnersToEarlierDrafts` could not place, or one that arrived while
+/// the account was unknown. It is set aside: shown to nobody and replayed by nobody, but kept.
 final class PendingDraftStore {
     private static let draftsKey = "dev.llun.Schrift.pendingDrafts"
     private static let ownersAssignedKey = "dev.llun.Schrift.pendingDrafts.ownersAssigned"
@@ -144,8 +143,8 @@ final class PendingDraftStore {
     /// Stamps the draft with the signed-in account (a native draft keeps its replica's, and a
     /// draft already stamped keeps its stamp) and replaces only that account's draft of the
     /// document. Nothing saves while no account is known — pages are read-only then — but a draft
-    /// that arrived without one would be set aside in a slot of its own rather than lost, shown to
-    /// nobody, exactly like a set-aside draft from an earlier build.
+    /// that arrived without one is set aside under its bare document key rather than lost, shown
+    /// to nobody, exactly like a set-aside draft from an earlier build.
     func save(_ draft: PendingDraft) {
         quarantineUnreadableDataIfNeeded()
         var drafts = loadAll()
@@ -154,7 +153,7 @@ final class PendingDraftStore {
             drafts = drafts.filter { $0.value.documentID != draft.documentID || $0.value.owner != owner }
             drafts[Self.key(owner: owner, documentID: draft.documentID)] = stamped
         } else {
-            drafts["unknown-\(signedInUser.epoch)|\(draft.documentID.uuidString)"] = stamped
+            drafts[draft.documentID.uuidString] = stamped
         }
         persist(drafts)
     }
