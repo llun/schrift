@@ -1,0 +1,102 @@
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_4fb28ab57323fe::t_9e8b9ddbfd099c 681-682,684-686
+  s_4fb28ab57323fe::t_3c733b382e75df 2773-2775,4150-4152,4159,4202-4205,4572-4574,4582,4666-4669
+  s_4fb28ab57323fe::t_c6d123d8783d3c 168-169,204,217,511-514,598-599,669-678,953-954,3742-3751,3767-3768,3773,3811-3816,3846,3848-3855,5586,5590-5591,5597-5600,5628,5636,5641-5643,5645-5646,5691,5702,5763,5798,5861-5870,5873-5875,5878-5882,5884-5888
+  s_4fb28ab57323fe::t_03a34db7a17ee1 680,683,687-688
+  s_4fb28ab57323fe::t_6780625691299c 666-668,3817,3820,3847,3863-3866,3868-3870,5648-5651,5653,5697,5720,5725,5742,5746,5796-5797
+  s_4fb28ab57323fe::t_568e57e396f721 689-692
+  s_4fb28ab57323fe::t_0e58f69ad926a1 661-662,3856,5703-5704
+  s_4fb28ab57323fe::t_bc7bbae531067a 696-700,702-703,2365-2367,2441,2536-2537
+  s_4fb28ab57323fe::t_b708e7205d8358 701,3867,5871-5872,5876-5877,5883
+  s_4fb28ab57323fe::t_017e21f618c424 679
+Schrift/Features/Editor/DocumentContentCacheStore.swift
+  s_4fb28ab57323fe::t_090b747168cc70 132-135,207-209,211-215
+  s_4fb28ab57323fe::t_b708e7205d8358 136,210
+Schrift/Features/Editor/EditorViewModel.swift
+  s_4fb28ab57323fe::t_9fbc5e93ea80d8 201-205,357,1383-1384,1473,1519,1729,4163,4214-4216,4248,4840
+SchriftTests/Features/Profile/AttachmentsViewModelTests.swift
+  s_4fb28ab57323fe::t_de095d78ac3718 135-137,141-155
+  s_4fb28ab57323fe::t_4210a4ca716684 138-140
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAttachmentReplayTests.swift
+  s_4fb28ab57323fe::t_13e184a69fe626 213-270
+Schrift/Features/Home/HomeViewModel.swift
+  s_4fb28ab57323fe::t_57d9a73b4d8da7 495-499,515,593-594
+  s_4fb28ab57323fe::t_568e57e396f721 510-512
+Schrift/Features/Editor/PendingDraftStore.swift
+  s_4fb28ab57323fe::t_42fee8d4ab37dd 143-145
+  s_4fb28ab57323fe::t_43804c666eff63 97-98,124-130,133,136,147-156,165,174-177,184-206,211,213-216,230-235,238-242,244-251,313-315,317-319,321-327,338-339,349-353
+  s_4fb28ab57323fe::t_6780625691299c 138,157-161,166-173,207-210
+  s_4fb28ab57323fe::t_b708e7205d8358 320,328-331
+  s_4fb28ab57323fe::t_94e7142d4336dd 212
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTestCase.swift
+  s_4fb28ab57323fe::t_0d52f2febdbe41 63-64,72-76
+SchriftTests/Features/Editor/Native/NativeEditorWaitingClassicTests.swift
+  s_4fb28ab57323fe::t_4b20f69b6225b1 936-940,942
+  s_4fb28ab57323fe::t_adc51afa43c47c 945-946
+docs/standards/persistence.md
+  s_4fb28ab57323fe::t_0709e6f92b79c3 262-264,271-273
+SchriftTests/Core/Auth/SessionStoreIdentitySideEffectsTests.swift
+  s_4fb28ab57323fe::t_de095d78ac3718 183-217
+SchriftTests/Features/Editor/Native/NativeEditorActivationTests.swift
+  s_4fb28ab57323fe::t_b0826b0af03214 33-53
+  s_4fb28ab57323fe::t_71bbe10a8601c6 2172
+Schrift/Features/Editor/EditorScreen.swift
+  s_4fb28ab57323fe::t_41842c841937f7 24-26,54-55,66-69,100-109
+SchriftTests/Features/Editor/Native/ReplicaSaveAdapterTests.swift
+  s_4fb28ab57323fe::t_71bbe10a8601c6 513,520-523
+Schrift/Features/Profile/ProfileViewModel.swift
+  s_4fb28ab57323fe::t_b6b7a17639c2dd 15-17,28-29,32,102
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_4fb28ab57323fe::t_03a34db7a17ee1 2150,2203-2204
+  s_4fb28ab57323fe::t_b708e7205d8358 2211
+Schrift/Features/Profile/AttachmentsViewModel.swift
+  s_4fb28ab57323fe::t_b708e7205d8358 117,135,147-148
+  s_4fb28ab57323fe::t_ebdf060ea72a02 93-99,113,118-119,133-134,136-141,149
+Schrift/Features/Home/MainTabView.swift
+  s_4fb28ab57323fe::t_b6b7a17639c2dd 74-76
+  s_4fb28ab57323fe::t_ebdf060ea72a02 80,195-196
+SchriftTests/Features/Editor/DocumentSaveCoordinatorDeleteTests.swift
+  s_4fb28ab57323fe::t_6550b8da600c83 729-774
+docs/offline-and-sync.md
+  s_4fb28ab57323fe::t_0709e6f92b79c3 737-741,816,1525-1530,1533-1572,1579-1584
+Schrift/Core/Auth/SignedInUserStore.swift
+  s_4fb28ab57323fe::t_b708e7205d8358 91
+  s_4fb28ab57323fe::t_41842c841937f7 86-90,92-93,97
+  s_4fb28ab57323fe::t_e9e4baebb44609 49-50,73-85,94-96
+  s_4fb28ab57323fe::t_a268b8a5688d8b 98
+SchriftTests/Features/Editor/DocumentContentCacheStoreTests.swift
+  s_4fb28ab57323fe::t_de095d78ac3718 292-315
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAccountTests.swift
+  s_4fb28ab57323fe::t_812e893024e349 62
+  s_4fb28ab57323fe::t_0d52f2febdbe41 66-150
+Schrift/Features/Profile/AttachmentsScreen.swift
+  s_4fb28ab57323fe::t_ebdf060ea72a02 17-19,65
+SchriftTests/Core/Auth/SignedInUserStoreTests.swift
+  s_4fb28ab57323fe::t_de095d78ac3718 88-117
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayIdentityTests.swift
+  s_4fb28ab57323fe::t_472bdf6cd1f704 1-55
+SchriftTests/Features/Editor/PendingDraftStoreTests.swift
+  s_4fb28ab57323fe::t_812e893024e349 414-505
+docs/standards/editor-save.md
+  s_4fb28ab57323fe::t_0709e6f92b79c3 825-828
+SchriftTests/Features/Editor/DocumentSaveCoordinatorMoveTests.swift
+  s_4fb28ab57323fe::t_db2bf94d943d2b 40-41
+Schrift/Core/Auth/SessionStore.swift
+  s_4fb28ab57323fe::t_75c0a64481fd4e 77-79,169-171,174-178,261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8cb7fd0f148540cd355f684c6106cab79659e3f6",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
