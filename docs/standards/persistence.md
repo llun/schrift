@@ -83,8 +83,10 @@
   and also from `SessionStore`'s injected `clearAttachmentCache` (sign-in, cookie
   handover, sign-out); a download that started before a clear is never written back. Displayed image bytes are also cleared at cookie handover, sign-in
   and sign-out through SessionStore's injected `clearImageCache` callback, and the
-  login web view's disk and memory cache through `clearWebCache` (cookies stay, for
-  the IdP's single sign-on); keep that stronger account-isolation lifecycle. See [`docs/offline-and-sync.md`](../offline-and-sync.md).
+  login web view's disk and memory cache through `clearWebCache` (also on a relaunch
+  after an unconfirmed handover, and `SchriftApp.init` clears it at every launch;
+  cookies stay, for the IdP's single sign-on); keep that stronger account-isolation
+  lifecycle. See [`docs/offline-and-sync.md`](../offline-and-sync.md).
 - **The account's displayed profile is cached too** (`CurrentUserCacheStore`,
   `dev.llun.Schrift.currentUser`), because `/users/me/` is the only source of the
   email and names and it is a network call: `ProfileViewModel` held it in memory

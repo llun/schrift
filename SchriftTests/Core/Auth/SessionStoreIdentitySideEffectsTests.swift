@@ -1,3 +1,4 @@
+import WebKit
 import XCTest
 
 @testable import Schrift
@@ -286,6 +287,12 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertEqual(coldClears, 1)
         try store.signOut()
         XCTAssertEqual(webCacheClears, 3)
+    }
+
+    /// Single sign-on (and the silent re-login) needs the web view's cookies to survive the clear.
+    func testTheWebLoginCacheClearKeepsCookies() {
+        XCTAssertEqual(webLoginCacheDataTypes, [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache])
+        XCTAssertFalse(webLoginCacheDataTypes.contains(WKWebsiteDataTypeCookies))
     }
 
     /// The default wiring: sign-out deletes a media preview's staged copy.

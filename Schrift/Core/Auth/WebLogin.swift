@@ -30,11 +30,12 @@ func syncCookies(_ cookies: [HTTPCookie], into storage: CookieStoring) {
     }
 }
 
-/// The login web view's own HTTP cache (`WKWebsiteDataStore.default()`) can hold pages it
-/// loaded for the account that just left. Cookies stay: the IdP's single sign-on lives there.
+/// What `clearWebLoginCache` removes. Never cookies: the IdP's single sign-on lives there.
+let webLoginCacheDataTypes: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache]
+
+/// The login web view's own HTTP cache (`WKWebsiteDataStore.default()`) holds pages it loaded
+/// for whichever account signed in last.
 @MainActor
 func clearWebLoginCache() {
-    WKWebsiteDataStore.default().removeData(
-        ofTypes: [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache], modifiedSince: .distantPast
-    ) {}
+    WKWebsiteDataStore.default().removeData(ofTypes: webLoginCacheDataTypes, modifiedSince: .distantPast) {}
 }
