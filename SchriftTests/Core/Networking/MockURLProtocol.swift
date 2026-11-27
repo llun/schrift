@@ -388,12 +388,18 @@ final class MockURLProtocol: URLProtocol {
             return
         }
 
-        let response = HTTPURLResponse(
-            url: request.url!,
-            statusCode: stub.statusCode,
-            httpVersion: "HTTP/1.1",
-            headerFields: stub.headers
-        )!
+        guard
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: stub.statusCode,
+                httpVersion: "HTTP/1.1",
+                headerFields: stub.headers
+            )
+        else {
+            XCTFail("MockURLProtocol could not build an HTTP response for \(request.url?.absoluteString ?? "nil")")
+            client.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
         client.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client.urlProtocol(self, didLoad: stub.body)
         client.urlProtocolDidFinishLoading(self)

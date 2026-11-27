@@ -33,11 +33,11 @@ class DocumentPinTestCase: XCTestCase {
             userRole: nil, creator: nil)
     }
 
-    nonisolated static func page(_ rows: [Document]) -> Data {
+    nonisolated static func page(_ rows: [Document]) throws -> Data {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.dateEncodingStrategy = .iso8601
-        let data = try! encoder.encode(rows)
+        let data = try encoder.encode(rows)
         return Data(
             "{\"count\":\(rows.count),\"next\":null,\"previous\":null,\"results\":\(String(decoding: data, as: UTF8.self))}"
                 .utf8)

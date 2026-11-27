@@ -579,16 +579,17 @@ final class HomeViewModelLoadTests: HomeViewModelTestCase {
 
     // MARK: - Error retention across silent reloads
 
-    private func seedCachedRecents(_ cache: DocumentCacheStore) {
+    private func seedCachedRecents(_ cache: DocumentCacheStore) throws {
         let body = Self.paginatedFixture(
             id: "66666666-6666-4666-8666-666666666666", title: "Cached Recent", isFavorite: false)
-        let document = try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: body).results[0]
+        let document = try XCTUnwrap(
+            JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: body).results.first)
         cache.saveRecentDocuments([document])
     }
 
-    func testVisibleErrorSurvivesASilentReloadThatFailsQuietly() async {
+    func testVisibleErrorSurvivesASilentReloadThatFailsQuietly() async throws {
         let cache = makeCache()
-        seedCachedRecents(cache)
+        try seedCachedRecents(cache)
         let viewModel = makeViewModel(cache: cache)
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
         await viewModel.refresh()
@@ -601,9 +602,9 @@ final class HomeViewModelLoadTests: HomeViewModelTestCase {
         XCTAssertEqual(viewModel.errorKey, .home_error_load)
     }
 
-    func testVisibleErrorIsClearedByASilentReloadThatSucceeds() async {
+    func testVisibleErrorIsClearedByASilentReloadThatSucceeds() async throws {
         let cache = makeCache()
-        seedCachedRecents(cache)
+        try seedCachedRecents(cache)
         let viewModel = makeViewModel(cache: cache)
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
         await viewModel.refresh()

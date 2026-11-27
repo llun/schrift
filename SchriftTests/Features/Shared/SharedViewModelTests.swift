@@ -81,10 +81,11 @@ final class SharedViewModelTests: XCTestCase {
         """.data(using: .utf8)!
     }
 
-    private func decodeDocument(id: String, title: String) -> Document {
-        try! JSONDecoder.docsAPI
-            .decode(PaginatedResponse<Document>.self, from: Self.paginatedFixture(id: id, title: title))
-            .results[0]
+    private func decodeDocument(id: String, title: String) throws -> Document {
+        try XCTUnwrap(
+            JSONDecoder.docsAPI
+                .decode(PaginatedResponse<Document>.self, from: Self.paginatedFixture(id: id, title: title))
+                .results.first)
     }
 
     // The accesses `list` action is not paginated — the backend returns a bare
@@ -196,9 +197,9 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.enrichment[UUID(uuidString: "11111111-1111-4111-8111-111111111111")!])
     }
 
-    func testSeedsFromCacheSynchronouslyOnInit() {
+    func testSeedsFromCacheSynchronouslyOnInit() throws {
         cache.saveSharedWithMeDocuments([
-            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+            try decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
         ])
         let viewModel = makeViewModel()
         XCTAssertEqual(viewModel.documents.map(\.title), ["Cached Doc"])
@@ -217,9 +218,9 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoading)
     }
 
-    func testListFailureWithCacheIsSilent() async {
+    func testListFailureWithCacheIsSilent() async throws {
         cache.saveSharedWithMeDocuments([
-            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+            try decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
         ])
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in
@@ -239,10 +240,10 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isOffline, "an HTTP error is not evidence the network is down")
     }
 
-    func testRefreshFailureWithCacheIsLoud() async {
+    func testRefreshFailureWithCacheIsLoud() async throws {
         // Explicit pull-to-refresh surfaces failures even behind cached rows.
         cache.saveSharedWithMeDocuments([
-            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+            try decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
         ])
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in
@@ -254,9 +255,9 @@ final class SharedViewModelTests: XCTestCase {
     }
 
     /// A pull-to-refresh whose task SwiftUI cancels learned nothing: no error, not offline.
-    func testCancelledRefreshIsNeitherAnErrorNorOffline() async {
+    func testCancelledRefreshIsNeitherAnErrorNorOffline() async throws {
         cache.saveSharedWithMeDocuments([
-            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+            try decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
         ])
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in
@@ -271,9 +272,9 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.documents.map(\.title), ["Cached Doc"])
     }
 
-    func testWorkOfflineServesCacheWithoutNetwork() async {
+    func testWorkOfflineServesCacheWithoutNetwork() async throws {
         cache.saveSharedWithMeDocuments([
-            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Offline Doc")
+            try decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Offline Doc")
         ])
         preferences.set(true, forKey: "schrift.workOffline")
         let viewModel = makeViewModel()
@@ -283,9 +284,9 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isOffline)
     }
 
-    func testSessionExpiredKeepsCacheSilently() async {
+    func testSessionExpiredKeepsCacheSilently() async throws {
         cache.saveSharedWithMeDocuments([
-            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+            try decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
         ])
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 401, headers: [:], body: Data(), error: nil) }
@@ -463,9 +464,9 @@ final class SharedViewModelTests: XCTestCase {
 
     // MARK: - Connectivity
 
-    func testPathDownServesCacheWithNoRequestAndNoError() async {
+    func testPathDownServesCacheWithNoRequestAndNoError() async throws {
         cache.saveSharedWithMeDocuments([
-            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+            try decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
         ])
         let (availability, path) = makeAvailability()
         let viewModel = makeViewModel(availability: availability)
@@ -485,9 +486,9 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoading)
     }
 
-    func testReconnectLoadFetchesAndClearsTheOfflineState() async {
+    func testReconnectLoadFetchesAndClearsTheOfflineState() async throws {
         cache.saveSharedWithMeDocuments([
-            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+            try decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
         ])
         let (availability, path) = makeAvailability()
         let viewModel = makeViewModel(availability: availability)
@@ -515,9 +516,9 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorKey)
     }
 
-    func testAResponseThatCrossedAnOfflineOnlineFlipIsDiscarded() async {
+    func testAResponseThatCrossedAnOfflineOnlineFlipIsDiscarded() async throws {
         cache.saveSharedWithMeDocuments([
-            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+            try decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
         ])
         let (availability, path) = makeAvailability()
         let viewModel = makeViewModel(availability: availability)
@@ -569,9 +570,9 @@ final class SharedViewModelTests: XCTestCase {
 
     // MARK: - Error retention across silent reloads
 
-    func testVisibleErrorSurvivesASilentReloadThatFailsQuietly() async {
+    func testVisibleErrorSurvivesASilentReloadThatFailsQuietly() async throws {
         cache.saveSharedWithMeDocuments([
-            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+            try decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
         ])
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
@@ -583,9 +584,9 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.errorKey, .shared_error_load, "a silent reload must not blink the error away")
     }
 
-    func testVisibleErrorIsClearedByASilentReloadThatSucceeds() async {
+    func testVisibleErrorIsClearedByASilentReloadThatSucceeds() async throws {
         cache.saveSharedWithMeDocuments([
-            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+            try decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
         ])
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }

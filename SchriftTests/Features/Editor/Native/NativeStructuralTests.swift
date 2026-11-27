@@ -604,7 +604,7 @@ final class NativeStructuralTests: DocumentEngineTestCase {
         _ checkpoints: [(label: String, updateBase64: String, xml: String)], blockID: String,
         kind: NativeEditCommand.Kind
     ) async throws {
-        let seed = try XCTUnwrap(Data(base64Encoded: checkpoints[0].updateBase64))
+        let seed = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(checkpoints.first).updateBase64))
         let session = try await NativeEditorSession.seed(state: seed)
         addTeardownBlock { await session.close().value }
         let updateResult = await session.engine { engine -> Data? in

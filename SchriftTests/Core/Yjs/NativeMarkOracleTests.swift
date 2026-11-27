@@ -46,7 +46,7 @@ final class NativeMarkOracleTests: XCTestCase {
     private func assertSteps(
         _ checkpoints: [Checkpoint], identical: Bool, blockID: String, commands: (Int) -> [NativeEditCommand.Kind]
     ) async throws {
-        let seed = try XCTUnwrap(Data(base64Encoded: checkpoints[0].updateBase64))
+        let seed = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(checkpoints.first).updateBase64))
         // The captures' author client, so a byte-identical step is comparable.
         let session = try await NativeEditorSession.seed(state: seed, clientID: 2, gc: false)
         addTeardownBlock { await session.close().value }

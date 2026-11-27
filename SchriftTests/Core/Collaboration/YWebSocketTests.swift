@@ -141,7 +141,7 @@ final class YWebSocketTests: DocumentCollaborationManagerTestCase {
         defer { manager.suspend() }
         let base = [para("hello", id: blockID)]
         let seed = BlockNoteYjs.encode(base, clientID: 1)
-        spy.sockets[0].deliver(message: frame(.step2, seed))
+        try XCTUnwrap(spy.sockets.first).deliver(message: frame(.step2, seed))
         await waitUntil { manager.encodeSnapshotForSave(for: self.docID) != nil }
         let server = YDoc(clientID: 7)
         defer { server.destroy() }

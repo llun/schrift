@@ -228,7 +228,7 @@ final class DocumentEngineRoundOneTests: DocumentEngineTestCase {
                 try pair.b.applyUpdate(YUpdateDecoder.decode(commitUpdate), origin: .remote)
                 try pair.a.applyUpdate(YUpdateDecoder.decode(peerUpdate), origin: .remote)
             }
-            XCTAssertEqual(text(of: pair.surfaceA.blocks[0]), expectedText)
+            XCTAssertEqual(text(of: try XCTUnwrap(pair.surfaceA.blocks.first)), expectedText)
             XCTAssertEqual(try pair.engineA.currentSelection()?.head.offset, expectedCaret)
             assertConverged(pair, "commit first, deliver to A first=\(toAFirst)")
         }

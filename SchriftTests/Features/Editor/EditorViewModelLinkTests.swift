@@ -73,8 +73,8 @@ final class EditorViewModelLinkTests: XCTestCase {
          "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
         """.data(using: .utf8)!
 
-    private func decodeDocument(id: String, title: String) -> Document {
-        try! JSONDecoder.docsAPI.decode(Document.self, from: Self.documentFixture(id: id, title: title))
+    private func decodeDocument(id: String, title: String) throws -> Document {
+        try JSONDecoder.docsAPI.decode(Document.self, from: Self.documentFixture(id: id, title: title))
     }
 
     // MARK: - Success
@@ -100,8 +100,8 @@ final class EditorViewModelLinkTests: XCTestCase {
     /// The reported case — a link to a sub-page — is already on screen as a `SubpageRow`,
     /// whose `Document` is exactly what a tap on that row would push. Reusing it makes the
     /// tap instant and is the only way the link can work offline.
-    func testOpenLinkedDocumentReusesAListedSubpageWithoutARequest() async {
-        let cached = decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached child")
+    func testOpenLinkedDocumentReusesAListedSubpageWithoutARequest() async throws {
+        let cached = try decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached child")
         childrenCache.save([cached], for: documentID)
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
@@ -127,8 +127,8 @@ final class EditorViewModelLinkTests: XCTestCase {
 
     /// The reuse above is a *lookup*, not "are there any sub-pages": a link out of the
     /// sub-tree, with the Subpages section populated, must still miss and fetch.
-    func testOpenLinkedDocumentFetchesADocumentThatIsNotASubpage() async {
-        let sibling = decodeDocument(id: "33333333-3333-4333-8333-333333333333", title: "Some child")
+    func testOpenLinkedDocumentFetchesADocumentThatIsNotASubpage() async throws {
+        let sibling = try decodeDocument(id: "33333333-3333-4333-8333-333333333333", title: "Some child")
         childrenCache.save([sibling], for: documentID)
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }

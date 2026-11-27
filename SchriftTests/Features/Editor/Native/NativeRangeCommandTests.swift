@@ -415,7 +415,7 @@ final class NativeRangeCommandTests: NativeEditingTestCase {
         _ checkpoints: [(label: String, updateBase64: String, xml: String)], blockID: String,
         range: NativeRangeCommand
     ) async throws {
-        let seed = try XCTUnwrap(Data(base64Encoded: checkpoints[0].updateBase64))
+        let seed = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(checkpoints.first).updateBase64))
         let session = try await NativeEditorSession.seed(state: seed)
         addTeardownBlock { await session.close().value }
         let updates = Locked<[Data]>([])

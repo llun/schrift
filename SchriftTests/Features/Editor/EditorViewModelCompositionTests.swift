@@ -16,7 +16,10 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
         viewModel.liveWrite = live
         live?.viewModel = viewModel
         viewModel.startEditing()
-        let blockID = viewModel.blocks[0].id
+        guard let blockID = viewModel.blocks.first?.id else {
+            XCTFail("the loaded document must have a block")
+            return (viewModel, coordinator, UUID())
+        }
         viewModel.focusedBlockID = blockID
         return (viewModel, coordinator, blockID)
     }

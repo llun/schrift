@@ -76,13 +76,17 @@ final class EditorPageLinkPickerTests: XCTestCase {
             childrenCache: childrenCache, listCache: listCache)
         await viewModel.load()
         viewModel.startEditing()
-        viewModel.focusedBlockID = viewModel.blocks[0].id
+        viewModel.focusedBlockID = viewModel.blocks.first?.id
         return (viewModel, coordinator)
     }
 
     /// What a keystroke does: the text view publishes the buffer, then the caret.
     private func typeText(_ text: String, caret: Int? = nil, in viewModel: EditorViewModel) {
-        viewModel.updateText(blockID: viewModel.blocks[0].id, text: text)
+        guard let blockID = viewModel.blocks.first?.id else {
+            XCTFail("the editor must have a block to type into")
+            return
+        }
+        viewModel.updateText(blockID: blockID, text: text)
         viewModel.selection = NSRange(location: caret ?? (text as NSString).length, length: 0)
     }
 

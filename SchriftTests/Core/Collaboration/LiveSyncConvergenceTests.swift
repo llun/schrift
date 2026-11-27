@@ -140,7 +140,13 @@ final class LiveSyncConvergenceTests: XCTestCase {
         let spy: SocketFactorySpy
         let session: DocumentCollaborationSession?
         /// The one socket this peer opened — the endpoint the relay pumps.
-        var socket: FakeWebSocket { spy.sockets[0] }
+        var socket: FakeWebSocket {
+            guard let socket = spy.sockets.first else {
+                XCTFail("peer opened no socket")
+                return FakeWebSocket()
+            }
+            return socket
+        }
     }
 
     private func makeManager(replicaClientID: UInt32, spy: SocketFactorySpy) -> DocumentCollaborationManager {

@@ -19,13 +19,13 @@ final class DocumentPinFlagObservationTests: DocumentPinTestCase {
         XCTAssertFalse(search.results.contains { $0.isFavorite })
     }
 
-    func testFreshSearchAndSharedFlagsReachOptionsAndTerminalRollback() async {
+    func testFreshSearchAndSharedFlagsReachOptionsAndTerminalRollback() async throws {
         for surface in ["Search", "Home search", "Shared", "Subpages", "Pages drawer"] {
             _ = stub()
             let (coordinator, home, _, shared, search) = environment()
             XCTAssertTrue(queue(coordinator.pins, pinned: true))
             await coordinator.syncPendingPins()
-            let body = Self.page([row()])
+            let body = try Self.page([row()])
             let user = Data("{\"id\":\"\(owner.uuidString)\"}".utf8)
             MockURLProtocol.stubHandler = { request in
                 if request.url?.absoluteString.hasSuffix("users/me/") == true {
@@ -136,13 +136,13 @@ final class DocumentPinFlagObservationTests: DocumentPinTestCase {
         XCTAssertTrue(self.pins().value(for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
     }
 
-    func testWorkOfflineKeepsFreshPartialPageMembershipAndMatchesRelaunch() async {
+    func testWorkOfflineKeepsFreshPartialPageMembershipAndMatchesRelaunch() async throws {
         _ = stub()
         let (coordinator, home, _, _, _) = environment()
         XCTAssertTrue(queue(coordinator.pins, pinned: true))
         await coordinator.syncPendingPins()
-        let recent = Self.page([row(pinned: true)])
-        let empty = Self.page([])
+        let recent = try Self.page([row(pinned: true)])
+        let empty = try Self.page([])
         let user = Data("{\"id\":\"\(owner.uuidString)\"}".utf8)
         MockURLProtocol.stubHandler = { request in
             let url = request.url?.absoluteString ?? ""
