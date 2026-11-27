@@ -268,6 +268,18 @@ final class DocumentCollaborationManagerLifecycleTests: DocumentCollaborationMan
         XCTAssertFalse(manager.holds(hold))
     }
 
+    /// With no account known, a reconnect redials nothing: the cookies could be anyone's.
+    func testReconnectWithNoKnownAccountClosesTheSession() async throws {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(spy: spy, account: { nil })
+        _ = manager.acquireSession(for: docID)
+
+        manager.reconnect()
+
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        await waitAndConfirmNever { spy.sockets.count > 1 }
+    }
+
     /// A claim released after its entry was closed and replaced must not release the
     /// replacement: the token, not the document id, decides.
     func testAStaleHoldDoesNotReleaseTheReplacementSession() async throws {

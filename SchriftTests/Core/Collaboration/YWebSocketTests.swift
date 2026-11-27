@@ -21,7 +21,8 @@ final class YWebSocketTests: DocumentCollaborationManagerTestCase {
             serverBaseURL: baseURL, cookieProvider: { [] }, featureEnabled: { true }, isOffline: { false },
             serverConfigProvider: { config },
             localStateProvider: { LocalAwarenessState(name: "A\"da", color: "#123456") },
-            socketFactory: spy.factory, replicaClientIDProvider: { 42 })
+            socketFactory: spy.factory, replicaClientIDProvider: { 42 },
+            accountProvider: { DocumentCollaborationManagerTestCase.account })
         await manager.refreshServerSupport()
         await manager.refreshLocalAwareness()
         // Pin the manager seam so each test controls availability explicitly.

@@ -31,12 +31,14 @@ final class ManagerSocketFactorySpy: @unchecked Sendable {
 class DocumentCollaborationManagerTestCase: XCTestCase {
     let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
     let docID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+    /// The signed-in account by default: a live session is only rebuilt for a known account.
+    static let account = UUID(uuidString: "99999999-9999-4999-8999-999999999999")!
 
     func makeManager(
         feature: Bool = true, offline: Bool = false, server: Bool = true,
         cookies: [HTTPCookie] = [], linger: Double = 0.05,
         config: ServerConfig? = nil, replicaClientID: UInt32 = 42, spy: ManagerSocketFactorySpy,
-        account: @escaping @MainActor () -> UUID? = { nil }
+        account: @escaping @MainActor () -> UUID? = { DocumentCollaborationManagerTestCase.account }
     ) -> DocumentCollaborationManager {
         let manager = DocumentCollaborationManager(
             serverBaseURL: baseURL,
@@ -65,7 +67,8 @@ class DocumentCollaborationManagerTestCase: XCTestCase {
             serverConfigProvider: { nil },
             localStateProvider: provider,
             socketFactory: spy.factory,
-            lingerSeconds: linger)
+            lingerSeconds: linger,
+            accountProvider: { Self.account })
         manager.serverSupportsLiveCollaboration = true
         return manager
     }

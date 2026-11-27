@@ -740,7 +740,7 @@ final class DocumentCollaborationManager {
             // A socket opened under another account's cookies (or before any was known) is
             // never rebuilt: it goes, and the screen holding it re-asks once it sees
             // `sessionsRevision` move.
-            guard entry.account == account else {
+            guard let account, entry.account == account else {
                 entry.lingerTask?.cancel()
                 entry.session?.stop()
                 releasedHeldReplica = removeEntry(id) || releasedHeldReplica
