@@ -1,4 +1,5 @@
 import Foundation
+import WebKit
 
 func authenticationURL(server: URL) -> URL {
     server.appendingPathComponent("api/v1.0/authenticate/")
@@ -27,4 +28,14 @@ func syncCookies(_ cookies: [HTTPCookie], into storage: CookieStoring) {
     for cookie in cookies {
         storage.setCookie(cookie)
     }
+}
+
+/// What `clearWebLoginCache` removes. Never cookies: the IdP's single sign-on lives there.
+let webLoginCacheDataTypes: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache]
+
+/// The login web view's own HTTP cache (`WKWebsiteDataStore.default()`) holds pages it loaded
+/// for whichever account signed in last.
+@MainActor
+func clearWebLoginCache() {
+    WKWebsiteDataStore.default().removeData(ofTypes: webLoginCacheDataTypes, modifiedSince: .distantPast) {}
 }

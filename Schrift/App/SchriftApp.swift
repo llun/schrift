@@ -13,6 +13,9 @@ struct SchriftApp: App {
         NativeMediaDropPaste.removeStagingRoot()
         // Responses earlier builds cached through `URLSession.shared` (not account-scoped).
         URLCache.shared.removeAllCachedResponses()
+        // Every launch, not only after the upgrade: the login web view caches pages on each sign-in,
+        // and a cold login page costs nothing outside one. Its cookies stay.
+        clearWebLoginCache()
     }
 
     var body: some Scene {

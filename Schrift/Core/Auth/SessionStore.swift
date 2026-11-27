@@ -34,6 +34,7 @@ final class SessionStore {
     private let clearAttachmentCache: () -> Void
     private let clearMediaDropStaging: () -> Void
     private let endMediaPlayback: () -> Void
+    private let clearWebCache: () -> Void
     private let clearDiagnostics: () -> Void
     var imageCacheScope: String? { imageCacheSessionID?.uuidString }
 
@@ -104,6 +105,7 @@ final class SessionStore {
         clearAttachmentCache: @escaping () -> Void = { AttachmentCacheStore().removeAll() },
         clearMediaDropStaging: @escaping () -> Void = { NativeMediaDropPaste.removeStagingRoot() },
         endMediaPlayback: @escaping () -> Void = { NativeMediaPresenter.endSession() },
+        clearWebCache: @escaping () -> Void = { clearWebLoginCache() },
         clearDiagnostics: @escaping () -> Void = { NativeEditorDiagnosticsStore.shared.reset() },
         now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
@@ -111,6 +113,7 @@ final class SessionStore {
         self.clearAttachmentCache = clearAttachmentCache
         self.clearMediaDropStaging = clearMediaDropStaging
         self.endMediaPlayback = endMediaPlayback
+        self.clearWebCache = clearWebCache
         self.clearDiagnostics = clearDiagnostics
         self.now = now
         self.userDefaults = userDefaults
@@ -134,6 +137,8 @@ final class SessionStore {
                 // An unconfirmed cookie handover clears the persisted key until /users/me/ confirms;
                 // if the app relaunches before confirmation, wipe any unscoped attachments left by it.
                 clearAttachmentCache()
+                // The login web view cached that unconfirmed account's pages too.
+                clearWebCache()
                 userDefaults.set(namespace.uuidString, forKey: Self.imageCacheSessionKey)
             }
             // A session stored by a build that predates the ThisDeviceOnly
@@ -257,6 +262,7 @@ final class SessionStore {
         clearMediaDropStaging()
         // The player and its staged copies: nothing of this account plays or stays after it.
         endMediaPlayback()
+        clearWebCache()
         clearDiagnostics()
         signedInUser.clear()
         // The account's displayed profile goes with the id — it is *displayed* before any

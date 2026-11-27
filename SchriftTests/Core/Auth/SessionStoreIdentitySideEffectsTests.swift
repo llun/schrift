@@ -1,3 +1,4 @@
+import WebKit
 import XCTest
 
 @testable import Schrift
@@ -259,6 +260,39 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertEqual(attachmentClears, 3)
         XCTAssertEqual(stagingClears, 3)
         XCTAssertEqual(playbackEnds, 3, "sign-out stops the player")
+    }
+
+    /// The login web view's page cache goes with the account; a mere expiry keeps it.
+    func testAccountTransitionsClearTheWebLoginCache() throws {
+        var webCacheClears = 0
+        let keychain = FakeKeychainStore()
+        let store = SessionStore(
+            userDefaults: userDefaults,
+            keychain: keychain,
+            cookieStorage: FakeCookieStorage(),
+            clearWebCache: { webCacheClears += 1 })
+
+        try store.signIn(serverURL: serverURL)
+        XCTAssertEqual(webCacheClears, 1)
+        store.noteSessionExpired()
+        store.cancelReauthentication()
+        XCTAssertEqual(webCacheClears, 1, "mere expiry must keep caches")
+        store.noteSessionCookiesReplaced()
+        XCTAssertEqual(webCacheClears, 2)
+        // A relaunch before the handover is confirmed clears it again, like the attachment cache.
+        var coldClears = 0
+        _ = SessionStore(
+            userDefaults: userDefaults, keychain: keychain, cookieStorage: FakeCookieStorage(),
+            clearWebCache: { coldClears += 1 })
+        XCTAssertEqual(coldClears, 1)
+        try store.signOut()
+        XCTAssertEqual(webCacheClears, 3)
+    }
+
+    /// Single sign-on (and the silent re-login) needs the web view's cookies to survive the clear.
+    func testTheWebLoginCacheClearKeepsCookies() {
+        XCTAssertEqual(webLoginCacheDataTypes, [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache])
+        XCTAssertFalse(webLoginCacheDataTypes.contains(WKWebsiteDataTypeCookies))
     }
 
     /// The default wiring: sign-out deletes a media preview's staged copy.
