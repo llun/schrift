@@ -1,0 +1,77 @@
+SchriftTests/Features/Editor/Engine/DocumentEngineRoundOneTests.swift
+  s_096a3a182d8b4c::t_a7e0450bc6819f 231
+SchriftTests/Core/Yjs/BlockNoteIncrementalSaveTests.swift
+  s_096a3a182d8b4c::t_ffb7eb5c4424f0 331-333,348
+SchriftTests/Core/Networking/MockURLProtocol.swift
+  s_096a3a182d8b4c::t_14adfb032f9626 391-402
+SchriftTests/Core/Collaboration/YWebSocketTests.swift
+  s_096a3a182d8b4c::t_ebe0fe1d51c86a 144
+SchriftTests/Features/Documents/DocumentPinStaleFetchTests.swift
+  s_096a3a182d8b4c::t_d5a5826ad5ea62 30,36-37,62
+SchriftTests/Features/Editor/EditorViewModelLinkTests.swift
+  s_096a3a182d8b4c::t_42cbca58aaffe9 76-77,103-104,130-131
+SchriftTests/Core/Yjs/MarkdownYjsTests.swift
+  s_096a3a182d8b4c::t_2d95de596d678e 18-22
+SchriftTests/Features/Editor/BlockTextFocusTests.swift
+  s_096a3a182d8b4c::t_f7dfc5305d5dfb 157,164-165
+SchriftTests/Features/Editor/Native/NativeMediaDropPasteTests.swift
+  s_096a3a182d8b4c::t_13c85dcc0fa5b5 36,38,310,401,466,791,860,966,1169
+SchriftTests/Features/Options/OptionsViewModelTests.swift
+  s_096a3a182d8b4c::t_65ac864bcca1d1 229,235,256-257,375,381
+SchriftTests/Features/Editor/EditorViewModelCompositionTests.swift
+  s_096a3a182d8b4c::t_c5f6da04ab197d 19-22
+SchriftTests/Features/Editor/EditorPageLinkPickerTests.swift
+  s_096a3a182d8b4c::t_364a44e91a593f 79,85-89
+SchriftTests/Features/Editor/Native/NativeStructuralTests.swift
+  s_096a3a182d8b4c::t_f0cf68b89860b8 607
+SchriftTests/Core/Yjs/BlockNoteWriterOracleTests.swift
+  s_096a3a182d8b4c::t_63f2b870db4192 32-33
+SchriftTests/Core/Yjs/BlockNoteWriterTests.swift
+  s_f193227df3df34::t_b5e250ae3dad9d 8-9
+SchriftTests/Features/Shared/SharedViewModelTests.swift
+  s_096a3a182d8b4c::t_6ca912d3ea152b 84-88,200,202,221,223,243,246,258,260,275,277,287,289,467,469,489,491,519,521,573,575,587,589
+SchriftTests/Features/Editor/EditorFormattingBarTests.swift
+  s_096a3a182d8b4c::t_47991f0fec11f8 22
+SchriftTests/Features/Editor/Native/NativeRangeCommandTests.swift
+  s_096a3a182d8b4c::t_93593fc08b74b9 418
+SchriftTests/Features/Documents/DocumentPinTestCase.swift
+  s_096a3a182d8b4c::t_63afca330128c7 36,40
+SchriftTests/Core/Yjs/NativeMarkOracleTests.swift
+  s_096a3a182d8b4c::t_a63d6021927beb 49
+SchriftTests/Features/Editor/EditorViewModelChildrenTests.swift
+  s_096a3a182d8b4c::t_4d2b06003da82f 192-196,199-200,220-221,287-288,297,301-302,311-312,323,327-328,338,341,366,373
+SchriftTests/Core/Collaboration/LiveSyncConvergenceTests.swift
+  s_096a3a182d8b4c::t_8aeb608976dac4 143-149
+SchriftTests/Features/Documents/DocumentPinFlagObservationTests.swift
+  s_096a3a182d8b4c::t_f2011cbff0bf06 22,28,139,144-145
+SchriftTests/Features/Home/HomeViewModelLoadTests.swift
+  s_096a3a182d8b4c::t_7fb52fd9b617e5 582,585-586,590,592,605,607
+SchriftTests/Core/Yjs/ReferenceCharacterMarkdownPaste.swift
+  s_096a3a182d8b4c::t_3845ff4d4ddeea 2,477-488,494-505
+SchriftTests/Features/Editor/Engine/DocumentEngineCompositionTests.swift
+  s_096a3a182d8b4c::t_e9e05e8608654e 303,309
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9f63b466431c8199889a0c68c6ab570e7856ca21",
+  "prompts": {},
+  "sessions": {
+    "s_096a3a182d8b4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "59ed076d-13ae-4577-b65d-8ec1d938be0c",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_f193227df3df34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dbe81370-1886-4254-8a96-847487f9d822",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
