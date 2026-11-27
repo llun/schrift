@@ -279,13 +279,15 @@ func presentedPeerCount(peerCount: Int, isOffline: Bool) -> Int? {
 
 /// Whether a sign-in change reopens the native editor. A waiting-classic drain must re-ask under
 /// the account now known, and a native session with no input row was opened while the account was
-/// unconfirmed (read-only), so it re-asks too. A mounted native editor keeps its session.
+/// unconfirmed (read-only), so it re-asks too, as does a preserved-unavailable page (its local copy
+/// may be the account now named). A mounted native editor keeps its session.
 @MainActor
 func nativeEditorReopensOnSignInChange(route: NativeEditorOpen.Route) -> Bool {
     switch route {
     case .waitingClassicEdits: return true
     case .native(let session): return session.input == nil
-    case .loading, .classic, .preservedUnavailable, .unavailable: return false
+    case .preservedUnavailable: return true
+    case .loading, .classic, .unavailable: return false
     }
 }
 

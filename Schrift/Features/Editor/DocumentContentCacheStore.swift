@@ -130,8 +130,8 @@ final class DocumentContentCacheStore {
     }
 
     /// `session` is the sign-in the body was fetched or saved under: a response that lands after
-    /// the session changed is written nowhere, so it can neither reach another account's folder
-    /// nor come back after a sign-out wiped it.
+    /// another account (or no known account) took over is written nowhere, so it can never reach
+    /// another account's folder; the same account signing in again keeps receiving its own.
     func save(_ entry: CachedDocumentContent, during session: SignedInSession? = nil) {
         if let session, pinnedDirectory == nil, !session.isStill(signedInUser.session) { return }
         guard let directory, let data = try? encoder.encode(entry) else { return }

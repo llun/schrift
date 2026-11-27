@@ -81,6 +81,8 @@ final class NativeEditorWaitingClassicTests: DocumentEngineTestCase {
         XCTAssertNil(readOnly.input)
         XCTAssertTrue(nativeEditorReopensOnSignInChange(route: unconfirmed.route))
         unconfirmed.close()
+        // A page whose local copy was unavailable with no account known re-asks once one is named.
+        XCTAssertTrue(nativeEditorReopensOnSignInChange(route: .preservedUnavailable))
 
         // A mounted native editor keeps its session.
         env.model.signedInUser.remember(owner)

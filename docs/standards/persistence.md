@@ -271,7 +271,8 @@
   call so a long-lived instance follows an account change and reads nothing while the
   account is unknown; stateless over that folder, `isExcludedFromBackup` (the root
   too), every account's cleared on sign-out, never logged. A write that carries the
-  sign-in it was fetched under (`save(_:during:)`) is dropped once that sign-in changed. Its eviction selection is a top-level
+  sign-in it was fetched under (`save(_:during:)`) is dropped once another account, or no
+  known account, is signed in; the same account re-logging in keeps receiving its own. Its eviction selection is a top-level
   pure free function (`contentCacheEvictions`), applied per account folder.
 - **Work from before account scoping is assigned once, in `SchriftApp.init`** — before
   any sign-in can name an account: `PendingDraftStore.assignOwnersToEarlierDrafts()`
