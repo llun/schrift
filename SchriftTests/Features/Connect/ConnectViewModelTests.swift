@@ -267,6 +267,7 @@ final class ConnectViewModelTests: XCTestCase {
     /// opens the login only after it, so the previous IdP session cannot answer it.
     func testTheWebLoginWaitsForAWipeStillUnderWay() async throws {
         let gate = AsyncStream<Void>.makeStream()
+        defer { gate.continuation.finish() }
         let clear = Task { for await _ in gate.stream { return } }
         let viewModel = makeViewModel(pendingWebDataClear: { clear }) { _ in
             .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
@@ -274,11 +275,29 @@ final class ConnectViewModelTests: XCTestCase {
         viewModel.serverURLInput = "https://docs.llun.dev"
 
         viewModel.startSignIn()
-        await Task.yield()
-        XCTAssertFalse(viewModel.isPresentingWebLogin)
+        await waitAndConfirmNever { viewModel.isPresentingWebLogin }
 
         gate.continuation.yield()
         await waitUntil { viewModel.isPresentingWebLogin }
         XCTAssertTrue(viewModel.isPresentingWebLogin)
+    }
+
+    /// Correcting the address to something invalid while waiting cancels the earlier wait.
+    func testAnInvalidRetryWhileWaitingOpensNoLogin() async throws {
+        let gate = AsyncStream<Void>.makeStream()
+        defer { gate.continuation.finish() }
+        let clear = Task { for await _ in gate.stream { return } }
+        let viewModel = makeViewModel(pendingWebDataClear: { clear }) { _ in
+            .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
+        }
+        viewModel.serverURLInput = "https://docs.llun.dev"
+        viewModel.startSignIn()
+        viewModel.serverURLInput = "not a server"
+        viewModel.startSignIn()
+
+        gate.continuation.yield()
+        await clear.value
+        await waitAndConfirmNever { viewModel.isPresentingWebLogin }
+        XCTAssertEqual(viewModel.errorKey, .connect_error_invalid_server)
     }
 }

@@ -15,6 +15,7 @@ final class ConnectViewModel {
     private let serverConfigStore: ServerConfigStore
     private let apiClientFactory: (URL) -> DocsAPIClient
     private let pendingWebDataClear: () -> Task<Void, Never>?
+    private var presentWebLoginTask: Task<Void, Never>?
 
     init(
         sessionStore: SessionStore,
@@ -35,6 +36,7 @@ final class ConnectViewModel {
     }
 
     func startSignIn() {
+        presentWebLoginTask?.cancel()
         guard let url = normalizedServerURL(from: serverURLInput) else {
             errorKey = .connect_error_invalid_server
             return
@@ -50,14 +52,21 @@ final class ConnectViewModel {
         presentWebLogin()
     }
 
-    /// After any wipe of the web view's store still under way (a sign-out a moment ago).
+    /// After every wipe of the web view's store still under way (a sign-out a moment ago, and
+    /// any chained behind it); a later tap replaces an earlier wait.
     private func presentWebLogin() {
-        guard let clear = pendingWebDataClear() else {
+        presentWebLoginTask?.cancel()
+        guard pendingWebDataClear() != nil else {
             isPresentingWebLogin = true
             return
         }
-        Task {
-            await clear.value
+        presentWebLoginTask = Task {
+            var awaited: Task<Void, Never>?
+            while let clear = pendingWebDataClear(), clear != awaited {
+                awaited = clear
+                await clear.value
+            }
+            guard !Task.isCancelled else { return }
             isPresentingWebLogin = true
         }
     }
