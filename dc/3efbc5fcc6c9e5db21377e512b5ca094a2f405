@@ -1,0 +1,79 @@
+Schrift/Core/Collaboration/LiveCollaborationAvailability.swift
+  s_ab6d90bb08bb2d::t_511b3560b3fa43 7
+SchriftTests/Core/Collaboration/DocumentCollaborationManagerLocalEditTests.swift
+  s_ab6d90bb08bb2d::t_0d18c7f960bdd7 83-107
+  s_4fb28ab57323fe::t_104c90271c88c9 108
+Schrift/Features/Editor/EditorScreen.swift
+  s_ab6d90bb08bb2d::t_06d6cf01f3f279 30-34,80,97,126-127,132-139
+Schrift/Core/Collaboration/DocumentCollaborationSession.swift
+  s_ab6d90bb08bb2d::t_911609ac34498d 53-55,320-324,338
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_ab6d90bb08bb2d::t_bb433daa69d825 1583,2011,2074-2075,2081-2083
+SchriftTests/Core/Collaboration/CollaborationPresenceTests.swift
+  s_ab6d90bb08bb2d::t_ae4e497bc3554f 95-96,103-105,110-111,114,117-118,120-121,124-125,128-129,131-132,135,138,141,143-144,147-187
+  s_4fb28ab57323fe::t_4e2b7f59900e60 188-189
+Schrift/Features/Editor/Native/NativeAwarenessController.swift
+  s_ab6d90bb08bb2d::t_6132b4cf7fe5f2 46-47
+Schrift/Core/Collaboration/CollaborationPresence.swift
+  s_ab6d90bb08bb2d::t_3328c8577d71f2 79-84,86-88,90,92-97,102,105,108
+SchriftTests/Core/Collaboration/DocumentCollaborationSessionTests.swift
+  s_ab6d90bb08bb2d::t_0dd3301ed0d8dc 587-620
+  s_4fb28ab57323fe::t_cd4eb2a30446f5 621
+Schrift/Features/Editor/Native/NativeCursorOverlay.swift
+  s_ab6d90bb08bb2d::t_e02715226dcf16 83-84,103,145-149,153
+docs/architecture.md
+  s_ab6d90bb08bb2d::t_0844b410ff390f 1516-1523,1872-1874
+docs/standards/editor-save.md
+  s_ab6d90bb08bb2d::t_2dbda47d65f987 828-829
+Schrift/Core/Collaboration/DocumentCollaborationManager.swift
+  s_ab6d90bb08bb2d::t_f8f1511c3850e4 361-364,417-419,422-425,427-441,443,448
+  s_4fb28ab57323fe::t_0f9f0518d7cb72 546-547,549
+SchriftTests/Features/Editor/EditorScreenAccountTests.swift
+  s_ab6d90bb08bb2d::t_cbc62039c87616 38-74
+Schrift/Features/Editor/EditorView.swift
+  s_ab6d90bb08bb2d::t_f466860e89a4e4 414,416-418,815-819
+SchriftTests/Core/Collaboration/DocumentCollaborationManagerLifecycleTests.swift
+  s_ab6d90bb08bb2d::t_ddae06260e1689 271-273,276-288,291-292,294-308
+Schrift/App/RootView.swift
+  s_ab6d90bb08bb2d::t_a9203644918b09 32-36,43
+SchriftTests/Features/Editor/Native/NativeEditorActivationTests.swift
+  s_ab6d90bb08bb2d::t_91b720a2e8268e 1686-1710
+SchriftTests/Core/Collaboration/DocumentCollaborationManagerTestCase.swift
+  s_ab6d90bb08bb2d::t_dc50175b7a7a91 28-33
+Schrift/Features/Editor/Native/DocumentReplicaSession.swift
+  s_ab6d90bb08bb2d::t_e4832cf3e0fb4b 881-884
+SchriftTests/App/SyncTriggerTests.swift
+  s_ab6d90bb08bb2d::t_f4c89ca62f44c2 28-31,34,37-38
+SchriftTests/Core/Collaboration/LiveSyncConvergenceTests.swift
+  s_4fb28ab57323fe::t_f4dbd611863789 161-162
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_4fb28ab57323fe::t_cd3f00f6f2cc95 200-201
+SchriftTests/Features/Editor/LiveEditingIntegrationTests.swift
+  s_4fb28ab57323fe::t_9bf1729fbd8ea1 189-190,644-645
+docs/standards/document-engine.md
+  s_4fb28ab57323fe::t_0d9452fe90909d 986-987
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc3efbc5fcc6c9e5db21377e512b5ca094a2f405",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_ab6d90bb08bb2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a3992550c5c95068c",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
