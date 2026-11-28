@@ -43,8 +43,8 @@ struct PeerCursorPlaces: Equatable, Sendable {
 ///   replica reports none, and a reader's socket never publishes.
 @MainActor @Observable
 final class NativeAwarenessController {
-    static let maxStateBytes = 8_192
-    static let maxPeers = 64
+    nonisolated static let maxStateBytes = 8_192
+    nonisolated static let maxPeers = 64
 
     struct Peer: Equatable {
         var peer: CollaborationPeer

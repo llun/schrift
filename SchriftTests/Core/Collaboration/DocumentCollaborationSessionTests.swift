@@ -584,6 +584,41 @@ final class DocumentCollaborationSessionTests: XCTestCase {
         await waitUntil { session.state == .ended(.closed) }
     }
 
+    /// Inbound awareness is untrusted: the classic route applies the native controller's
+    /// bounds, so a hostile frame cannot grow the presence list or replay an old state.
+    func testBoundsInboundAwarenessLikeTheNativeController() async {
+        let fake = FakeWebSocket()
+        let session = makePresenceSession(fake, clientID: 42)
+        session.start()
+        await waitUntil { fake.sentFrames.count == 2 }
+
+        // Over the byte cap: skipped.
+        let oversized =
+            ##"{"name":"\##(String(repeating: "a", count: NativeAwarenessController.maxStateBytes))","color":"#000000"}"##
+        fake.deliver(message: awarenessFrame([AwarenessEntry(clientID: 1, clock: 1, stateJSON: oversized)]))
+        await waitAndConfirmNever { !session.peers.isEmpty }
+
+        // A clock that is not newer does not overwrite the known state.
+        fake.deliver(message: awarenessFrame([peerEntry(2, "Ada")]))
+        await waitUntil { session.peers.map(\.clientID) == [2] }
+        fake.deliver(
+            message: awarenessFrame([
+                AwarenessEntry(clientID: 2, clock: 1, stateJSON: ##"{"name":"Mallory","color":"#000000"}"##)
+            ]))
+        await waitAndConfirmNever { session.peers.first?.name == "Mallory" }
+
+        // The cap refuses a new client once the table is full.
+        let flood = (0..<(NativeAwarenessController.maxPeers + 5)).map {
+            AwarenessEntry(clientID: UInt(1000 + $0), clock: 1, stateJSON: ##"{"name":"P\##($0)","color":"#000000"}"##)
+        }
+        fake.deliver(message: awarenessFrame(flood))
+        await waitUntil { session.peers.count == NativeAwarenessController.maxPeers }
+        XCTAssertNil(session.peers.first { $0.clientID == 1000 + UInt(NativeAwarenessController.maxPeers + 4) })
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
     func testIgnoresFramesForADifferentDocument() async {
         let fake = FakeWebSocket()
         let counter = ChangeCounter()

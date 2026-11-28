@@ -878,8 +878,10 @@ actor DocumentReplicaSession {
     /// shadow). A leaf block of an unknown type is a locked card, so it does
     /// not downgrade; any other opaque block does.
     private func recheckTypability() {
-        // shortcut: a full projection + shadow per remote frame; measure with
-        // the nesting cap before live collaboration is on by default (plan PR 13).
+        // shortcut: a full projection + shadow per remote frame. Bounded by
+        // `NativeCollaborationBinding.inboundBound` and its redial budget, and measured by
+        // `YTransaction.maxTypeNestingDepth`; upgrade to an incremental check if a remote
+        // frame ever costs more than a frame.
         guard canType else { return }
         let typability = NativeBlockProjection.typability(doc, interlinkingOrigin: interlinkingOrigin)
         guard !typability.canType else { return }

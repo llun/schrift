@@ -197,7 +197,8 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
         let spy = ManagerSocketFactorySpy()
         let manager = DocumentCollaborationManager(
             serverBaseURL: baseURL, cookieProvider: { [] }, featureEnabled: { true }, isOffline: { false },
-            serverConfigProvider: { nil }, socketFactory: spy.factory, lingerSeconds: 0.05)
+            serverConfigProvider: { nil }, socketFactory: spy.factory, lingerSeconds: 0.05,
+            accountProvider: { DocumentCollaborationManagerTestCase.account })
         manager.serverSupportsLiveCollaboration = true
         let (coordinator, draftStore, _) = makeCoordinator(isLiveReplicaHeld: { [weak manager] documentID in
             manager?.hasHeldLiveReplica(for: documentID) ?? false

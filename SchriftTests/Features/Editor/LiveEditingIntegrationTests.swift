@@ -186,7 +186,8 @@ final class LiveEditingIntegrationTests: XCTestCase {
             isOffline: { false },
             serverConfigProvider: { nil },
             socketFactory: spy.factory,
-            lingerSeconds: 0.05)
+            lingerSeconds: 0.05,
+            accountProvider: { DocumentCollaborationManagerTestCase.account })
         manager.serverSupportsLiveCollaboration = true
         return manager
     }
@@ -640,7 +641,8 @@ final class LiveEditingIntegrationTests: XCTestCase {
         let config = ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: "wss://example.com/ws/v1/docs")
         let manager = DocumentCollaborationManager(
             serverBaseURL: baseURL, cookieProvider: { [] }, featureEnabled: { true }, isOffline: { false },
-            serverConfigProvider: { config }, socketFactory: spy.factory)
+            serverConfigProvider: { config }, socketFactory: spy.factory,
+            accountProvider: { DocumentCollaborationManagerTestCase.account })
         await manager.refreshServerSupport()
         _ = try XCTUnwrap(manager.session(for: documentID, canUpdate: false))
         defer { manager.suspend() }

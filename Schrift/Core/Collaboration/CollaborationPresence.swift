@@ -76,19 +76,34 @@ struct CollaborationPeer: Equatable, Identifiable, Sendable {
 /// peer, drop one whose state is null/invalid, and never include our own
 /// `localClientID` (the server echoes our own awareness back). Sorted by
 /// `clientID` so the avatar order is stable. Pure, so it is unit-testable.
+///
+/// Inbound awareness is untrusted, so the fold applies the native controller's
+/// bounds: an entry over `NativeAwarenessController.maxStateBytes` is skipped, a
+/// new client is refused once `maxPeers` are present, and an entry whose clock is
+/// not newer than the one already seen is stale (y-protocols: an equal clock does
+/// not renew). `clocks` is the per-client clock the caller keeps between frames.
 func updatedPeers(
-    _ current: [CollaborationPeer], applying entries: [AwarenessEntry], excludingLocalClientID localClientID: UInt,
-    wireProtocol: CollaborationWireProtocol = .hocuspocus
-) -> [CollaborationPeer] {
+    _ current: [CollaborationPeer], clocks: [UInt: UInt], applying entries: [AwarenessEntry],
+    excludingLocalClientID localClientID: UInt, wireProtocol: CollaborationWireProtocol = .hocuspocus
+) -> (peers: [CollaborationPeer], clocks: [UInt: UInt]) {
     var byID = Dictionary(current.map { ($0.clientID, $0) }, uniquingKeysWith: { _, new in new })
+    var clocks = clocks
     for entry in entries where entry.clientID != localClientID {
+        guard entry.stateJSON.utf8.count <= NativeAwarenessController.maxStateBytes else { continue }
+        if let known = clocks[entry.clientID] {
+            guard entry.clock > known || (entry.clock == known && entry.stateJSON == "null") else { continue }
+        } else if byID.count >= NativeAwarenessController.maxPeers {
+            continue
+        }
         if let peer = CollaborationPeer(
             clientID: entry.clientID, stateJSON: entry.stateJSON, wireProtocol: wireProtocol)
         {
             byID[entry.clientID] = peer
+            clocks[entry.clientID] = entry.clock
         } else {
             byID.removeValue(forKey: entry.clientID)
+            clocks[entry.clientID] = nil
         }
     }
-    return byID.values.sorted { $0.clientID < $1.clientID }
+    return (byID.values.sorted { $0.clientID < $1.clientID }, clocks)
 }

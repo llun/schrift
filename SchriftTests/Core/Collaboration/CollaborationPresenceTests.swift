@@ -92,57 +92,100 @@ final class CollaborationPresenceTests: XCTestCase {
     // MARK: - updatedPeers fold
 
     func testUpsertsNewPeers() {
-        let peers = updatedPeers(
-            [],
+        let folded = updatedPeers(
+            [], clocks: [:],
             applying: [
                 AwarenessEntry(clientID: 2, clock: 1, stateJSON: ##"{"name":"Bo","color":"#111111"}"##),
                 AwarenessEntry(clientID: 1, clock: 1, stateJSON: ##"{"name":"Ada","color":"#222222"}"##),
             ],
             excludingLocalClientID: 99)
         // Sorted by clientID for a stable avatar order.
-        XCTAssertEqual(peers.map(\.clientID), [1, 2])
-        XCTAssertEqual(peers.map(\.name), ["Ada", "Bo"])
+        XCTAssertEqual(folded.peers.map(\.clientID), [1, 2])
+        XCTAssertEqual(folded.peers.map(\.name), ["Ada", "Bo"])
+        XCTAssertEqual(folded.clocks, [1: 1, 2: 1])
     }
 
     func testExcludesLocalClientID() {
         // The server echoes our own awareness back; we must never show ourselves.
-        let peers = updatedPeers(
-            [],
+        let folded = updatedPeers(
+            [], clocks: [:],
             applying: [AwarenessEntry(clientID: 5, clock: 1, stateJSON: ##"{"name":"Me","color":"#333333"}"##)],
             excludingLocalClientID: 5)
-        XCTAssertTrue(peers.isEmpty)
+        XCTAssertTrue(folded.peers.isEmpty)
     }
 
-    func testUpdatesAnExistingPeerInPlace() {
-        let existing = try! XCTUnwrap(
+    func testUpdatesAnExistingPeerInPlace() throws {
+        let existing = try XCTUnwrap(
             CollaborationPeer(clientID: 3, stateJSON: ##"{"name":"Old","color":"#000000"}"##))
-        let peers = updatedPeers(
-            [existing],
+        let folded = updatedPeers(
+            [existing], clocks: [3: 1],
             applying: [AwarenessEntry(clientID: 3, clock: 2, stateJSON: ##"{"name":"New","color":"#ffffff"}"##)],
             excludingLocalClientID: 99)
-        XCTAssertEqual(peers.count, 1)
-        XCTAssertEqual(peers[0].name, "New")
+        XCTAssertEqual(folded.peers.count, 1)
+        XCTAssertEqual(folded.peers.first?.name, "New")
     }
 
-    func testNullStateRemovesAnExistingPeer() {
-        let existing = try! XCTUnwrap(
+    func testNullStateRemovesAnExistingPeer() throws {
+        let existing = try XCTUnwrap(
             CollaborationPeer(clientID: 3, stateJSON: ##"{"name":"Bye","color":"#000000"}"##))
-        let peers = updatedPeers(
-            [existing],
+        let folded = updatedPeers(
+            [existing], clocks: [3: 1],
             applying: [AwarenessEntry(clientID: 3, clock: 2, stateJSON: "null")],
             excludingLocalClientID: 99)
-        XCTAssertTrue(peers.isEmpty)
+        XCTAssertTrue(folded.peers.isEmpty)
     }
 
-    func testInvalidStateRemovesAnExistingPeer() {
+    func testInvalidStateRemovesAnExistingPeer() throws {
         // A state that no longer carries a name drops the peer rather than
         // leaving a stale avatar on screen.
-        let existing = try! XCTUnwrap(
+        let existing = try XCTUnwrap(
             CollaborationPeer(clientID: 3, stateJSON: ##"{"name":"Bye","color":"#000000"}"##))
-        let peers = updatedPeers(
-            [existing],
+        let folded = updatedPeers(
+            [existing], clocks: [3: 1],
             applying: [AwarenessEntry(clientID: 3, clock: 2, stateJSON: ##"{"color":"#000000"}"##)],
             excludingLocalClientID: 99)
-        XCTAssertTrue(peers.isEmpty)
+        XCTAssertTrue(folded.peers.isEmpty)
+    }
+
+    // MARK: - updatedPeers bounds (inbound awareness is untrusted)
+
+    func testIgnoresAnEntryOverTheStateByteCap() {
+        let oversized =
+            ##"{"name":"\##(String(repeating: "a", count: NativeAwarenessController.maxStateBytes))","color":"#000000"}"##
+        let folded = updatedPeers(
+            [], clocks: [:],
+            applying: [AwarenessEntry(clientID: 1, clock: 1, stateJSON: oversized)],
+            excludingLocalClientID: 99)
+        XCTAssertTrue(folded.peers.isEmpty, "an entry over the byte cap is skipped")
+    }
+
+    func testRefusesANewPeerOnceTheCapIsReached() {
+        let full = (1...NativeAwarenessController.maxPeers).map {
+            AwarenessEntry(clientID: UInt($0), clock: 1, stateJSON: ##"{"name":"P\##($0)","color":"#000000"}"##)
+        }
+        let folded = updatedPeers(
+            [], clocks: [:], applying: full, excludingLocalClientID: 99)
+        XCTAssertEqual(folded.peers.count, NativeAwarenessController.maxPeers)
+
+        let over = updatedPeers(
+            folded.peers, clocks: folded.clocks,
+            applying: [AwarenessEntry(clientID: 999, clock: 1, stateJSON: ##"{"name":"Late","color":"#000000"}"##)],
+            excludingLocalClientID: 99)
+        XCTAssertEqual(over.peers.count, NativeAwarenessController.maxPeers, "a new client is refused at the cap")
+        XCTAssertNil(over.peers.first { $0.clientID == 999 })
+    }
+
+    func testIgnoresAnEntryWhoseClockIsNotNewer() throws {
+        let existing = try XCTUnwrap(
+            CollaborationPeer(clientID: 3, stateJSON: ##"{"name":"New","color":"#ffffff"}"##))
+        for clock in [1, 2] {
+            let folded = updatedPeers(
+                [existing], clocks: [3: 2],
+                applying: [
+                    AwarenessEntry(clientID: 3, clock: UInt(clock), stateJSON: ##"{"name":"Old","color":"#000000"}"##)
+                ],
+                excludingLocalClientID: 99)
+            XCTAssertEqual(folded.peers.first?.name, "New", "clock \(clock) is not newer than 2")
+        }
     }
 }

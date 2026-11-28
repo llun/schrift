@@ -825,7 +825,8 @@ markdown write endpoint**. Understand this before touching the save path:
   protections read `allDraftsOfEveryAccount()`. The editor passes the sign-in it loaded under
   (`loadedSession`) to every enqueue, so its edits are filed under that account and sent only
   while it is signed in; a page is read-only while the account is unconfirmed or another
-  account has unsent classic edits on it (`readOnlyNoteKey`); `EditorScreen` replaces the view
+  account has unsent classic edits on it (`readOnlyNoteKey`), and its live session closes on a
+  cookie handover and is re-asked once the account is confirmed; `EditorScreen` replaces the view
   model when another account signs in under a mounted screen (see
   [`docs/offline-and-sync.md`](../offline-and-sync.md#drafts-belong-to-an-account)).
   View models **enqueue** on the coordinator — they never call the client to

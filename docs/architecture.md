@@ -1513,6 +1513,14 @@ one and adds the outbound write path on top of it.
   would read as "a remote peer changed the document" — bumping them for our own edit
   would make something read-apply the keystroke we just made ourselves. This is
   local-echo suppression, and it is the load-bearing rule of the whole write path.
+- **Presence is bounded and account-scoped.** `DocumentCollaborationSession.peers` folds
+  inbound awareness through `updatedPeers`, which applies the native controller's bounds
+  (`NativeAwarenessController.maxStateBytes`, `maxPeers`, and a monotonic per-client clock):
+  an oversized state is skipped, a new client is refused at the cap, and a replayed or
+  reordered entry is stale. A session belongs to the account signed in when it was opened:
+  `acquireSession` refuses to dial while the account is unknown and replaces an entry opened
+  for another, `applyLocalEdit` throws `notWritable` for it, and a cookie handover closes
+  every classic socket until the account is confirmed (the screen re-asks once it is).
 - **The replica also broadcasts the formatting-cleanup update it makes on its own.**
   yjs emits `'update'` for every transaction with content, including the second, local
   transaction `cleanupTransactions` opens with origin `null` when a remote update touches
@@ -1861,9 +1869,9 @@ which fails if anyone "optimizes" it into a captured Bool. **The preference is o
 install (and `@AppStorage`) reads on, and a user's stored off wins. The on-device check
 in TestFlight passed. Deliberate,
 documented semantics: the flag is read lazily, so a flip affects **newly requested
-sessions** (opening a document, reconnect, resume) — it does not retroactively open or
-close sockets on screens already showing a document; fully consistent from the next
-document-open or app launch. Still open as a follow-up: live-mode
+sessions** (opening a document, reconnect, resume) and **closes an open socket** — the
+native binding's and the classic session's — while turning it on rejoins on the next open,
+reconnect or resume. Still open as a follow-up: live-mode
 header/status refinements (e.g. the "Synced X ago" caption is not yet advanced by a
 landed live snapshot).
 

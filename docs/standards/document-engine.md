@@ -983,8 +983,8 @@ to the classic editor.
   (offline, a 5xx, a timeout, a captive portal) keeps the row's ability, and the server still
   refuses a real reader's save; a row that says reader is never asked.
   `DocumentCollaborationManager.nativeTransport` only dials (origin-pinned URL, the config's
-  framing: y-websocket for Docs 6, Hocuspocus before; nil while suspended or working
-  offline) and tracks nothing; the binding owns a plain `DocumentCollaborationSession`
+  framing: y-websocket for Docs 6, Hocuspocus before; nil while suspended, switched off or
+  working offline) and tracks nothing; the binding owns a plain `DocumentCollaborationSession`
   (awareness since PR10a, bullet below), told a step2 from an update (`onSync`). The binding reads the
   replica's state vector before it dials (a full mailbox answers nil: nothing is dialed,
   never an empty-vector handshake), and dials and sends content only while `isCurrent`

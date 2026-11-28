@@ -4,7 +4,7 @@ import Foundation
 /// first. A pure decision so the gating chain is unit-testable in isolation; the
 /// manager supplies the live inputs.
 enum LiveCollaborationAvailability: Equatable, Sendable {
-    /// The app-level "Live collaboration" toggle is off (the default). This is
+    /// The app-level "Live collaboration" toggle is off (on by default). This is
     /// the outermost gate — nothing else is even consulted.
     case featureDisabled
     /// The app is offline or working offline; a live socket needs the network.

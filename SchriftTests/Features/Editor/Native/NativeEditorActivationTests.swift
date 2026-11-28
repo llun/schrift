@@ -1683,6 +1683,31 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         }
     }
 
+    /// An unanswered ability is not a licence to write live: the row's `abilities.update` may be
+    /// another account's, so no socket dials until the server says writer. Typing and HTTP saving
+    /// stay on (the server still refuses a real reader's save).
+    func testAFailedAbilitiesRequestDialsNoLiveSocket() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.collaborationWsUrl = "wss://docs.example.org/collaboration/ws/"
+        server.detailFails = true
+        server.install()
+        try seedReplica(env, typed: nil)
+        let spy = ManagerSocketFactorySpy()
+        let open = NativeEditorOpen(preference: { true }, livePreference: { true })
+        open.collaboration = DocumentCollaborationManager(
+            serverBaseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] },
+            featureEnabled: { true }, isOffline: { false }, serverConfigProvider: { nil },
+            socketFactory: spy.factory)
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+        await session.settle()
+        XCTAssertTrue(session.state.writable, "typing and HTTP saving stay on")
+        await waitAndConfirmNever { !spy.sockets.isEmpty }
+        open.close()
+    }
+
     /// PR13b review Z2c: a 403, a 404 or an answer naming another document is
     /// a reader answer: the owned route stops writing and dials no socket.
     func testAForbiddenMissingOrMismatchedAbilitiesAnswerIsAReader() async throws {

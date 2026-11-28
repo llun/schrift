@@ -158,7 +158,8 @@ final class LiveSyncConvergenceTests: XCTestCase {
             serverConfigProvider: { nil },
             socketFactory: spy.factory,
             lingerSeconds: 0.05,
-            replicaClientIDProvider: { replicaClientID })
+            replicaClientIDProvider: { replicaClientID },
+            accountProvider: { DocumentCollaborationManagerTestCase.account })
         manager.serverSupportsLiveCollaboration = true
         return manager
     }
