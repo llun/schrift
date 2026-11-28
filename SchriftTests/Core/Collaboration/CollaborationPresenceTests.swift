@@ -218,4 +218,25 @@ final class CollaborationPresenceTests: XCTestCase {
         }
         XCTAssertLessThanOrEqual(state.clocks.count, NativeAwarenessController.maxPeers * 4 + 1)
     }
+
+    /// A previously removed peer coming back counts against the cap like a new one.
+    func testARemovedPeerReturningAtTheCapIsRefused() {
+        var state = updatedPeers(
+            [], clocks: [:],
+            applying: [
+                AwarenessEntry(clientID: 500, clock: 1, stateJSON: ##"{"name":"Gone","color":"#000000"}"##),
+                AwarenessEntry(clientID: 500, clock: 2, stateJSON: "null"),
+            ],
+            excludingLocalClientID: 99)
+        let full = (1...NativeAwarenessController.maxPeers).map {
+            AwarenessEntry(clientID: UInt($0), clock: 1, stateJSON: ##"{"name":"P\##($0)","color":"#000000"}"##)
+        }
+        state = updatedPeers(state.peers, clocks: state.clocks, applying: full, excludingLocalClientID: 99)
+        state = updatedPeers(
+            state.peers, clocks: state.clocks,
+            applying: [AwarenessEntry(clientID: 500, clock: 3, stateJSON: ##"{"name":"Back","color":"#000000"}"##)],
+            excludingLocalClientID: 99)
+        XCTAssertEqual(state.peers.count, NativeAwarenessController.maxPeers)
+        XCTAssertNil(state.peers.first { $0.clientID == 500 })
+    }
 }

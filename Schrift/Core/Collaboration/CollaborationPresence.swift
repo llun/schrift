@@ -90,11 +90,13 @@ func updatedPeers(
     var clocks = clocks
     for entry in entries where entry.clientID != localClientID {
         guard entry.stateJSON.utf8.count <= NativeAwarenessController.maxStateBytes else { continue }
-        if let known = clocks[entry.clientID] {
-            guard entry.clock > known || (entry.clock == known && entry.stateJSON == "null") else { continue }
-        } else if byID.count >= NativeAwarenessController.maxPeers {
+        if let known = clocks[entry.clientID],
+            !(entry.clock > known || (entry.clock == known && entry.stateJSON == "null"))
+        {
             continue
         }
+        // The cap counts shown peers: a new or previously removed one waits for a free slot.
+        if byID[entry.clientID] == nil, byID.count >= NativeAwarenessController.maxPeers { continue }
         if let peer = CollaborationPeer(
             clientID: entry.clientID, stateJSON: entry.stateJSON, wireProtocol: wireProtocol)
         {
