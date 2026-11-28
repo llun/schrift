@@ -102,8 +102,13 @@ func updatedPeers(
             clocks[entry.clientID] = entry.clock
         } else {
             byID.removeValue(forKey: entry.clientID)
-            clocks[entry.clientID] = nil
+            // Keep the removal's clock, so a delayed older state can't bring the peer back.
+            clocks[entry.clientID] = entry.clock
         }
+    }
+    // Removed peers' clocks are kept only up to a bound, so churning ids can't grow the table.
+    if clocks.count > NativeAwarenessController.maxPeers * 4 {
+        clocks = clocks.filter { byID[$0.key] != nil }
     }
     return (byID.values.sorted { $0.clientID < $1.clientID }, clocks)
 }

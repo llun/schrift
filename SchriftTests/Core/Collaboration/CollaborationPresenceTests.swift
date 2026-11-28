@@ -188,4 +188,34 @@ final class CollaborationPresenceTests: XCTestCase {
             XCTAssertEqual(folded.peers.first?.name, "New", "clock \(clock) is not newer than 2")
         }
     }
+
+    /// A delayed older state after a removal must not bring the peer back.
+    func testADelayedStateAfterARemovalDoesNotRestoreThePeer() throws {
+        let existing = try XCTUnwrap(
+            CollaborationPeer(clientID: 3, stateJSON: ##"{"name":"Bye","color":"#000000"}"##))
+        let removed = updatedPeers(
+            [existing], clocks: [3: 1],
+            applying: [AwarenessEntry(clientID: 3, clock: 3, stateJSON: "null")],
+            excludingLocalClientID: 99)
+        let late = updatedPeers(
+            removed.peers, clocks: removed.clocks,
+            applying: [AwarenessEntry(clientID: 3, clock: 2, stateJSON: ##"{"name":"Bye","color":"#000000"}"##)],
+            excludingLocalClientID: 99)
+        XCTAssertTrue(late.peers.isEmpty)
+    }
+
+    /// Clocks of removed peers are kept only up to a bound.
+    func testRemovedPeersClocksStayBounded() {
+        var state: (peers: [CollaborationPeer], clocks: [UInt: UInt]) = ([], [:])
+        for id in 1...(NativeAwarenessController.maxPeers * 10) {
+            state = updatedPeers(
+                state.peers, clocks: state.clocks,
+                applying: [
+                    AwarenessEntry(clientID: UInt(id), clock: 1, stateJSON: ##"{"name":"P","color":"#000000"}"##),
+                    AwarenessEntry(clientID: UInt(id), clock: 2, stateJSON: "null"),
+                ],
+                excludingLocalClientID: 0)
+        }
+        XCTAssertLessThanOrEqual(state.clocks.count, NativeAwarenessController.maxPeers * 4 + 1)
+    }
 }
