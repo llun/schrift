@@ -20,11 +20,11 @@ struct ProfileScreen: View {
 
     @AppStorage("schrift.notifications") private var notificationsEnabled: Bool = true
     @AppStorage("schrift.workOffline") private var workOffline: Bool = false
-    // Live collaboration is opt-in (default off): the write path is verified in CI but the
-    // on-device end-to-end WebSocket check against a real server is still owed. The manager
-    // reads this key live (RootView's `featureEnabled` closure), so writing it here is the
-    // entire wiring — see `LiveCollaborationPreference`.
-    @AppStorage(LiveCollaborationPreference.key) private var liveCollaboration: Bool = false
+    // Live collaboration is on by default; an explicit off here wins. The manager reads this
+    // key live (RootView's `featureEnabled` closure), so writing it here is the entire
+    // wiring — see `LiveCollaborationPreference`.
+    @AppStorage(LiveCollaborationPreference.key) private var liveCollaboration: Bool =
+        LiveCollaborationPreference.defaultValue
     @AppStorage(NativeEditorPreference.key) private var nativeEditor: Bool = true
     @AppStorage(NativeEditorDiagnosticsPreference.key) private var collectNativeEditorDiagnostics: Bool = false
 

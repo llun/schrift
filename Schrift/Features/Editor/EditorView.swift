@@ -321,7 +321,8 @@ struct EditorView: View {
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.scenePhase) private var scenePhase
     /// Followed while open: a native document leaves or rejoins its room (PR09b).
-    @AppStorage(LiveCollaborationPreference.key) private var liveCollaboration = false
+    @AppStorage(LiveCollaborationPreference.key) private var liveCollaboration =
+        LiveCollaborationPreference.defaultValue
 
     private var showsOffline: Bool { isOffline || viewModel.availability.isOffline }
 

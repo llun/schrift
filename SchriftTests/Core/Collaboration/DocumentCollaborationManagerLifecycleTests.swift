@@ -23,11 +23,11 @@ final class DocumentCollaborationManagerLifecycleTests: DocumentCollaborationMan
             socketFactory: spy.factory)
         manager.serverSupportsLiveCollaboration = true
 
-        XCTAssertEqual(manager.availability, .featureDisabled, "unset flag ⇒ off (the default)")
-        defaults.set(true, forKey: LiveCollaborationPreference.key)
-        XCTAssertEqual(manager.availability, .available, "the flip is visible with no manager rebuild")
+        XCTAssertEqual(manager.availability, .available, "unset flag ⇒ on (the default)")
         defaults.set(false, forKey: LiveCollaborationPreference.key)
-        XCTAssertEqual(manager.availability, .featureDisabled, "and turning it off is too")
+        XCTAssertEqual(manager.availability, .featureDisabled, "the flip is visible with no manager rebuild")
+        defaults.set(true, forKey: LiveCollaborationPreference.key)
+        XCTAssertEqual(manager.availability, .available, "and turning it back on is too")
     }
 
     func testRefreshServerSupportReadsCollaborationWsUrl() async {

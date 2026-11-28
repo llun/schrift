@@ -10,6 +10,7 @@ struct SchriftApp: App {
     init() {
         // Before any reader: the native editor is on unless the user turned it off.
         NativeEditorPreference.registerDefault()
+        LiveCollaborationPreference.registerDefault()
         NativeMediaDropPaste.removeStagingRoot()
         // Responses earlier builds cached through `URLSession.shared` (not account-scoped).
         URLCache.shared.removeAllCachedResponses()

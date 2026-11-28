@@ -77,6 +77,25 @@ final class YDeepNestingRecursionTests: XCTestCase {
         try applyChain(depth: YTransaction.maxTypeNestingDepth, gc: true, deleteRoot: true)
     }
 
+    /// The native editor applies replica updates on a Swift concurrency thread, whose
+    /// stack is 512 KB. A chain at the cap must delete and gc within it, in this
+    /// (Debug) build too; a frame-size regression shows up here as a crash.
+    func testDepthAtTheCapFitsInAConcurrencyThreadStack() throws {
+        final class Outcome: @unchecked Sendable { var error: (any Error)? }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        let thread = Thread { [self] in
+            do {
+                try applyChain(depth: YTransaction.maxTypeNestingDepth, gc: true, deleteRoot: true)
+            } catch { outcome.error = error }
+            done.signal()
+        }
+        thread.stackSize = 512 * 1024
+        thread.start()
+        done.wait()
+        XCTAssertNil(outcome.error)
+    }
+
     func testDepthOnePastTheCapRefuses() {
         assertRefuses(depth: YTransaction.maxTypeNestingDepth + 1, gc: true)
     }

@@ -22,7 +22,7 @@ struct ServerConfig: Codable, Equatable, Sendable {
     ///
     /// Live collaboration is available when the server advertises a WebSocket and,
     /// for Docs 6's y-websocket transport, its internal server capability is enabled.
-    /// The user preference `schrift.liveCollaboration` remains an independent opt-in;
+    /// The user preference `schrift.liveCollaboration` (on by default) is independent;
     /// it cannot bypass this server gate. The socket URL is still origin-pinned by
     /// `CollaborationEndpoint`.
     var supportsLiveCollaboration: Bool {
