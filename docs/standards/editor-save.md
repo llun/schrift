@@ -1646,8 +1646,9 @@ markdown write endpoint**. Understand this before touching the save path:
     sync-engine surface). **On by default behind the `schrift.liveCollaboration`
     switch — registered as on at launch; the C3 Profile toggle (Profile → Preferences →
     "Live collaboration", an `@AppStorage(LiveCollaborationPreference.key)` switch) is the
-    only writer, and a stored off wins. The flag is read lazily, so a flip affects newly
-    requested sessions, not screens already open.** Docs 6's yhub
+    only writer, and a stored off wins. Turning it off closes open sockets (after sending a
+    pending live snapshot); turning it on takes effect at the next open, reconnect or
+    resume.** Docs 6's yhub
     collaboration server speaks plain y-websocket at
     `/collaboration/ws/v1/{org}/{documentID}`, not Hocuspocus. Its transport is enabled;
     `supportsLiveCollaboration` requires an advertised collaboration URL, and the separate

@@ -414,8 +414,13 @@ struct EditorView: View {
         .onChange(of: liveCollaboration) { _, enabled in
             nativeOpen.liveSettingChanged(viewModel: viewModel, isOffline: showsOffline)
             // The switch is the off switch for the classic socket too: a session opened while it
-            // was on must not stay writable. Turning it back on re-acquires through availability.
-            if !enabled { collaboration?.closeAll() }
+            // was on must not stay writable. Its pending live snapshot is sent first, so edits the
+            // socket never delivered aren't lost; turning it back on takes effect at the next
+            // open, reconnect or resume.
+            if !enabled {
+                viewModel.flushPendingChanges()
+                collaboration?.closeAll()
+            }
         }
         .onChange(of: signInGeneration) { _, _ in
             syncMentionLoader()
@@ -815,6 +820,10 @@ private struct ClassicEditorView: View {
             // The account was confirmed (or changed) under this mounted screen: a session the
             // manager dropped for the handover is asked for again under the account now known.
             .onChange(of: viewModel.signedInUserID) { _, _ in
+                // This screen's abilities belong to the account it loaded for; EditorScreen
+                // replaces it when another account is named, so it never asks as that account.
+                guard !viewModel.loadedSession.isAnotherAccount(than: viewModel.saveCoordinator.signedInSession)
+                else { return }
                 requestCollaborationSessionIfNeeded()
             }
             // Backstop for the synchronous replica observer: both notifications share
