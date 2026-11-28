@@ -825,7 +825,8 @@ markdown write endpoint**. Understand this before touching the save path:
   protections read `allDraftsOfEveryAccount()`. The editor passes the sign-in it loaded under
   (`loadedSession`) to every enqueue, so its edits are filed under that account and sent only
   while it is signed in; a page is read-only while the account is unconfirmed or another
-  account has unsent classic edits on it (`readOnlyNoteKey`); `EditorScreen` replaces the view
+  account has unsent classic edits on it (`readOnlyNoteKey`), and its live session closes on a
+  cookie handover and is re-asked once the account is confirmed; `EditorScreen` replaces the view
   model when another account signs in under a mounted screen (see
   [`docs/offline-and-sync.md`](../offline-and-sync.md#drafts-belong-to-an-account)).
   View models **enqueue** on the coordinator — they never call the client to
@@ -1642,16 +1643,16 @@ markdown write endpoint**. Understand this before touching the save path:
     then a local forward *before* the deferred re-sync — asserting the emitted update
     projects the real replica to the merged document, no corruption reaching peers), plus
     the existing C2a differential fuzz (unchanged; C2c adds editor callers, not new
-    sync-engine surface). **Opt-in behind the default-off `schrift.liveCollaboration`
-    flag — the C3 Profile toggle (Profile → Preferences → "Live collaboration", an
-    `@AppStorage(LiveCollaborationPreference.key)` switch) is the only writer. The
-    default stays off; the on-device end-to-end WebSocket check is not yet
-    verified with a TestFlight build. The flag is read lazily, so a
-    flip affects newly requested sessions, not screens already open.** Docs 6's yhub
+    sync-engine surface). **On by default behind the `schrift.liveCollaboration`
+    switch — registered as on at launch; the C3 Profile toggle (Profile → Preferences →
+    "Live collaboration", an `@AppStorage(LiveCollaborationPreference.key)` switch) is the
+    only writer, and a stored off wins. Turning it off closes open sockets (after sending a
+    pending live snapshot); turning it on takes effect at the next open, reconnect or
+    resume.** Docs 6's yhub
     collaboration server speaks plain y-websocket at
     `/collaboration/ws/v1/{org}/{documentID}`, not Hocuspocus. Its transport is enabled;
     `supportsLiveCollaboration` requires an advertised collaboration URL, and the separate
-    default-off user preference still gates session availability. See
+    user preference (on by default) still gates session availability. See
     `docs/architecture.md` ("Editor wiring — the write path complete (C2c)" and the
     "C3 (shipped)" paragraph).
 - **A4 adds yhub framing beside Hocuspocus; A5 enables it in production.**

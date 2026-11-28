@@ -799,7 +799,11 @@ final class ColumnTextContainer: UIScrollView {
     }
 
     override func layoutSubviews() {
+        // A scroll UIKit makes while laying out (the keyboard changing the adjusted inset) is
+        // the layout's own, not the user's: it must not drop the caret pin.
+        placing = true
         super.layoutSubviews()
+        placing = false
         place()
         if frames.contains(where: { $0.textView.blockDragController?.isDragging == true }) {
             pendingReveal = nil

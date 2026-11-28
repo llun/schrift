@@ -80,6 +80,32 @@ final class DocumentCollaborationManagerLocalEditTests: DocumentCollaborationMan
         XCTAssertTrue(spy.sockets.isEmpty)
     }
 
+    /// An edit must never be broadcast under another account's cookies: the entry's socket was
+    /// opened for the account signed in then.
+    func testApplyLocalEditThrowsWhenTheAccountChanged() async throws {
+        let spy = ManagerSocketFactorySpy()
+        let box = AccountBox(value: UUID())
+        let manager = makeManager(spy: spy, account: { box.value })
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+        let socket = try XCTUnwrap(spy.sockets.first)
+
+        let base = [para("hello", id: blockID)]
+        _ = await seedWritableReplica(manager, socket: socket, blocks: base)
+        let framesBefore = socket.sentFrames.count
+
+        box.value = UUID()
+        do {
+            _ = try manager.applyLocalEdit(old: base, new: [para("heXllo", id: blockID)], for: docID)
+            XCTFail("expected notWritable after an account change")
+        } catch CollaborationWriteError.notWritable {
+            // expected
+        }
+        XCTAssertEqual(manager.localEditVersion(for: docID), 0)
+        await waitAndConfirmNever { socket.sentFrames.count > framesBefore }
+        session?.stop()
+    }
+
     func testApplyLocalEditThrowsBeforeInitialSync() async throws {
         let spy = ManagerSocketFactorySpy()
         let manager = makeManager(spy: spy)

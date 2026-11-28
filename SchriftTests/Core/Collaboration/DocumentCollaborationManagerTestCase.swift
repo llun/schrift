@@ -25,6 +25,12 @@ final class ManagerSocketFactorySpy: @unchecked Sendable {
     var requests: [URLRequest] { lock.withLock { _requests } }
 }
 
+/// A mutable account the manager's `accountProvider` reads, so a test can change hands mid-run.
+final class AccountBox {
+    var value: UUID?
+    init(value: UUID?) { self.value = value }
+}
+
 /// Shared manager builders, frame builders and block fixtures for the
 /// `DocumentCollaborationManager…Tests` classes. Holds no tests.
 @MainActor

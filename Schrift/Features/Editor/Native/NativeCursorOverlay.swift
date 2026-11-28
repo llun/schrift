@@ -80,7 +80,8 @@ final class NativeCursorOverlay: UIView {
                 place(caret: peer, color: color, at: rect, origin: textView.bounds.origin)
                 let anchor = places.anchor.flatMap { mark($0, surface) }
                 carets[peer.clientID]?.accessibilityLabel = String(
-                    format: anchor.map { $0 != head } == true ? labels.peerSelection : labels.peerCursor, peer.name)
+                    format: anchor.map { $0 != head } == true ? labels.peerSelection : labels.peerCursor,
+                    displayName(peer))
                 if case .caret(let anchor)? = anchor, anchor != offset {
                     let range = NSRange(location: min(anchor, offset), length: abs(anchor - offset))
                     if shownHighlights.count < Self.maxHighlights,
@@ -99,7 +100,7 @@ final class NativeCursorOverlay: UIView {
                 badgesPerBlock[blockID] = index + 1
                 place(badge: peer, color: color, line: rect, index: index, in: textView)
                 badges[peer.clientID]?.accessibilityLabel = String(
-                    format: folded ? labels.peerFolded : labels.peerCursor, peer.name)
+                    format: folded ? labels.peerFolded : labels.peerCursor, displayName(peer))
             }
         }
     }
@@ -141,10 +142,15 @@ final class NativeCursorOverlay: UIView {
         return rect.isNull || rect.isInfinite ? nil : rect
     }
 
+    /// A peer's name is untrusted: the caption and its VoiceOver label both stop at 40 characters.
+    private func displayName(_ peer: CollaborationPeer) -> String {
+        String(peer.name.prefix(40))
+    }
+
     private func place(caret peer: CollaborationPeer, color: UIColor, at rect: CGRect, origin: CGPoint) {
         let view = carets[peer.clientID] ?? makeCaret(peer)
         let label = view.subviews.first as? UILabel
-        label?.text = String(peer.name.prefix(40))
+        label?.text = displayName(peer)
         label?.backgroundColor = color
         view.subviews.last?.backgroundColor = color
         // A peer's name is untrusted: one truncated caption line, clipped.

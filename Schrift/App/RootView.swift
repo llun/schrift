@@ -29,18 +29,18 @@ func collaborationScenePhaseAction(_ phase: ScenePhase) -> CollaborationScenePha
 }
 
 /// What a sign-in change should do to live collaboration sessions. A handover's cookies are not
-/// confirmed yet, so nothing: the account it names decides. A confirmed account closes every
-/// session opened for another (or before any was known); a confirmation that named nobody closes
-/// them all. The same account silently re-logging in keeps its sessions — dropping a mounted
-/// socket there would be a routine launch-time teardown.
+/// confirmed yet, so the page is read-only and every session closes — the previous account's
+/// socket must not stay writable. A confirmed account closes every session opened for another (or
+/// before any was known); a confirmation that named nobody closes them all. The same account
+/// silently re-logging in keeps its sessions — dropping a mounted socket there would be a routine
+/// launch-time teardown — and a screen that lost one re-asks once the account is confirmed.
 enum CollaborationSignInAction: Equatable {
-    case none
     case closeOthers(UUID)
     case closeAll
 }
 
 func collaborationSignInAction(isAwaitingConfirmation: Bool, account: UUID?) -> CollaborationSignInAction {
-    if isAwaitingConfirmation { return .none }
+    if isAwaitingConfirmation { return .closeAll }
     guard let account else { return .closeAll }
     return .closeOthers(account)
 }
@@ -319,7 +319,6 @@ private struct AuthenticatedHomeContainer: View {
                 isAwaitingConfirmation: sessionStore.isAwaitingConfirmation,
                 account: SignedInUserStore().userID)
             {
-            case .none: break
             case .closeOthers(let account): collaboration.closeSessions(otherThan: account)
             case .closeAll: collaboration.closeAll()
             }

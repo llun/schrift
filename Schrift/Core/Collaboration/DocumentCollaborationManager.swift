@@ -358,7 +358,10 @@ final class DocumentCollaborationManager {
     /// the replica down exactly as the inbound apply path does, then **rethrows** the
     /// underlying error — it never traps.
     func applyLocalEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], for documentID: UUID) throws -> Data {
-        guard var entry = entries[documentID], entry.canUpdate, canProjectReplica(entry), let replica = entry.replica
+        // The entry's socket was opened under the account signed in then; an edit must never be
+        // broadcast under another one's cookies.
+        guard var entry = entries[documentID], entry.account == accountProvider(), entry.canUpdate,
+            canProjectReplica(entry), let replica = entry.replica
         else {
             throw CollaborationWriteError.notWritable
         }
@@ -411,28 +414,38 @@ final class DocumentCollaborationManager {
         // Never open a socket while backgrounded — `resume()` is the only rebuild
         // path when suspended (upholds the same invariant as `reconnect()`).
         guard !isSuspended, availability == .available else { return nil }
+        // Nothing dials before the account is known: the cookies could be anyone's, and the page
+        // is read-only until `/users/me/` confirms them.
+        guard let account = accountProvider() else { return nil }
         let hold = CollaborationSessionHold(documentID: documentID, token: UUID())
         if var entry = entries[documentID] {
-            if entry.canUpdate != canUpdate {
+            // An entry opened under another account's cookies (or before any was known) is never
+            // reused: it goes, and this call starts a fresh one under the account now signed in.
+            if entry.account != account {
+                entry.lingerTask?.cancel()
                 entry.session?.stop()
-                entry.session = nil
-                entry.canUpdate = canUpdate
-            }
-            if entry.session == nil { entry.session = makeSession(for: documentID, canUpdate: canUpdate) }
-            guard entry.session != nil else {
+                if removeEntry(documentID) { onHeldReplicaReleased?() }
+            } else {
+                if entry.canUpdate != canUpdate {
+                    entry.session?.stop()
+                    entry.session = nil
+                    entry.canUpdate = canUpdate
+                }
+                if entry.session == nil { entry.session = makeSession(for: documentID, canUpdate: canUpdate) }
+                guard entry.session != nil else {
+                    entries[documentID] = entry
+                    return nil
+                }
+                entry.lingerTask?.cancel()  // a re-open cancels the pending teardown
+                entry.lingerTask = nil
+                entry.holders.insert(hold.token)
                 entries[documentID] = entry
-                return nil
+                return hold
             }
-            entry.lingerTask?.cancel()  // a re-open cancels the pending teardown
-            entry.lingerTask = nil
-            entry.holders.insert(hold.token)
-            entries[documentID] = entry
-            return hold
         }
         guard let session = makeSession(for: documentID, canUpdate: canUpdate) else { return nil }
         entries[documentID] = Entry(
-            session: session, canUpdate: canUpdate, holders: [hold.token], lingerTask: nil,
-            account: accountProvider())
+            session: session, canUpdate: canUpdate, holders: [hold.token], lingerTask: nil, account: account)
         return hold
     }
 
@@ -530,10 +543,10 @@ final class DocumentCollaborationManager {
     /// PR09a: a socket for a native replica. `NativeCollaborationBinding` owns
     /// the replica and the session; this manager only dials, so nothing here
     /// tracks it. The URL and framing follow `config` (y-websocket for Docs 6,
-    /// Hocuspocus before), origin-pinned like every socket. Nil while suspended
-    /// or working offline, or when the URL cannot be pinned.
+    /// Hocuspocus before), origin-pinned like every socket. Nil while suspended,
+    /// switched off or working offline, or when the URL cannot be pinned.
     func nativeTransport(for documentID: UUID, config: ServerConfig) -> CollaborationTransport? {
-        guard !isSuspended, !isOffline(),
+        guard !isSuspended, featureEnabled(), !isOffline(),
             let request = CollaborationEndpoint.webSocketRequest(
                 serverBaseURL: serverBaseURL, documentID: documentID, cookies: cookieProvider(), config: config)
         else { return nil }

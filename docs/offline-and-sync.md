@@ -604,7 +604,7 @@ amendment above; when this was written, editing offline was still blocked.)
   path is what's active** — see "Cache stays consistent on save" (§3) below for the
   live-snapshot save path that now runs alongside it. **Live *reading* and, as of
   C2c, live *writing* now exist** behind
-  the default-off `schrift.liveCollaboration` flag (Milestones C1/C2a/C2b/C2c): when
+  the `schrift.liveCollaboration` switch (on by default; Profile → Preferences turns it off) (Milestones C1/C2a/C2b/C2c): when
   the editor is clean and joined to the Hocuspocus room, inbound Yjs updates are
   applied to the open editor caret-preservingly by the `LiveEditingBridge` (see
   `docs/architecture.md`), and — once the replica is fully modeled — an outbound

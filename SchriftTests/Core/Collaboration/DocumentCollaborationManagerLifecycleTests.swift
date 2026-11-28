@@ -23,11 +23,11 @@ final class DocumentCollaborationManagerLifecycleTests: DocumentCollaborationMan
             socketFactory: spy.factory)
         manager.serverSupportsLiveCollaboration = true
 
-        XCTAssertEqual(manager.availability, .featureDisabled, "unset flag ⇒ off (the default)")
-        defaults.set(true, forKey: LiveCollaborationPreference.key)
-        XCTAssertEqual(manager.availability, .available, "the flip is visible with no manager rebuild")
+        XCTAssertEqual(manager.availability, .available, "unset flag ⇒ on (the default)")
         defaults.set(false, forKey: LiveCollaborationPreference.key)
-        XCTAssertEqual(manager.availability, .featureDisabled, "and turning it off is too")
+        XCTAssertEqual(manager.availability, .featureDisabled, "the flip is visible with no manager rebuild")
+        defaults.set(true, forKey: LiveCollaborationPreference.key)
+        XCTAssertEqual(manager.availability, .available, "and turning it back on is too")
     }
 
     func testRefreshServerSupportReadsCollaborationWsUrl() async {
@@ -268,19 +268,44 @@ final class DocumentCollaborationManagerLifecycleTests: DocumentCollaborationMan
         XCTAssertFalse(manager.holds(hold))
     }
 
-    /// With no account known, a reconnect redials nothing: the cookies could be anyone's.
-    /// An entry opened while no account was known is not redialed while it still isn't.
-    func testReconnectWhileStillUnknownRedialsNothing() async throws {
+    /// With no account known, nothing dials: the cookies could be anyone's, and the page is
+    /// read-only until `/users/me/` confirms them.
+    func testNoSessionWhileTheAccountIsUnknown() async {
         let spy = ManagerSocketFactorySpy()
         let manager = makeManager(spy: spy, account: { nil })
-        let hold = try XCTUnwrap(manager.acquireSession(for: docID))
+
+        XCTAssertNil(manager.acquireSession(for: docID))
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        await waitAndConfirmNever { !spy.sockets.isEmpty }
+    }
+
+    /// An entry opened under another account's cookies is never reused: the claim goes and the
+    /// screen's next request dials a fresh socket under the account now signed in.
+    func testAcquiringUnderAnotherAccountReplacesTheEntry() async throws {
+        let spy = ManagerSocketFactorySpy()
+        let box = AccountBox(value: UUID())
+        let manager = makeManager(spy: spy, account: { box.value })
+        let first = try XCTUnwrap(manager.acquireSession(for: docID))
         await waitUntil { spy.sockets.count == 1 }
 
-        manager.reconnect()
+        box.value = UUID()
+        let second = try XCTUnwrap(manager.acquireSession(for: docID))
 
-        XCTAssertEqual(manager.activeDocumentCount, 0)
-        XCTAssertFalse(manager.holds(hold))
-        await waitAndConfirmNever { spy.sockets.count > 1 }
+        XCTAssertFalse(manager.holds(first), "the previous account's claim is gone")
+        XCTAssertTrue(manager.holds(second))
+        await waitUntil { spy.sockets.count == 2 }
+        await waitUntil { spy.sockets.first?.cancelCloseCode == .goingAway }
+    }
+
+    /// The switch is the off switch for a redial too: with it off, no native socket is built.
+    func testNativeTransportRefusesWhileTheSwitchIsOff() {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(feature: false, spy: spy)
+
+        XCTAssertNil(
+            manager.nativeTransport(
+                for: docID, config: ServerConfig(collaborationWsUrl: "wss://docs.example.org/collaboration/ws/")))
+        XCTAssertTrue(spy.sockets.isEmpty)
     }
 
     /// A reconnect after the account became unknown (a re-login's handover) closes the
@@ -331,10 +356,4 @@ final class DocumentCollaborationManagerLifecycleTests: DocumentCollaborationMan
         XCTAssertFalse(manager.holds(hold))
         XCTAssertGreaterThan(manager.sessionsRevision, before)
     }
-}
-
-@MainActor
-private final class AccountBox {
-    var value: UUID?
-    init(value: UUID?) { self.value = value }
 }

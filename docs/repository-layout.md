@@ -26,7 +26,7 @@ Schrift/
 │   │                    DocumentCollaborationManager (keyed sessions,
 │   │                    refcount/linger, scenePhase suspend/resume, reconnect on
 │   │                    the ConnectivityMonitor edge) wired in RootView, dormant
-│   │                    behind the default-off flag. C1 makes the session deliver
+│   │                    behind the live-collaboration switch. C1 makes the session deliver
 │   │                    inbound update bytes (onSyncUpdate), gives the manager a
 │   │                    per-document YDoc replica (applyUpdate → replicaVersion +
 │   │                    projectedReplica, failSafe, destroy on teardown), and adds

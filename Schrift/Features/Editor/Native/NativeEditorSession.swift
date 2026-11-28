@@ -1580,7 +1580,7 @@ final class NativeEditorOpen {
         route = seeded
         if case .native(let restoredSession) = seeded, writable {
             self.canMention = (ability?.mention ?? rowCanMention) && !viewModel.isLocalDocument
-            startLive(restoredSession, scope: scope, config: config, viewModel: viewModel)
+            startLive(restoredSession, scope: scope, config: config, viewModel: viewModel, writer: ability?.writer)
         } else {
             self.canMention = false
         }
@@ -2008,7 +2008,7 @@ final class NativeEditorOpen {
             let verifiedEditAccess =
                 rowCanUpdate && ability?.writer != false && !viewModel.saveCoordinator.isNativeReader(scope)
             recomputeUnavailableReason(for: session, viewModel: viewModel, hasEditAccess: verifiedEditAccess)
-            startLive(session, scope: scope, config: config, viewModel: viewModel)
+            startLive(session, scope: scope, config: config, viewModel: viewModel, writer: ability?.writer)
             // Refreshes the server title native saves send.
             _ = try await viewModel.refreshOfflineCacheForNativeReader(
                 isCurrent: isCurrent,
@@ -2071,13 +2071,16 @@ final class NativeEditorOpen {
     /// opens a socket. A socket that ended is dialed again on the next
     /// reconnect refresh; backoff and background handling are PR09b.
     private func startLive(
-        _ session: NativeEditorSession, scope: ReplicaScope, config: ServerConfig, viewModel: EditorViewModel
+        _ session: NativeEditorSession, scope: ReplicaScope, config: ServerConfig, viewModel: EditorViewModel,
+        writer: Bool?
     ) {
         guard !viewModel.isLocalDocument, session.input != nil, !session.isClosed,
             nativeLiveCollaborationEligible(
                 nativeEnabled: enabled, liveEnabled: livePreference(),
                 serverSupports: config.supportsNativeLiveCollaboration && config.collaborationOrg == scope.org,
-                canUpdate: canUpdate),
+                // Only a positive writer answer dials: an unanswered ability is not a licence to
+                // write live (the row's `abilities.update` may be another account's).
+                canUpdate: canUpdate && writer == true),
             // A denial a headless media commit learned (review Z2c) keeps a reader off the socket,
             // and a surface that is not writable (its journal removed by that denial, review Z2d)
             // never dials one, even after the denial is lifted: it recovers on reopen.

@@ -71,7 +71,7 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
 
 ## Non-goals (v1)
 
-- Real-time collaborative *writing* (typing that other clients see live) — the two-way write path is now **fully wired end to end** (C2a's sync engine + C2b's snapshot-save mechanism + **C2c**'s editor wiring: a keystroke forwards to the replica and broadcasts, a peer's edit applies caret-preservingly, and a ~60 s debounce PATCHes a full-state snapshot), but it is **opt-in** — everything above runs only behind the default-off `schrift.liveCollaboration` flag, so shipped behavior is unchanged until a user enables it via **Profile → Preferences → "Live collaboration"** (C3). The owner will run the remaining on-device WebSocket check in TestFlight for this build. Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)", "Two-way sync engine (C2a)", "Live-snapshot save (C2b)", and "Editor wiring — the write path complete (C2c)". With the flag off, outbound edits use the existing HTTP save route: a full-overwrite PATCH before Docs 6, or a GET plus incremental PATCH on Docs 6.
+- Real-time collaborative *writing* (typing that other clients see live) — the two-way write path is now **fully wired end to end** (C2a's sync engine + C2b's snapshot-save mechanism + **C2c**'s editor wiring: a keystroke forwards to the replica and broadcasts, a peer's edit applies caret-preservingly, and a ~60 s debounce PATCHes a full-state snapshot), and it is **on by default**: the `schrift.liveCollaboration` switch is registered as on at launch, and **Profile → Preferences → "Live collaboration"** (C3) turns it off (a stored off wins). The owner's on-device check in TestFlight passed. A document nested deeper than `YTransaction.maxTypeNestingDepth` (256 type levels, measured to fit the 512 KB concurrency-thread stack) falls back to classic saving. Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)", "Two-way sync engine (C2a)", "Live-snapshot save (C2b)", and "Editor wiring — the write path complete (C2c)". With the switch off, outbound edits use the existing HTTP save route: a full-overwrite PATCH before Docs 6, or a GET plus incremental PATCH on Docs 6.
 - ~~Offline editing/sync queue.~~ **Superseded.** Offline *reading* of
   previously-opened documents was added 2026-07-03; the sync queue (write-ahead
   drafts, `.pendingSync`, conflict-checked replay on reconnect/foreground/launch)
@@ -113,7 +113,7 @@ Schrift/                  (originally planned as "DocsIOS/"; renamed 2026-07-01)
 ├── Core/
 │   ├── Networking/       — DocsAPIClient (URLSession + async/await), endpoint definitions, Codable models mirroring DRF serializers, error types
 │   ├── Auth/             — SessionStore (Keychain-backed session-cookie + server URL persistence, re-auth flag), SessionCookies (Codable HTTPCookie snapshot), WebLogin free functions (login-URL/completion detection, cookie sync), KeychainStore
-│   ├── Collaboration/    — Hocuspocus/Yjs live-collaboration layer (wire codecs, WebSocket transport, session state machine, presence, and — C1 — a manager-owned per-document Yjs replica fed by inbound updates + the `LiveEditingBridge` that reflects it into the editor), dormant behind the default-off `schrift.liveCollaboration` flag
+│   ├── Collaboration/    — Hocuspocus/Yjs live-collaboration layer (wire codecs, WebSocket transport, session state machine, presence, and — C1 — a manager-owned per-document Yjs replica fed by inbound updates + the `LiveEditingBridge` that reflects it into the editor), behind the `schrift.liveCollaboration` switch (on by default)
 │   └── Yjs/              — the Yjs layer, two halves: the on-device Markdown→BlockNote→Yjs *encoder* (hand-written lib0/Yjs-v1 wire format) that builds the base64 content payload for saves, and the *CRDT core* (lib0 decoder, update decoder, struct store + YATA integration, the B3 store encoder `YStateEncoder`, and the B5 replica→editor projection `YBlockProjection`/`InlineMarkdownWriter`) — see "The Yjs CRDT core"
 ├── Features/
 │   ├── Connect/          — server URL entry, recent servers, WebLoginView (WKWebView OIDC login sheet), session-expiry re-login sheet
@@ -1513,6 +1513,16 @@ one and adds the outbound write path on top of it.
   would read as "a remote peer changed the document" — bumping them for our own edit
   would make something read-apply the keystroke we just made ourselves. This is
   local-echo suppression, and it is the load-bearing rule of the whole write path.
+- **Presence is bounded and account-scoped.** `DocumentCollaborationSession.peers` folds
+  inbound awareness through `updatedPeers`, which applies the native controller's bounds
+  (`NativeAwarenessController.maxStateBytes`, `maxPeers`, and a monotonic per-client clock):
+  an oversized state is skipped, a new client is refused at the cap, and a replayed or
+  reordered entry is stale. A session belongs to the account signed in when it was opened:
+  `acquireSession` refuses to dial while the account is unknown and replaces an entry opened
+  for another, `applyLocalEdit` throws `notWritable` for it, and a re-login's cookie
+  handover closes every classic socket until the account is confirmed (the screen re-asks
+  once it is). A stale login discarded after a sign-out forgets the account without that
+  close, but the socket can no longer write.
 - **The replica also broadcasts the formatting-cleanup update it makes on its own.**
   yjs emits `'update'` for every transaction with content, including the second, local
   transaction `cleanupTransactions` opens with origin `null` when a remote update touches
@@ -1576,7 +1586,7 @@ one and adds the outbound write path on top of it.
   still no caller. **C2c is what closes the loop**: the editor now calls
   `applyLocalEdit` (via `LiveEditingBridge.forwardLocalEdit`) and `enqueueLiveSnapshot`
   (via `EditorViewModel.persistLiveSnapshot`) for real. Everything still runs only
-  behind the default-off `schrift.liveCollaboration` flag — see "Editor wiring — the
+  behind the `schrift.liveCollaboration` switch (on by default) — see "Editor wiring — the
   write path complete (C2c)".
 
 ### Live-snapshot save (C2b)
@@ -1627,8 +1637,8 @@ it succeeds, `EditorViewModel.persistLiveSnapshot` calls `enqueueLiveSnapshot` �
 C2a built the sync engine, C2b built the save mechanism; **C2c is what actually calls
 either from the editor.** It is the last PR of the write path — after it, two-way live
 editing (forward → broadcast → remote caret-preserving apply → periodic snapshot save →
-graceful downgrade) is wired end to end, still entirely behind the default-off
-`schrift.liveCollaboration` flag.
+graceful downgrade) is wired end to end, behind the `schrift.liveCollaboration` switch
+(now on by default).
 
 - **An id-stable `[BlockNoteBlock]` builder is the prerequisite.** `applyLocalEdit`
   diffs an `old`/`new` BlockNote block pair by id, so `old` must be the replica's
@@ -1856,15 +1866,13 @@ the sibling Notifications/Work-offline rows) backed by
 { LiveCollaborationPreference.isEnabled() }`, a live closure re-evaluated on every
 `availability` read — pinned by
 `DocumentCollaborationManagerLifecycleTests.testAvailabilityTracksTheLivePreferenceFlagMidSession`,
-which fails if anyone "optimizes" it into a captured Bool. **The preference default is OFF /
-opt-in** (decision 2026-07-21). The real-server S4/S5 checks above support enabling the
-Docs 6 server capability; the remaining on-device end-to-end WebSocket
-check is not yet verified with a TestFlight build. Deliberate,
-documented semantics: the flag is read lazily, so a flip affects **newly requested
-sessions** (opening a document, reconnect, resume) — it does not retroactively open or
-close sockets on screens already showing a document; fully consistent from the next
-document-open or app launch. Still open as follow-ups: the on-device WS verification
-(type on iPhone → see it in Safari, and back; non-gating) and any live-mode
+which fails if anyone "optimizes" it into a captured Bool. **The preference is on by default**:
+`LiveCollaborationPreference.registerDefault()` runs in `SchriftApp.init`, so a fresh
+install (and `@AppStorage`) reads on, and a user's stored off wins. The on-device check
+in TestFlight passed. Deliberate,
+documented semantics: turning the switch off **closes an open socket** — the native
+binding's and the classic session's, the classic one after sending its pending live
+snapshot — while turning it on rejoins on the next open, reconnect or resume. Still open as a follow-up: live-mode
 header/status refinements (e.g. the "Synced X ago" caption is not yet advanced by a
 landed live snapshot).
 
@@ -2838,7 +2846,7 @@ main actor at each appearance — bounded by those 50 entries.
 
 **Not yet.** Modelling `file`/`pdf` nodes in `YBlockProjection` (they project
 `.opaque` today, which correctly keeps a document holding one out of live
-editing while the default-off flag is off).
+editing).
 
 ## File attachments (write side)
 

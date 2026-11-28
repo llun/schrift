@@ -27,7 +27,11 @@ struct EditorScreen: View {
     /// Retained past `init` because the Pages drawer reads the same store the
     /// view model writes; a test that isolates one must isolate both.
     private let childrenCache: DocumentChildrenCacheStore
-    private let pinRow: Document?
+    /// The row this screen was opened from. An account change drops it: its `abilities.update`
+    /// is the previous account's answer, and a swapped screen must fail closed (read-only) until
+    /// a fresh fetch says otherwise. A reference, so the drop is visible even where a `@State`
+    /// write is lost (a screen driven before it is mounted); the model swap re-renders.
+    @State var pinRow: PinRowBox
 
     init(
         client: DocsAPIClient,
@@ -73,7 +77,7 @@ struct EditorScreen: View {
         self.serverOrigin = serverOrigin
         self.linkRole = linkRole
         self.initialIsFavorite = initialIsFavorite
-        self.pinRow = pinRow
+        _pinRow = State(initialValue: PinRowBox(pinRow))
         self.isOffline = isOffline
         self.onDeleted = onDeleted
         self.onOpenDocument = onOpenDocument
@@ -90,7 +94,7 @@ struct EditorScreen: View {
             childrenCache: childrenCache,
             linkRole: linkRole,
             initialIsFavorite: initialIsFavorite,
-            pinRow: pinRow,
+            pinRow: pinRow.row,
             isOffline: isOffline,
             onDeleted: onDeleted,
             onOpenDocument: onOpenDocument,
@@ -119,7 +123,17 @@ struct EditorScreen: View {
         let wasLocalDocument = viewModel.isLocalDocument
         let replacement = makeViewModel()
         viewModel = replacement
+        // The old row's abilities are the previous account's: fail closed until a fresh fetch.
+        pinRow.row = nil
         if wasLocalDocument, let onDeleted { onDeleted() }
         return replacement
     }
+}
+
+/// Holds the row a screen was opened from so an account change can drop it (see
+/// `EditorScreen.pinRow`).
+@MainActor
+final class PinRowBox {
+    var row: Document?
+    init(_ row: Document?) { self.row = row }
 }

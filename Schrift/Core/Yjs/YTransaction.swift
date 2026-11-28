@@ -168,22 +168,15 @@ final class YTransaction {
     /// same — refuse through a *thrown* `YIntegrationError.recursionLimitExceeded`
     /// the manager fail-safes on.
     ///
-    /// **The value is chosen for the *device* main-thread stack, not the
-    /// simulator's.** `applyReplicaUpdate` runs on `@MainActor`, so this recursion
-    /// is on the main thread — ~1 MB on a real iOS device, but the iOS Simulator
-    /// inherits the macOS host's far larger (~8 MB) main-thread stack. On the
-    /// simulator the fault floor measured >5000 levels (the deep repro crashed
-    /// around 20k); extrapolated to a ~1 MB device stack that is roughly 8× lower.
-    /// Each nesting level costs ~3 native frames on the delete path (`YItem.delete
-    /// → YContent.delete → YType.deleteChildren`) and ~2 on gc, so 256 levels is
-    /// ≲800 frames — safely inside 1 MB even in a Debug build — while still ~25×
-    /// above realistic content (a normal document nests only a handful of type
-    /// levels; even an absurd 100-visual-indent document is ~200 levels, and a
-    /// document that *does* exceed 256 simply falls back to classic REST editing,
-    /// losing live collaboration but no data). It is deliberately conservative:
-    /// **the exact device-safe ceiling is owed a real-device, Release-build
-    /// measurement before the `schrift.liveCollaboration` flag is defaulted on** —
-    /// a *simulator* Release measurement would not expose the device stack.
+    /// **Measured for the smallest stack it runs on.** A replica update is applied on
+    /// the main thread (classic live editing, ~1 MB on a device) or on a Swift
+    /// concurrency thread (the native editor's `DocumentReplicaSession`, 512 KB). In a
+    /// Release build the delete and gc cascades use ~640 bytes per level, so a chain at
+    /// the cap uses ~165 KB, about a third of the 512 KB stack; a Debug build uses
+    /// ~1.6 KB per level (~415 KB at the cap). `YDeepNestingRecursionTests` runs the
+    /// cap on a 512 KB thread. The cap stays ~25× above realistic content: a normal
+    /// document nests a handful of type levels, and one that exceeds the cap falls
+    /// back to classic REST editing, losing live collaboration but no data.
     /// See `docs/standards/yjs-core.md` "Malformed input must throw, never trap".
     static let maxTypeNestingDepth = 256
 

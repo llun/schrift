@@ -50,6 +50,9 @@ final class DocumentCollaborationSession {
     /// Other collaborators currently in the room, from their awareness state.
     /// Observed by the presence UI; never includes us (`clientID`).
     private(set) var peers: [CollaborationPeer] = []
+    /// Each peer's last awareness clock, so a replayed or reordered entry is
+    /// stale rather than a fresh state (see `updatedPeers`).
+    private var peerClocks: [UInt: UInt] = [:]
 
     /// The room UUID (lowercase v4), which is also the Hocuspocus `documentName`.
     private let documentName: String
@@ -314,8 +317,11 @@ final class DocumentCollaborationSession {
                 if let onAwareness {
                     onAwareness(entries)
                 } else {
-                    peers = updatedPeers(
-                        peers, applying: entries, excludingLocalClientID: clientID, wireProtocol: wireProtocol)
+                    let folded = updatedPeers(
+                        peers, clocks: peerClocks, applying: entries, excludingLocalClientID: clientID,
+                        wireProtocol: wireProtocol)
+                    peers = folded.peers
+                    peerClocks = folded.clocks
                 }
             case .queryAwareness where wireProtocol == .yWebSocket:
                 guard let frame = nextAwarenessFrame() else { return }  // readers never publish, even on query
@@ -329,6 +335,7 @@ final class DocumentCollaborationSession {
             // drop it. On reconnect the manager builds a fresh session that
             // repopulates `peers` from the new room's awareness.
             peers = []
+            peerClocks = [:]
             renewalTask?.cancel()
             switch reason {
             case .permissionsReset: state = .ended(.permissionsReset)
